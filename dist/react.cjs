@@ -1,0 +1,793 @@
+'use strict';
+
+var react = require('react');
+var jsxRuntime = require('react/jsx-runtime');
+
+// src/react/context.tsx
+
+// src/errors/index.ts
+var BudokanError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "BudokanError";
+  }
+};
+var BudokanApiError = class extends BudokanError {
+  status;
+  statusText;
+  constructor(message, status, statusText = "") {
+    super(message);
+    this.name = "BudokanApiError";
+    this.status = status;
+    this.statusText = statusText;
+  }
+};
+var BudokanTimeoutError = class extends BudokanError {
+  constructor(message = "Request timed out") {
+    super(message);
+    this.name = "BudokanTimeoutError";
+  }
+};
+var BudokanConnectionError = class extends BudokanError {
+  constructor(message = "Connection failed") {
+    super(message);
+    this.name = "BudokanConnectionError";
+  }
+};
+var TournamentNotFoundError = class extends BudokanError {
+  tournamentId;
+  constructor(tournamentId) {
+    super(`Tournament not found: ${tournamentId}`);
+    this.name = "TournamentNotFoundError";
+    this.tournamentId = tournamentId;
+  }
+};
+function isNonRetryableError(error) {
+  if (error instanceof TournamentNotFoundError) return true;
+  if (error instanceof BudokanApiError && error.status >= 400 && error.status < 500 && error.status !== 429) {
+    return true;
+  }
+  return false;
+}
+
+// src/utils/retry.ts
+function calculateBackoff(attempt, baseDelay, maxDelay) {
+  let delay = baseDelay * Math.pow(2, attempt);
+  if (delay > maxDelay) delay = maxDelay;
+  const minDelay = delay / 2;
+  const jitter = Math.random() * (delay - minDelay);
+  return minDelay + jitter;
+}
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function withRetry(fn, attempts = 3, delay = 1e3) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (isNonRetryableError(error)) {
+        throw error;
+      }
+      if (attempt === attempts - 1) break;
+      const backoff = calculateBackoff(attempt, delay, delay * 8);
+      await sleep(backoff);
+    }
+  }
+  throw lastError ?? new BudokanTimeoutError("Unknown error after retries");
+}
+
+// src/api/base.ts
+var DEFAULT_TIMEOUT = 1e4;
+var DEFAULT_RETRY_ATTEMPTS = 3;
+var DEFAULT_RETRY_DELAY = 1e3;
+async function apiFetch(url, options = {}) {
+  const {
+    method = "GET",
+    headers = {},
+    body,
+    signal,
+    timeout = DEFAULT_TIMEOUT,
+    retryAttempts = DEFAULT_RETRY_ATTEMPTS,
+    retryDelay = DEFAULT_RETRY_DELAY
+  } = options;
+  return withRetry(
+    async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      if (signal) {
+        if (signal.aborted) {
+          clearTimeout(timeoutId);
+          throw new BudokanTimeoutError("Request was aborted");
+        }
+        signal.addEventListener("abort", () => controller.abort(), { once: true });
+      }
+      try {
+        const response = await fetch(url, {
+          method,
+          headers: {
+            "Content-Type": "application/json",
+            ...headers
+          },
+          body: body ? JSON.stringify(body) : void 0,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => ({}));
+          throw new BudokanApiError(
+            errorBody.error ?? `API error: ${response.status}`,
+            response.status,
+            response.statusText
+          );
+        }
+        return await response.json();
+      } catch (error) {
+        clearTimeout(timeoutId);
+        if (error instanceof BudokanApiError) {
+          throw error;
+        }
+        if (error instanceof Error && error.name === "AbortError") {
+          if (signal?.aborted) throw new BudokanTimeoutError("Request was aborted");
+          throw new BudokanTimeoutError();
+        }
+        throw new BudokanConnectionError(
+          error instanceof Error ? error.message : "Connection failed"
+        );
+      }
+    },
+    retryAttempts,
+    retryDelay
+  );
+}
+function buildQueryString(params) {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== void 0 && value !== null) {
+      qs.set(key, String(value));
+    }
+  }
+  const str = qs.toString();
+  return str ? `?${str}` : "";
+}
+
+// src/utils/mappers.ts
+function toCamelCase(str) {
+  return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+}
+function snakeToCamel(obj) {
+  if (Array.isArray(obj)) {
+    return obj.map((item) => snakeToCamel(item));
+  }
+  if (obj !== null && typeof obj === "object" && !(obj instanceof Date)) {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[toCamelCase(key)] = snakeToCamel(value);
+    }
+    return result;
+  }
+  return obj;
+}
+
+// src/api/tournaments.ts
+function fetchOpts(ctx) {
+  return {
+    retryAttempts: ctx?.retryAttempts,
+    retryDelay: ctx?.retryDelay,
+    timeout: ctx?.timeout
+  };
+}
+async function getTournaments(baseUrl, params, ctx) {
+  const qs = buildQueryString({
+    game_address: params?.gameAddress,
+    creator: params?.creator,
+    phase: params?.phase,
+    limit: params?.limit,
+    offset: params?.offset
+  });
+  const result = await apiFetch(`${baseUrl}/tournaments${qs}`, fetchOpts(ctx));
+  return {
+    data: result.data.map((item) => snakeToCamel(item)),
+    total: result.total,
+    limit: result.limit,
+    offset: result.offset
+  };
+}
+async function getTournament(baseUrl, tournamentId, ctx) {
+  const result = await apiFetch(
+    `${baseUrl}/tournaments/${tournamentId}`,
+    fetchOpts(ctx)
+  );
+  return snakeToCamel(result.data);
+}
+async function getTournamentLeaderboard(baseUrl, tournamentId, ctx) {
+  const result = await apiFetch(
+    `${baseUrl}/tournaments/${tournamentId}/leaderboard`,
+    fetchOpts(ctx)
+  );
+  return result.data.map((item) => snakeToCamel(item));
+}
+async function getTournamentRegistrations(baseUrl, tournamentId, params, ctx) {
+  const qs = buildQueryString({
+    limit: params?.limit,
+    offset: params?.offset
+  });
+  const result = await apiFetch(`${baseUrl}/tournaments/${tournamentId}/registrations${qs}`, fetchOpts(ctx));
+  return {
+    data: result.data.map((item) => snakeToCamel(item)),
+    total: result.total,
+    limit: result.limit,
+    offset: result.offset
+  };
+}
+async function getTournamentPrizes(baseUrl, tournamentId, ctx) {
+  const result = await apiFetch(
+    `${baseUrl}/tournaments/${tournamentId}/prizes`,
+    fetchOpts(ctx)
+  );
+  return result.data.map((item) => snakeToCamel(item));
+}
+
+// src/utils/address.ts
+function normalizeAddress(address) {
+  const stripped = address.replace(/^0x0*/i, "");
+  return ("0x" + stripped.padStart(64, "0")).toLowerCase();
+}
+
+// src/api/players.ts
+function fetchOpts2(ctx) {
+  return {
+    retryAttempts: ctx?.retryAttempts,
+    retryDelay: ctx?.retryDelay,
+    timeout: ctx?.timeout
+  };
+}
+async function getPlayerTournaments(baseUrl, address, params, ctx) {
+  const normalized = normalizeAddress(address);
+  const qs = buildQueryString({
+    limit: params?.limit,
+    offset: params?.offset
+  });
+  const result = await apiFetch(`${baseUrl}/players/${normalized}/tournaments${qs}`, fetchOpts2(ctx));
+  return {
+    data: result.data.map((item) => snakeToCamel(item)),
+    total: result.total,
+    limit: result.limit,
+    offset: result.offset
+  };
+}
+async function getPlayerStats(baseUrl, address, ctx) {
+  const normalized = normalizeAddress(address);
+  const result = await apiFetch(
+    `${baseUrl}/players/${normalized}/stats`,
+    fetchOpts2(ctx)
+  );
+  return snakeToCamel(result.data);
+}
+
+// src/api/games.ts
+function fetchOpts3(ctx) {
+  return {
+    retryAttempts: ctx?.retryAttempts,
+    retryDelay: ctx?.retryDelay,
+    timeout: ctx?.timeout
+  };
+}
+async function getGameTournaments(baseUrl, gameAddress, params, ctx) {
+  const normalized = normalizeAddress(gameAddress);
+  const qs = buildQueryString({
+    creator: params?.creator,
+    phase: params?.phase,
+    limit: params?.limit,
+    offset: params?.offset
+  });
+  const result = await apiFetch(`${baseUrl}/games/${normalized}/tournaments${qs}`, fetchOpts3(ctx));
+  return {
+    data: result.data.map((item) => snakeToCamel(item)),
+    total: result.total,
+    limit: result.limit,
+    offset: result.offset
+  };
+}
+async function getGameStats(baseUrl, gameAddress, ctx) {
+  const normalized = normalizeAddress(gameAddress);
+  const result = await apiFetch(
+    `${baseUrl}/games/${normalized}/stats`,
+    fetchOpts3(ctx)
+  );
+  return snakeToCamel(result.data);
+}
+
+// src/api/activity.ts
+function fetchOpts4(ctx) {
+  return {
+    retryAttempts: ctx?.retryAttempts,
+    retryDelay: ctx?.retryDelay,
+    timeout: ctx?.timeout
+  };
+}
+async function getActivity(baseUrl, params, ctx) {
+  const qs = buildQueryString({
+    event_type: params?.eventType,
+    tournament_id: params?.tournamentId,
+    player_address: params?.playerAddress,
+    limit: params?.limit,
+    offset: params?.offset
+  });
+  const result = await apiFetch(`${baseUrl}/activity${qs}`, fetchOpts4(ctx));
+  return {
+    data: result.data.map((item) => snakeToCamel(item)),
+    total: result.total,
+    limit: result.limit,
+    offset: result.offset
+  };
+}
+async function getActivityStats(baseUrl, ctx) {
+  const result = await apiFetch(
+    `${baseUrl}/activity/stats`,
+    fetchOpts4(ctx)
+  );
+  return snakeToCamel(result.data);
+}
+
+// src/ws/manager.ts
+var DEFAULT_WS_CONFIG = {
+  maxReconnectAttempts: 10,
+  reconnectBaseDelay: 1e3
+};
+var WSManager = class {
+  ws = null;
+  wsUrl;
+  config;
+  reconnectAttempts = 0;
+  reconnectTimeout = null;
+  subscriptions = /* @__PURE__ */ new Map();
+  nextSubId = 1;
+  connected = false;
+  connectionListeners = /* @__PURE__ */ new Set();
+  constructor(wsUrl, config) {
+    this.wsUrl = wsUrl;
+    this.config = { ...DEFAULT_WS_CONFIG, ...config };
+  }
+  /**
+   * Open a WebSocket connection. No-op if already connected.
+   */
+  connect() {
+    if (this.ws) return;
+    try {
+      this.ws = new WebSocket(this.wsUrl);
+      this.ws.onopen = () => {
+        this.connected = true;
+        this.reconnectAttempts = 0;
+        this.notifyConnectionChange(true);
+        for (const [, sub] of this.subscriptions) {
+          this.sendSubscribe(sub.options);
+        }
+      };
+      this.ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === "event") {
+            for (const [, sub] of this.subscriptions) {
+              sub.handler(message);
+            }
+          }
+        } catch {
+        }
+      };
+      this.ws.onclose = () => {
+        this.connected = false;
+        this.notifyConnectionChange(false);
+        this.ws = null;
+        this.attemptReconnect();
+      };
+      this.ws.onerror = () => {
+      };
+    } catch {
+      this.attemptReconnect();
+    }
+  }
+  /**
+   * Close the WebSocket connection and stop reconnecting.
+   */
+  disconnect() {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.close();
+      this.ws = null;
+    }
+    this.connected = false;
+    this.notifyConnectionChange(false);
+    this.reconnectAttempts = 0;
+  }
+  /**
+   * Subscribe to channels with an optional tournament filter.
+   * Returns an unsubscribe function.
+   */
+  subscribe(options, handler) {
+    const id = String(this.nextSubId++);
+    this.subscriptions.set(id, { options, handler });
+    if (this.connected) {
+      this.sendSubscribe(options);
+    }
+    return () => {
+      this.subscriptions.delete(id);
+      if (this.connected && this.ws) {
+        this.ws.send(JSON.stringify({
+          type: "unsubscribe",
+          channels: options.channels
+        }));
+      }
+    };
+  }
+  /**
+   * Register a callback for a single message. Convenience wrapper around subscribe.
+   * Returns an unsubscribe function.
+   */
+  onMessage(callback) {
+    const id = String(this.nextSubId++);
+    this.subscriptions.set(id, {
+      options: { channels: [] },
+      handler: callback
+    });
+    return () => {
+      this.subscriptions.delete(id);
+    };
+  }
+  /**
+   * Whether the WebSocket is currently connected.
+   */
+  get isConnected() {
+    return this.connected;
+  }
+  /**
+   * Register a listener for connection state changes.
+   * Returns an unsubscribe function.
+   */
+  onConnectionChange(listener) {
+    this.connectionListeners.add(listener);
+    return () => {
+      this.connectionListeners.delete(listener);
+    };
+  }
+  notifyConnectionChange(isConnected) {
+    for (const listener of this.connectionListeners) {
+      try {
+        listener(isConnected);
+      } catch {
+      }
+    }
+  }
+  sendSubscribe(options) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (options.channels.length === 0) return;
+    this.ws.send(JSON.stringify({
+      type: "subscribe",
+      channels: options.channels,
+      tournamentIds: options.tournamentIds
+    }));
+  }
+  attemptReconnect() {
+    if (this.reconnectAttempts >= this.config.maxReconnectAttempts) return;
+    if (this.subscriptions.size === 0) return;
+    const delay = this.config.reconnectBaseDelay * Math.pow(2, this.reconnectAttempts);
+    this.reconnectAttempts++;
+    this.reconnectTimeout = setTimeout(() => {
+      this.connect();
+    }, Math.min(delay, 3e4));
+  }
+};
+
+// src/client.ts
+var BudokanClient = class {
+  config;
+  wsManager;
+  constructor(config) {
+    this.config = config;
+    const wsUrl = config.wsUrl ?? config.apiBaseUrl.replace(/^http/, "ws").replace(/\/$/, "") + "/ws";
+    this.wsManager = new WSManager(wsUrl);
+  }
+  // ---- Configuration ----
+  /** Returns the resolved configuration. */
+  get clientConfig() {
+    return { ...this.config };
+  }
+  /** Whether the WebSocket is currently connected. */
+  get wsConnected() {
+    return this.wsManager.isConnected;
+  }
+  // ---- API context ----
+  get apiCtx() {
+    return {
+      retryAttempts: this.config.retryAttempts,
+      retryDelay: this.config.retryDelay,
+      timeout: this.config.timeout
+    };
+  }
+  // ---- Tournament Queries ----
+  /**
+   * Fetch a paginated list of tournaments with optional filtering.
+   */
+  async getTournaments(params) {
+    return getTournaments(this.config.apiBaseUrl, params, this.apiCtx);
+  }
+  /**
+   * Fetch a single tournament by its ID.
+   */
+  async getTournament(tournamentId) {
+    return getTournament(this.config.apiBaseUrl, tournamentId, this.apiCtx);
+  }
+  /**
+   * Fetch the leaderboard for a tournament.
+   */
+  async getTournamentLeaderboard(tournamentId) {
+    return getTournamentLeaderboard(this.config.apiBaseUrl, tournamentId, this.apiCtx);
+  }
+  /**
+   * Fetch registrations for a tournament.
+   */
+  async getTournamentRegistrations(tournamentId, params) {
+    return getTournamentRegistrations(this.config.apiBaseUrl, tournamentId, params, this.apiCtx);
+  }
+  /**
+   * Fetch prizes for a tournament.
+   */
+  async getTournamentPrizes(tournamentId) {
+    return getTournamentPrizes(this.config.apiBaseUrl, tournamentId, this.apiCtx);
+  }
+  // ---- Player Queries ----
+  /**
+   * Fetch tournaments that a player has registered for.
+   */
+  async getPlayerTournaments(address, params) {
+    return getPlayerTournaments(this.config.apiBaseUrl, address, params, this.apiCtx);
+  }
+  /**
+   * Fetch stats for a player.
+   */
+  async getPlayerStats(address) {
+    return getPlayerStats(this.config.apiBaseUrl, address, this.apiCtx);
+  }
+  // ---- Game Queries ----
+  /**
+   * Fetch tournaments for a specific game.
+   */
+  async getGameTournaments(gameAddress, params) {
+    return getGameTournaments(this.config.apiBaseUrl, gameAddress, params, this.apiCtx);
+  }
+  /**
+   * Fetch tournament stats for a specific game.
+   */
+  async getGameStats(gameAddress) {
+    return getGameStats(this.config.apiBaseUrl, gameAddress, this.apiCtx);
+  }
+  // ---- Activity Queries ----
+  /**
+   * Fetch activity events with optional filtering.
+   */
+  async getActivity(params) {
+    return getActivity(this.config.apiBaseUrl, params, this.apiCtx);
+  }
+  /**
+   * Fetch platform-wide activity stats.
+   */
+  async getActivityStats() {
+    return getActivityStats(this.config.apiBaseUrl, this.apiCtx);
+  }
+  // ---- WebSocket ----
+  /**
+   * Open a WebSocket connection for real-time updates.
+   */
+  connect() {
+    this.wsManager.connect();
+  }
+  /**
+   * Close the WebSocket connection.
+   */
+  disconnect() {
+    this.wsManager.disconnect();
+  }
+  /**
+   * Subscribe to WebSocket channels with optional tournament filtering.
+   * Returns an unsubscribe function.
+   */
+  subscribe(channels, handler, tournamentIds) {
+    return this.wsManager.subscribe({ channels, tournamentIds }, handler);
+  }
+  /**
+   * Register a listener for WebSocket connection state changes.
+   * Returns an unsubscribe function.
+   */
+  onWsConnectionChange(listener) {
+    return this.wsManager.onConnectionChange(listener);
+  }
+};
+function createBudokanClient(config) {
+  return new BudokanClient(config);
+}
+var BudokanContext = react.createContext(null);
+function BudokanProvider({ children, config, client: existingClient }) {
+  const client = react.useMemo(() => {
+    if (existingClient) return existingClient;
+    if (config) return createBudokanClient(config);
+    throw new Error("BudokanProvider requires either 'config' or 'client' prop");
+  }, [existingClient, config]);
+  const clientRef = react.useRef(client);
+  react.useEffect(() => {
+    return () => {
+      if (!existingClient && clientRef.current !== client) {
+        clientRef.current.disconnect();
+      }
+    };
+  }, [client, existingClient]);
+  react.useEffect(() => {
+    clientRef.current = client;
+  }, [client]);
+  return /* @__PURE__ */ jsxRuntime.jsx(BudokanContext.Provider, { value: client, children });
+}
+function useBudokanClient() {
+  const client = react.useContext(BudokanContext);
+  if (!client) {
+    throw new Error("useBudokanClient must be used within a BudokanProvider");
+  }
+  return client;
+}
+function useTournaments(params) {
+  const client = useBudokanClient();
+  const [tournaments, setTournaments] = react.useState(null);
+  const [loading, setLoading] = react.useState(true);
+  const [error, setError] = react.useState(null);
+  const paramsKey = JSON.stringify(params);
+  const fetch2 = react.useCallback(() => {
+    setLoading(true);
+    setError(null);
+    client.getTournaments(params).then(setTournaments).catch(setError).finally(() => setLoading(false));
+  }, [client, paramsKey]);
+  react.useEffect(() => {
+    fetch2();
+  }, [fetch2]);
+  return { tournaments, loading, error, refetch: fetch2 };
+}
+function useTournament(tournamentId) {
+  const client = useBudokanClient();
+  const [tournament, setTournament] = react.useState(null);
+  const [loading, setLoading] = react.useState(!!tournamentId);
+  const [error, setError] = react.useState(null);
+  const fetch2 = react.useCallback(() => {
+    if (!tournamentId) return;
+    setLoading(true);
+    setError(null);
+    client.getTournament(tournamentId).then(setTournament).catch(setError).finally(() => setLoading(false));
+  }, [client, tournamentId]);
+  react.useEffect(() => {
+    fetch2();
+  }, [fetch2]);
+  return { tournament, loading, error, refetch: fetch2 };
+}
+function useLeaderboard(tournamentId) {
+  const client = useBudokanClient();
+  const [leaderboard, setLeaderboard] = react.useState(null);
+  const [loading, setLoading] = react.useState(!!tournamentId);
+  const [error, setError] = react.useState(null);
+  const fetch2 = react.useCallback(() => {
+    if (!tournamentId) return;
+    setLoading(true);
+    setError(null);
+    client.getTournamentLeaderboard(tournamentId).then(setLeaderboard).catch(setError).finally(() => setLoading(false));
+  }, [client, tournamentId]);
+  react.useEffect(() => {
+    fetch2();
+  }, [fetch2]);
+  return { leaderboard, loading, error, refetch: fetch2 };
+}
+function usePlayer(address) {
+  const client = useBudokanClient();
+  const [tournaments, setTournaments] = react.useState(null);
+  const [stats, setStats] = react.useState(null);
+  const [loading, setLoading] = react.useState(!!address);
+  const [error, setError] = react.useState(null);
+  const fetch2 = react.useCallback(() => {
+    if (!address) return;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      client.getPlayerTournaments(address),
+      client.getPlayerStats(address)
+    ]).then(([tournamentsResult, statsResult]) => {
+      setTournaments(tournamentsResult);
+      setStats(statsResult);
+    }).catch(setError).finally(() => setLoading(false));
+  }, [client, address]);
+  react.useEffect(() => {
+    fetch2();
+  }, [fetch2]);
+  return { tournaments, stats, loading, error };
+}
+function usePlayerStats(address) {
+  const client = useBudokanClient();
+  const [stats, setStats] = react.useState(null);
+  const [loading, setLoading] = react.useState(!!address);
+  const [error, setError] = react.useState(null);
+  const fetch2 = react.useCallback(() => {
+    if (!address) return;
+    setLoading(true);
+    setError(null);
+    client.getPlayerStats(address).then(setStats).catch(setError).finally(() => setLoading(false));
+  }, [client, address]);
+  react.useEffect(() => {
+    fetch2();
+  }, [fetch2]);
+  return { stats, loading, error, refetch: fetch2 };
+}
+function usePlayerTournaments(address) {
+  const client = useBudokanClient();
+  const [tournaments, setTournaments] = react.useState(null);
+  const [loading, setLoading] = react.useState(!!address);
+  const [error, setError] = react.useState(null);
+  const fetch2 = react.useCallback(() => {
+    if (!address) return;
+    setLoading(true);
+    setError(null);
+    client.getPlayerTournaments(address).then(setTournaments).catch(setError).finally(() => setLoading(false));
+  }, [client, address]);
+  react.useEffect(() => {
+    fetch2();
+  }, [fetch2]);
+  return { tournaments, loading, error, refetch: fetch2 };
+}
+function useSubscription(channels, tournamentIds) {
+  const client = useBudokanClient();
+  const [lastMessage, setLastMessage] = react.useState(null);
+  const [isConnected, setIsConnected] = react.useState(client.wsConnected);
+  const channelsRef = react.useRef(channels);
+  const tournamentIdsRef = react.useRef(tournamentIds);
+  channelsRef.current = channels;
+  tournamentIdsRef.current = tournamentIds;
+  react.useEffect(() => {
+    if (channels.length === 0) return;
+    client.connect();
+    const unsubscribe = client.subscribe(
+      channels,
+      (message) => setLastMessage(message),
+      tournamentIds
+    );
+    const unsubscribeConnection = client.onWsConnectionChange((connected) => {
+      setIsConnected(connected);
+    });
+    return () => {
+      unsubscribe();
+      unsubscribeConnection();
+    };
+  }, [client, JSON.stringify(channels), JSON.stringify(tournamentIds)]);
+  return { lastMessage, isConnected };
+}
+function useConnectionStatus() {
+  const client = useBudokanClient();
+  const [isConnected, setIsConnected] = react.useState(client.wsConnected);
+  react.useEffect(() => {
+    const unsubscribe = client.onWsConnectionChange((connected) => {
+      setIsConnected(connected);
+    });
+    return unsubscribe;
+  }, [client]);
+  return { isConnected };
+}
+
+exports.BudokanProvider = BudokanProvider;
+exports.useBudokanClient = useBudokanClient;
+exports.useConnectionStatus = useConnectionStatus;
+exports.useLeaderboard = useLeaderboard;
+exports.usePlayer = usePlayer;
+exports.usePlayerStats = usePlayerStats;
+exports.usePlayerTournaments = usePlayerTournaments;
+exports.useSubscription = useSubscription;
+exports.useTournament = useTournament;
+exports.useTournaments = useTournaments;
+//# sourceMappingURL=react.cjs.map
+//# sourceMappingURL=react.cjs.map
