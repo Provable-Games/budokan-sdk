@@ -28,7 +28,7 @@ export function BudokanProvider({ children, config, client: existingClient }: Bu
     // Cleanup previous client if it changed and was created internally
     return () => {
       if (!existingClient && clientRef.current !== client) {
-        clientRef.current.disconnect();
+        clientRef.current.destroy();
       }
     };
   }, [client, existingClient]);
