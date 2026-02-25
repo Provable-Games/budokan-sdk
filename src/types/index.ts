@@ -1,4 +1,4 @@
-export type { BudokanClientConfig } from "./config.js";
+export type { BudokanClientConfig, DataSource } from "./config.js";
 export type {
   Tournament,
   Schedule,

@@ -4,6 +4,7 @@ export { BudokanClient, createBudokanClient } from "./client.js";
 // Types
 export type {
   BudokanClientConfig,
+  DataSource,
   Tournament,
   Schedule,
   GameConfig,
@@ -37,7 +38,13 @@ export {
   BudokanTimeoutError,
   BudokanConnectionError,
   TournamentNotFoundError,
+  RpcError,
+  DataSourceError,
 } from "./errors/index.js";
+
+// Datasource
+export { ConnectionStatus } from "./datasource/health.js";
+export type { ConnectionMode, ConnectionStatusState } from "./datasource/health.js";
 
 // API functions
 export {

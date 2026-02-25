@@ -1,3 +1,4 @@
+import type { RpcProvider, Contract } from "starknet";
 import type { BudokanClientConfig } from "./types/config.js";
 import type { Tournament, TournamentListParams } from "./types/tournament.js";
 import type { LeaderboardEntry } from "./types/leaderboard.js";
@@ -7,6 +8,7 @@ import type { PlayerStats, PlayerTournament } from "./types/player.js";
 import type { ActivityEvent, ActivityParams, PlatformStats } from "./types/activity.js";
 import type { PaginatedResult } from "./types/common.js";
 import type { WSChannel, WSEventHandler } from "./types/websocket.js";
+import type { ConnectionStatusState } from "./datasource/health.js";
 
 import {
   getTournaments as apiGetTournaments,
@@ -28,37 +30,101 @@ import {
   getActivityStats as apiGetActivityStats,
 } from "./api/activity.js";
 import { WSManager } from "./ws/manager.js";
+import { getChainConfig } from "./chains/constants.js";
+import { ConnectionStatus } from "./datasource/health.js";
+import { withFallback } from "./datasource/resolver.js";
+import { RpcError } from "./errors/index.js";
+import { createProvider, createContract } from "./rpc/provider.js";
+import {
+  viewerTournaments,
+  viewerTournamentsByGame,
+  viewerTournamentsByCreator,
+  viewerTournamentsByPhase,
+  viewerTournamentDetail,
+  viewerTournamentsBatch,
+  viewerRegistrations,
+  viewerLeaderboard,
+  viewerPrizes,
+} from "./rpc/viewer.js";
+
+import viewerAbi from "./rpc/abis/budokanViewer.json";
+
+/** Resolved config with all defaults applied */
+interface ResolvedConfig extends BudokanClientConfig {
+  rpcUrl: string;
+  viewerAddress: string;
+  budokanAddress: string;
+}
 
 /**
  * Main client for interacting with the Budokan tournament system.
  *
  * Provides methods for querying tournaments, registrations, leaderboards,
  * prizes, player stats, and activity events. Supports real-time updates
- * via WebSocket subscriptions.
+ * via WebSocket subscriptions and automatic RPC fallback when the API is
+ * unavailable.
  *
  * @example
  * ```ts
+ * // API-only (default, backward compatible)
  * const client = new BudokanClient({
  *   apiBaseUrl: "https://budokan-api.provable.games",
  * });
- * const tournaments = await client.getTournaments({ phase: "live" });
+ *
+ * // With RPC fallback
+ * const client = new BudokanClient({
+ *   chain: "mainnet",
+ *   apiBaseUrl: "https://budokan-api.provable.games",
+ *   viewerAddress: "0x...",
+ * });
+ *
+ * // RPC-only (bypass API entirely)
+ * const client = new BudokanClient({
+ *   primarySource: "rpc",
+ *   rpcUrl: "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_10",
+ *   viewerAddress: "0x...",
+ * });
  * ```
  */
 export class BudokanClient {
-  private readonly config: BudokanClientConfig;
+  private readonly resolvedConfig: ResolvedConfig;
   private readonly wsManager: WSManager;
+  private readonly connectionStatus: ConnectionStatus;
+  private cachedProvider: RpcProvider | null = null;
+  private cachedViewerContract: Contract | null = null;
 
   constructor(config: BudokanClientConfig) {
-    this.config = config;
-    const wsUrl = config.wsUrl ?? config.apiBaseUrl.replace(/^http/, "ws").replace(/\/$/, "") + "/ws";
+    // Merge user config with chain defaults
+    const chainConfig = config.chain ? getChainConfig(config.chain) : undefined;
+    this.resolvedConfig = {
+      ...config,
+      apiBaseUrl: config.apiBaseUrl ?? chainConfig?.apiBaseUrl ?? "",
+      rpcUrl: config.rpcUrl ?? chainConfig?.rpcUrl ?? "",
+      viewerAddress: config.viewerAddress ?? chainConfig?.viewerAddress ?? "",
+      budokanAddress: config.budokanAddress ?? chainConfig?.budokanAddress ?? "",
+    };
+
+    const wsUrl = config.wsUrl ?? chainConfig?.wsUrl
+      ?? this.resolvedConfig.apiBaseUrl.replace(/^http/, "ws").replace(/\/$/, "") + "/ws";
     this.wsManager = new WSManager(wsUrl);
+
+    this.connectionStatus = new ConnectionStatus(
+      this.resolvedConfig.apiBaseUrl,
+      this.resolvedConfig.rpcUrl,
+      config.health,
+    );
+
+    // Start health monitoring if both sources are configured
+    if (this.resolvedConfig.apiBaseUrl && this.resolvedConfig.rpcUrl) {
+      this.connectionStatus.startMonitoring();
+    }
   }
 
   // ---- Configuration ----
 
   /** Returns the resolved configuration. */
   get clientConfig(): BudokanClientConfig {
-    return { ...this.config };
+    return { ...this.resolvedConfig };
   }
 
   /** Whether the WebSocket is currently connected. */
@@ -66,13 +132,54 @@ export class BudokanClient {
     return this.wsManager.isConnected;
   }
 
+  // ---- Connection status ----
+
+  /** Returns the current connection status (API, RPC, mode). */
+  getConnectionStatus(): ConnectionStatusState {
+    return this.connectionStatus.getStatus();
+  }
+
+  /** Subscribe to connection status changes. Returns an unsubscribe function. */
+  onConnectionStatusChange(listener: (status: ConnectionStatusState) => void): () => void {
+    return this.connectionStatus.subscribe(listener);
+  }
+
+  // ---- Lazy RPC getters ----
+
+  private async getProvider(): Promise<RpcProvider> {
+    if (this.cachedProvider) return this.cachedProvider;
+    if (!this.resolvedConfig.rpcUrl) {
+      throw new RpcError("No rpcUrl configured");
+    }
+    if (this.resolvedConfig.provider) {
+      this.cachedProvider = this.resolvedConfig.provider as RpcProvider;
+      return this.cachedProvider;
+    }
+    this.cachedProvider = await createProvider(this.resolvedConfig.rpcUrl);
+    return this.cachedProvider;
+  }
+
+  private async getViewerContract(): Promise<Contract> {
+    if (this.cachedViewerContract) return this.cachedViewerContract;
+    if (!this.resolvedConfig.viewerAddress) {
+      throw new RpcError("No viewerAddress configured. Set viewerAddress in config or use a chain preset with a deployed viewer contract.");
+    }
+    const provider = await this.getProvider();
+    this.cachedViewerContract = await createContract(
+      viewerAbi as unknown[],
+      this.resolvedConfig.viewerAddress,
+      provider,
+    );
+    return this.cachedViewerContract;
+  }
+
   // ---- API context ----
 
   private get apiCtx() {
     return {
-      retryAttempts: this.config.retryAttempts,
-      retryDelay: this.config.retryDelay,
-      timeout: this.config.timeout,
+      retryAttempts: this.resolvedConfig.retryAttempts,
+      retryDelay: this.resolvedConfig.retryDelay,
+      timeout: this.resolvedConfig.timeout,
     };
   }
 
@@ -80,94 +187,217 @@ export class BudokanClient {
 
   /**
    * Fetch a paginated list of tournaments with optional filtering.
+   * Supports RPC fallback when API is unavailable.
    */
   async getTournaments(params?: TournamentListParams): Promise<PaginatedResult<Tournament>> {
-    return apiGetTournaments(this.config.apiBaseUrl, params, this.apiCtx);
+    const rpcFallback = async (): Promise<PaginatedResult<Tournament>> => {
+      const contract = await this.getViewerContract();
+      const offset = params?.offset ?? 0;
+      const limit = params?.limit ?? 20;
+
+      // Choose the appropriate viewer filter function
+      let filterResult: { tournamentIds: string[]; total: number };
+      if (params?.phase) {
+        filterResult = await viewerTournamentsByPhase(contract, params.phase, offset, limit);
+      } else if (params?.gameAddress) {
+        filterResult = await viewerTournamentsByGame(contract, params.gameAddress, offset, limit);
+      } else if (params?.creator) {
+        filterResult = await viewerTournamentsByCreator(contract, params.creator, offset, limit);
+      } else {
+        filterResult = await viewerTournaments(contract, offset, limit);
+      }
+
+      // Batch-fetch full tournament data for the returned IDs
+      let data: Tournament[] = [];
+      if (filterResult.tournamentIds.length > 0) {
+        data = await viewerTournamentsBatch(contract, filterResult.tournamentIds);
+      }
+
+      return { data, total: filterResult.total, limit, offset };
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetTournaments(this.resolvedConfig.apiBaseUrl, params, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**
    * Fetch a single tournament by its ID.
+   * Supports RPC fallback when API is unavailable.
    */
   async getTournament(tournamentId: string): Promise<Tournament> {
-    return apiGetTournament(this.config.apiBaseUrl, tournamentId, this.apiCtx);
+    const rpcFallback = async () => {
+      const contract = await this.getViewerContract();
+      return viewerTournamentDetail(contract, tournamentId);
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetTournament(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**
    * Fetch the leaderboard for a tournament.
+   * Supports RPC fallback when API is unavailable.
    */
   async getTournamentLeaderboard(tournamentId: string): Promise<LeaderboardEntry[]> {
-    return apiGetTournamentLeaderboard(this.config.apiBaseUrl, tournamentId, this.apiCtx);
+    const rpcFallback = async () => {
+      const contract = await this.getViewerContract();
+      // Fetch a large page; on-chain leaderboards are typically small
+      return viewerLeaderboard(contract, tournamentId, 0, 1000);
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetTournamentLeaderboard(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**
    * Fetch registrations for a tournament.
+   * Supports RPC fallback when API is unavailable.
+   * Note: In RPC mode, `playerAddress` and `gameAddress` fields will be empty strings.
    */
   async getTournamentRegistrations(
     tournamentId: string,
     params?: { limit?: number; offset?: number },
   ): Promise<PaginatedResult<Registration>> {
-    return apiGetTournamentRegistrations(this.config.apiBaseUrl, tournamentId, params, this.apiCtx);
+    const rpcFallback = async () => {
+      const contract = await this.getViewerContract();
+      const offset = params?.offset ?? 0;
+      const limit = params?.limit ?? 20;
+      return viewerRegistrations(contract, tournamentId, offset, limit);
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetTournamentRegistrations(this.resolvedConfig.apiBaseUrl, tournamentId, params, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**
    * Fetch prizes for a tournament.
+   * Supports RPC fallback when API is unavailable.
    */
   async getTournamentPrizes(tournamentId: string): Promise<Prize[]> {
-    return apiGetTournamentPrizes(this.config.apiBaseUrl, tournamentId, this.apiCtx);
+    const rpcFallback = async () => {
+      const contract = await this.getViewerContract();
+      return viewerPrizes(contract, tournamentId);
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetTournamentPrizes(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
-  // ---- Player Queries ----
+  // ---- Player Queries (API-only, no on-chain equivalent) ----
 
   /**
    * Fetch tournaments that a player has registered for.
+   * API-only — no RPC fallback available.
    */
   async getPlayerTournaments(
     address: string,
     params?: { limit?: number; offset?: number },
   ): Promise<PaginatedResult<PlayerTournament>> {
-    return apiGetPlayerTournaments(this.config.apiBaseUrl, address, params, this.apiCtx);
+    return apiGetPlayerTournaments(this.resolvedConfig.apiBaseUrl, address, params, this.apiCtx);
   }
 
   /**
    * Fetch stats for a player.
+   * API-only — no RPC fallback available.
    */
   async getPlayerStats(address: string): Promise<PlayerStats> {
-    return apiGetPlayerStats(this.config.apiBaseUrl, address, this.apiCtx);
+    return apiGetPlayerStats(this.resolvedConfig.apiBaseUrl, address, this.apiCtx);
   }
 
   // ---- Game Queries ----
 
   /**
    * Fetch tournaments for a specific game.
+   * Supports RPC fallback when API is unavailable.
    */
   async getGameTournaments(
     gameAddress: string,
     params?: Omit<TournamentListParams, "gameAddress">,
   ): Promise<PaginatedResult<Tournament>> {
-    return apiGetGameTournaments(this.config.apiBaseUrl, gameAddress, params, this.apiCtx);
+    const rpcFallback = async (): Promise<PaginatedResult<Tournament>> => {
+      const contract = await this.getViewerContract();
+      const offset = params?.offset ?? 0;
+      const limit = params?.limit ?? 20;
+      const filterResult = await viewerTournamentsByGame(contract, gameAddress, offset, limit);
+
+      let data: Tournament[] = [];
+      if (filterResult.tournamentIds.length > 0) {
+        data = await viewerTournamentsBatch(contract, filterResult.tournamentIds);
+      }
+
+      return { data, total: filterResult.total, limit, offset };
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetGameTournaments(this.resolvedConfig.apiBaseUrl, gameAddress, params, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**
    * Fetch tournament stats for a specific game.
+   * API-only — no RPC fallback available.
    */
   async getGameStats(gameAddress: string): Promise<PlatformStats> {
-    return apiGetGameStats(this.config.apiBaseUrl, gameAddress, this.apiCtx);
+    return apiGetGameStats(this.resolvedConfig.apiBaseUrl, gameAddress, this.apiCtx);
   }
 
-  // ---- Activity Queries ----
+  // ---- Activity Queries (API-only, activity is indexed) ----
 
   /**
    * Fetch activity events with optional filtering.
+   * API-only — no RPC fallback available.
    */
   async getActivity(params?: ActivityParams): Promise<PaginatedResult<ActivityEvent>> {
-    return apiGetActivity(this.config.apiBaseUrl, params, this.apiCtx);
+    return apiGetActivity(this.resolvedConfig.apiBaseUrl, params, this.apiCtx);
   }
 
   /**
    * Fetch platform-wide activity stats.
+   * API-only — no RPC fallback available.
    */
   async getActivityStats(): Promise<PlatformStats> {
-    return apiGetActivityStats(this.config.apiBaseUrl, this.apiCtx);
+    return apiGetActivityStats(this.resolvedConfig.apiBaseUrl, this.apiCtx);
   }
 
   // ---- WebSocket ----
@@ -183,6 +413,14 @@ export class BudokanClient {
    * Close the WebSocket connection.
    */
   disconnect(): void {
+    this.wsManager.disconnect();
+  }
+
+  /**
+   * Stop health monitoring and close all connections.
+   */
+  destroy(): void {
+    this.connectionStatus.destroy();
     this.wsManager.disconnect();
   }
 
