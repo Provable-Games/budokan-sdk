@@ -1,4 +1,4 @@
-import type { ActivityEvent, ActivityParams, PlatformStats } from "../types/activity.js";
+import type { ActivityEvent, ActivityParams, PlatformStats, PrizeStats } from "../types/activity.js";
 import type { PaginatedResult } from "../types/common.js";
 import { apiFetch, buildQueryString } from "./base.js";
 import type { ApiFetchOptions } from "./base.js";
@@ -41,9 +41,9 @@ export async function getActivity(
   }>(`${baseUrl}/activity${qs}`, fetchOpts(ctx));
   return {
     data: result.data.map((item) => snakeToCamel<ActivityEvent>(item)),
-    total: result.total,
-    limit: result.limit,
-    offset: result.offset,
+    total: (result as any).pagination?.total ?? result.total,
+    limit: (result as any).pagination?.limit ?? result.limit,
+    offset: (result as any).pagination?.offset ?? result.offset,
   };
 }
 
@@ -59,4 +59,18 @@ export async function getActivityStats(
     fetchOpts(ctx),
   );
   return snakeToCamel<PlatformStats>(result.data);
+}
+
+/**
+ * Fetch platform-wide prize stats.
+ */
+export async function getPrizeStats(
+  baseUrl: string,
+  ctx?: ApiContext,
+): Promise<PrizeStats> {
+  const result = await apiFetch<{ data: Record<string, unknown> }>(
+    `${baseUrl}/activity/prize-stats`,
+    fetchOpts(ctx),
+  );
+  return snakeToCamel<PrizeStats>(result.data);
 }

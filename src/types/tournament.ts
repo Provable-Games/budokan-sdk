@@ -1,4 +1,6 @@
 export interface Tournament {
+  id: string;
+  /** @deprecated Use `id` instead */
   tournamentId: string;
   gameAddress: string;
   createdAt: string;
@@ -42,6 +44,14 @@ export interface Tournament {
   entryCount: number;
   prizeCount: number;
   submissionCount: number;
+  paidPlaces?: number;
+  // Prize aggregation (populated when includePrizeSummary is requested)
+  prizeAggregation?: Array<{
+    tokenAddress: string;
+    tokenType: string;
+    totalAmount: string;
+    nftCount: number;
+  }>;
   // Metadata
   metadata: unknown | null;
 }
@@ -86,4 +96,15 @@ export interface TournamentListParams {
   phase?: Phase;
   limit?: number;
   offset?: number;
+  sort?: "start_time" | "end_time" | "players" | "created_at";
+  fromId?: string;
+  excludeIds?: string[];
+  whitelistedExtensions?: string[];
+  includePrizeSummary?: "summary" | boolean;
+}
+
+export interface QualificationEntry {
+  tournamentId: string;
+  qualificationProof: unknown;
+  entryCount: number;
 }

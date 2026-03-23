@@ -44,9 +44,9 @@ export async function getGameTournaments(
   }>(`${baseUrl}/games/${normalized}/tournaments${qs}`, fetchOpts(ctx));
   return {
     data: result.data.map((item) => snakeToCamel<Tournament>(item)),
-    total: result.total,
-    limit: result.limit,
-    offset: result.offset,
+    total: (result as any).pagination?.total ?? result.total,
+    limit: (result as any).pagination?.limit ?? result.limit,
+    offset: (result as any).pagination?.offset ?? result.offset,
   };
 }
 

@@ -3,9 +3,10 @@ import type { BudokanClientConfig } from "./types/config.js";
 import type { Tournament, TournamentListParams } from "./types/tournament.js";
 import type { LeaderboardEntry } from "./types/leaderboard.js";
 import type { Registration } from "./types/registration.js";
-import type { Prize } from "./types/prize.js";
-import type { PlayerStats, PlayerTournament } from "./types/player.js";
-import type { ActivityEvent, ActivityParams, PlatformStats } from "./types/activity.js";
+import type { Prize, RewardClaim, RewardClaimSummary, PrizeAggregation } from "./types/prize.js";
+import type { PlayerStats, PlayerTournament, PlayerTournamentParams } from "./types/player.js";
+import type { ActivityEvent, ActivityParams, PlatformStats, PrizeStats } from "./types/activity.js";
+import type { QualificationEntry } from "./types/tournament.js";
 import type { PaginatedResult } from "./types/common.js";
 import type { WSChannel, WSEventHandler } from "./types/websocket.js";
 import type { ConnectionStatusState } from "./datasource/health.js";
@@ -16,6 +17,10 @@ import {
   getTournamentLeaderboard as apiGetTournamentLeaderboard,
   getTournamentRegistrations as apiGetTournamentRegistrations,
   getTournamentPrizes as apiGetTournamentPrizes,
+  getTournamentRewardClaims as apiGetTournamentRewardClaims,
+  getTournamentRewardClaimsSummary as apiGetTournamentRewardClaimsSummary,
+  getTournamentQualifications as apiGetTournamentQualifications,
+  getTournamentPrizeAggregation as apiGetTournamentPrizeAggregation,
 } from "./api/tournaments.js";
 import {
   getPlayerTournaments as apiGetPlayerTournaments,
@@ -28,6 +33,7 @@ import {
 import {
   getActivity as apiGetActivity,
   getActivityStats as apiGetActivityStats,
+  getPrizeStats as apiGetPrizeStats,
 } from "./api/activity.js";
 import { WSManager } from "./ws/manager.js";
 import { getChainConfig } from "./chains/constants.js";
@@ -326,7 +332,7 @@ export class BudokanClient {
    */
   async getPlayerTournaments(
     address: string,
-    params?: { limit?: number; offset?: number },
+    params?: PlayerTournamentParams,
   ): Promise<PaginatedResult<PlayerTournament>> {
     return apiGetPlayerTournaments(this.resolvedConfig.apiBaseUrl, address, params, this.apiCtx);
   }
@@ -382,6 +388,46 @@ export class BudokanClient {
     return apiGetGameStats(this.resolvedConfig.apiBaseUrl, gameAddress, this.apiCtx);
   }
 
+  // ---- Reward Claims & Qualifications (API-only) ----
+
+  /**
+   * Fetch reward claims for a tournament.
+   * API-only -- no RPC fallback available.
+   */
+  async getTournamentRewardClaims(
+    tournamentId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<PaginatedResult<RewardClaim>> {
+    return apiGetTournamentRewardClaims(this.resolvedConfig.apiBaseUrl, tournamentId, params, this.apiCtx);
+  }
+
+  /**
+   * Fetch reward claims summary for a tournament.
+   * API-only -- no RPC fallback available.
+   */
+  async getTournamentRewardClaimsSummary(tournamentId: string): Promise<RewardClaimSummary> {
+    return apiGetTournamentRewardClaimsSummary(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx);
+  }
+
+  /**
+   * Fetch qualifications for a tournament.
+   * API-only -- no RPC fallback available.
+   */
+  async getTournamentQualifications(
+    tournamentId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<PaginatedResult<QualificationEntry>> {
+    return apiGetTournamentQualifications(this.resolvedConfig.apiBaseUrl, tournamentId, params, this.apiCtx);
+  }
+
+  /**
+   * Fetch prize aggregation for a tournament.
+   * API-only -- no RPC fallback available.
+   */
+  async getTournamentPrizeAggregation(tournamentId: string): Promise<PrizeAggregation[]> {
+    return apiGetTournamentPrizeAggregation(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx);
+  }
+
   // ---- Activity Queries (API-only, activity is indexed) ----
 
   /**
@@ -398,6 +444,14 @@ export class BudokanClient {
    */
   async getActivityStats(): Promise<PlatformStats> {
     return apiGetActivityStats(this.resolvedConfig.apiBaseUrl, this.apiCtx);
+  }
+
+  /**
+   * Fetch platform-wide prize stats.
+   * API-only — no RPC fallback available.
+   */
+  async getPrizeStats(): Promise<PrizeStats> {
+    return apiGetPrizeStats(this.resolvedConfig.apiBaseUrl, this.apiCtx);
   }
 
   // ---- WebSocket ----

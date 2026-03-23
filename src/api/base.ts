@@ -86,6 +86,24 @@ export async function apiFetch<T>(url: string, options: ApiFetchOptions = {}): P
 }
 
 /**
+ * Extract pagination from API response.
+ * The API wraps pagination in a `pagination` object, but the SDK
+ * PaginatedResult type uses flat fields (total, limit, offset).
+ */
+export function extractPagination(result: Record<string, unknown>, defaults?: { limit?: number; offset?: number }): {
+  total: number | undefined;
+  limit: number;
+  offset: number;
+} {
+  const pagination = result.pagination as { total?: number; limit?: number; offset?: number } | undefined;
+  return {
+    total: pagination?.total ?? (result.total as number | undefined),
+    limit: pagination?.limit ?? (result.limit as number | undefined) ?? defaults?.limit ?? 50,
+    offset: pagination?.offset ?? (result.offset as number | undefined) ?? defaults?.offset ?? 0,
+  };
+}
+
+/**
  * Build a query string from a record of key-value pairs.
  * Undefined and null values are omitted.
  */

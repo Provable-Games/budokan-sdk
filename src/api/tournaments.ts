@@ -1,11 +1,23 @@
-import type { Tournament, TournamentListParams } from "../types/tournament.js";
+import type { Tournament, TournamentListParams, QualificationEntry } from "../types/tournament.js";
 import type { LeaderboardEntry } from "../types/leaderboard.js";
 import type { Registration } from "../types/registration.js";
-import type { Prize } from "../types/prize.js";
+import type { Prize, RewardClaim, RewardClaimSummary, PrizeAggregation } from "../types/prize.js";
 import type { PaginatedResult } from "../types/common.js";
-import { apiFetch, buildQueryString } from "./base.js";
+import { apiFetch, buildQueryString, extractPagination } from "./base.js";
 import type { ApiFetchOptions } from "./base.js";
 import { snakeToCamel } from "../utils/mappers.js";
+
+/** Normalize tournament: ensure both `id` and `tournamentId` exist */
+function normalizeTournament(raw: Record<string, unknown>): Tournament {
+  const t = snakeToCamel<Tournament & { id?: string }>(raw);
+  // API returns `id`, SDK type uses `tournamentId` — keep both in sync
+  if (t.id && !t.tournamentId) {
+    (t as any).tournamentId = t.id;
+  } else if (t.tournamentId && !t.id) {
+    (t as any).id = t.tournamentId;
+  }
+  return t as Tournament;
+}
 
 interface ApiContext {
   retryAttempts?: number;
@@ -35,18 +47,19 @@ export async function getTournaments(
     phase: params?.phase,
     limit: params?.limit,
     offset: params?.offset,
+    sort: params?.sort,
+    from_id: params?.fromId,
+    exclude_ids: params?.excludeIds?.join(","),
+    whitelisted_extensions: params?.whitelistedExtensions?.join(","),
+    include_prizes: params?.includePrizeSummary,
   });
-  const result = await apiFetch<{
-    data: Record<string, unknown>[];
-    total?: number;
-    limit: number;
-    offset: number;
-  }>(`${baseUrl}/tournaments${qs}`, fetchOpts(ctx));
+  const result = await apiFetch<Record<string, unknown>>(`${baseUrl}/tournaments${qs}`, fetchOpts(ctx));
+  const { total, limit: resLimit, offset: resOffset } = extractPagination(result, { limit: params?.limit, offset: params?.offset });
   return {
-    data: result.data.map((item) => snakeToCamel<Tournament>(item)),
-    total: result.total,
-    limit: result.limit,
-    offset: result.offset,
+    data: (result.data as Record<string, unknown>[]).map((item) => normalizeTournament(item)),
+    total,
+    limit: resLimit,
+    offset: resOffset,
   };
 }
 
@@ -62,7 +75,7 @@ export async function getTournament(
     `${baseUrl}/tournaments/${tournamentId}`,
     fetchOpts(ctx),
   );
-  return snakeToCamel<Tournament>(result.data);
+  return normalizeTournament(result.data);
 }
 
 /**
@@ -93,17 +106,13 @@ export async function getTournamentRegistrations(
     limit: params?.limit,
     offset: params?.offset,
   });
-  const result = await apiFetch<{
-    data: Record<string, unknown>[];
-    total?: number;
-    limit: number;
-    offset: number;
-  }>(`${baseUrl}/tournaments/${tournamentId}/registrations${qs}`, fetchOpts(ctx));
+  const result = await apiFetch<Record<string, unknown>>(`${baseUrl}/tournaments/${tournamentId}/registrations${qs}`, fetchOpts(ctx));
+  const { total, limit: resLimit, offset: resOffset } = extractPagination(result, { limit: params?.limit, offset: params?.offset });
   return {
-    data: result.data.map((item) => snakeToCamel<Registration>(item)),
-    total: result.total,
-    limit: result.limit,
-    offset: result.offset,
+    data: (result.data as Record<string, unknown>[]).map((item) => snakeToCamel<Registration>(item)),
+    total,
+    limit: resLimit,
+    offset: resOffset,
   };
 }
 
@@ -120,4 +129,81 @@ export async function getTournamentPrizes(
     fetchOpts(ctx),
   );
   return result.data.map((item) => snakeToCamel<Prize>(item));
+}
+
+/**
+ * Fetch reward claims for a tournament.
+ */
+export async function getTournamentRewardClaims(
+  baseUrl: string,
+  tournamentId: string,
+  params?: { limit?: number; offset?: number },
+  ctx?: ApiContext,
+): Promise<PaginatedResult<RewardClaim>> {
+  const qs = buildQueryString({
+    limit: params?.limit,
+    offset: params?.offset,
+  });
+  const result = await apiFetch<Record<string, unknown>>(`${baseUrl}/tournaments/${tournamentId}/reward-claims${qs}`, fetchOpts(ctx));
+  const { total, limit: resLimit, offset: resOffset } = extractPagination(result, { limit: params?.limit, offset: params?.offset });
+  return {
+    data: (result.data as Record<string, unknown>[]).map((item) => snakeToCamel<RewardClaim>(item)),
+    total,
+    limit: resLimit,
+    offset: resOffset,
+  };
+}
+
+/**
+ * Fetch reward claims summary for a tournament.
+ */
+export async function getTournamentRewardClaimsSummary(
+  baseUrl: string,
+  tournamentId: string,
+  ctx?: ApiContext,
+): Promise<RewardClaimSummary> {
+  const result = await apiFetch<{ data: Record<string, unknown> }>(
+    `${baseUrl}/tournaments/${tournamentId}/reward-claims/summary`,
+    fetchOpts(ctx),
+  );
+  return snakeToCamel<RewardClaimSummary>(result.data);
+}
+
+/**
+ * Fetch qualifications for a tournament.
+ */
+export async function getTournamentQualifications(
+  baseUrl: string,
+  tournamentId: string,
+  params?: { limit?: number; offset?: number },
+  ctx?: ApiContext,
+): Promise<PaginatedResult<QualificationEntry>> {
+  const qs = buildQueryString({
+    limit: params?.limit,
+    offset: params?.offset,
+  });
+  const result = await apiFetch<Record<string, unknown>>(`${baseUrl}/tournaments/${tournamentId}/qualifications${qs}`, fetchOpts(ctx));
+  const { total, limit: resLimit, offset: resOffset } = extractPagination(result, { limit: params?.limit, offset: params?.offset });
+  return {
+    data: (result.data as Record<string, unknown>[]).map((item) => snakeToCamel<QualificationEntry>(item)),
+    total,
+    limit: resLimit,
+    offset: resOffset,
+  };
+}
+
+/**
+ * Fetch prize aggregation for a tournament.
+ */
+export async function getTournamentPrizeAggregation(
+  baseUrl: string,
+  tournamentId: string,
+  ctx?: ApiContext,
+): Promise<PrizeAggregation[]> {
+  const qs = buildQueryString({ include_aggregation: true });
+  const result = await apiFetch<{ data: Record<string, unknown>[] }>(
+    `${baseUrl}/tournaments/${tournamentId}/prizes${qs}`,
+    fetchOpts(ctx),
+  );
+  return result.data.map((item) => snakeToCamel<PrizeAggregation>(item));
 }

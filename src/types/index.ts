@@ -7,15 +7,17 @@ export type {
   LeaderboardConfig,
   Phase,
   TournamentListParams,
+  QualificationEntry,
 } from "./tournament.js";
 export type { Registration } from "./registration.js";
 export type { LeaderboardEntry } from "./leaderboard.js";
-export type { Prize, RewardClaim } from "./prize.js";
-export type { PlayerStats, PlayerTournament } from "./player.js";
+export type { Prize, RewardClaim, PrizeAggregation, RewardClaimSummary } from "./prize.js";
+export type { PlayerStats, PlayerTournament, PlayerTournamentParams } from "./player.js";
 export type {
   ActivityEvent,
   ActivityParams,
   PlatformStats,
+  PrizeStats,
 } from "./activity.js";
 export type { PaginatedResult } from "./common.js";
 export type {
