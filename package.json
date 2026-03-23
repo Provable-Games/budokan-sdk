@@ -71,5 +71,8 @@
   },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@rollup/rollup-linux-arm64-gnu": "^4.59.0"
   }
 }

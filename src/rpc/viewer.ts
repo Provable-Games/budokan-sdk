@@ -155,6 +155,7 @@ function parseTournament(
   const hasEntryRequirement = entryRequirement !== null;
 
   return {
+    id,
     tournamentId: id,
     gameAddress,
     createdAt: new Date(createdAt * 1000).toISOString(),
@@ -234,38 +235,44 @@ function parsePrize(raw: unknown): Prize {
   const tokenTypeData = obj.token_type as Record<string, unknown> | undefined;
 
   // TokenTypeData is a Cairo enum: { erc20: ERC20Data } or { erc721: ERC721Data }
-  let tokenType: unknown = null;
+  let tokenType: "erc20" | "erc721" = "erc20";
+  let amount: string | null = null;
+  let tokenId: string | null = null;
+  let distributionType: string | null = null;
+  let distributionWeight: number | null = null;
+  let distributionCount: number | null = null;
   let payoutPosition = 0;
+
   if (tokenTypeData) {
     if ("erc20" in tokenTypeData) {
       const erc20 = tokenTypeData.erc20 as Record<string, unknown>;
-      tokenType = {
-        type: "erc20",
-        amount: String(erc20.amount ?? "0"),
-        distribution: erc20.distribution ?? null,
-        distributionCount: Number(erc20.distribution_count ?? 0),
-      };
+      tokenType = "erc20";
+      amount = String(erc20.amount ?? "0");
+      const dist = erc20.distribution as Record<string, unknown> | null;
+      if (dist) {
+        distributionType = String(dist.type ?? null);
+        distributionWeight = dist.weight != null ? Number(dist.weight) : null;
+      }
+      distributionCount = erc20.distribution_count != null ? Number(erc20.distribution_count) : null;
     } else if ("erc721" in tokenTypeData) {
       const erc721 = tokenTypeData.erc721 as Record<string, unknown>;
-      tokenType = {
-        type: "erc721",
-        id: String(erc721.id ?? "0"),
-      };
+      tokenType = "erc721";
+      tokenId = String(erc721.id ?? "0");
     } else if ("variant" in tokenTypeData) {
       // starknet.js v6 enum style
       const variant = (tokenTypeData.variant as string)?.toLowerCase();
       if (variant === "erc20") {
-        tokenType = {
-          type: "erc20",
-          amount: String(tokenTypeData.amount ?? "0"),
-          distribution: tokenTypeData.distribution ?? null,
-          distributionCount: Number(tokenTypeData.distribution_count ?? 0),
-        };
+        tokenType = "erc20";
+        amount = String(tokenTypeData.amount ?? "0");
+        const dist = tokenTypeData.distribution as Record<string, unknown> | null;
+        if (dist) {
+          distributionType = String(dist.type ?? null);
+          distributionWeight = dist.weight != null ? Number(dist.weight) : null;
+        }
+        distributionCount = tokenTypeData.distribution_count != null ? Number(tokenTypeData.distribution_count) : null;
       } else if (variant === "erc721") {
-        tokenType = {
-          type: "erc721",
-          id: String(tokenTypeData.id ?? "0"),
-        };
+        tokenType = "erc721";
+        tokenId = String(tokenTypeData.id ?? "0");
       }
     }
   }
@@ -276,6 +283,11 @@ function parsePrize(raw: unknown): Prize {
     payoutPosition,
     tokenAddress: num.toHex(obj.token_address as bigint),
     tokenType,
+    amount,
+    tokenId,
+    distributionType,
+    distributionWeight,
+    distributionCount,
     sponsorAddress: num.toHex(obj.sponsor_address as bigint),
   };
 }

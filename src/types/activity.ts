@@ -23,3 +23,12 @@ export interface PlatformStats {
   totalRegistrations: number;
   totalSubmissions: number;
 }
+
+export interface PrizeStats {
+  tokenTotals: Array<{
+    tokenAddress: string;
+    totalPrizes: number;
+    totalAmount: string;
+  }>;
+  totalNftPrizes: number;
+}

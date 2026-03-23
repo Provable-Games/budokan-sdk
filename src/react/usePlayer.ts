@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { PlayerStats, PlayerTournament } from "../types/player.js";
+import type { PlayerStats, PlayerTournament, PlayerTournamentParams } from "../types/player.js";
 import type { PaginatedResult } from "../types/common.js";
 import { useBudokanClient } from "./context.js";
 
@@ -83,7 +83,10 @@ export interface UsePlayerTournamentsResult {
 /**
  * Hook to fetch tournaments a player has registered for.
  */
-export function usePlayerTournaments(address: string | undefined): UsePlayerTournamentsResult {
+export function usePlayerTournaments(
+  address: string | undefined,
+  params?: PlayerTournamentParams,
+): UsePlayerTournamentsResult {
   const client = useBudokanClient();
   const [tournaments, setTournaments] = useState<PaginatedResult<PlayerTournament> | null>(null);
   const [loading, setLoading] = useState(!!address);
@@ -94,11 +97,11 @@ export function usePlayerTournaments(address: string | undefined): UsePlayerTour
     setLoading(true);
     setError(null);
     client
-      .getPlayerTournaments(address)
+      .getPlayerTournaments(address, params)
       .then(setTournaments)
       .catch(setError)
       .finally(() => setLoading(false));
-  }, [client, address]);
+  }, [client, address, params]);
 
   useEffect(() => { fetch(); }, [fetch]);
 

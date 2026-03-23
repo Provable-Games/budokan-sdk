@@ -12,15 +12,20 @@ export type {
   LeaderboardConfig,
   Phase,
   TournamentListParams,
+  QualificationEntry,
   Registration,
   LeaderboardEntry,
   Prize,
   RewardClaim,
+  PrizeAggregation,
+  RewardClaimSummary,
   PlayerStats,
   PlayerTournament,
+  PlayerTournamentParams,
   ActivityEvent,
   ActivityParams,
   PlatformStats,
+  PrizeStats,
   PaginatedResult,
   WSChannel,
   WSSubscribeMessage,
@@ -53,10 +58,14 @@ export {
   getTournamentLeaderboard,
   getTournamentRegistrations,
   getTournamentPrizes,
+  getTournamentRewardClaims,
+  getTournamentRewardClaimsSummary,
+  getTournamentQualifications,
+  getTournamentPrizeAggregation,
 } from "./api/tournaments.js";
 export { getPlayerTournaments, getPlayerStats } from "./api/players.js";
 export { getGameTournaments, getGameStats } from "./api/games.js";
-export { getActivity, getActivityStats } from "./api/activity.js";
+export { getActivity, getActivityStats, getPrizeStats } from "./api/activity.js";
 
 // WebSocket
 export { WSManager } from "./ws/manager.js";
