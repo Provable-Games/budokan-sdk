@@ -92,6 +92,8 @@ export function usePlayerTournaments(
   const [loading, setLoading] = useState(!!address);
   const [error, setError] = useState<Error | null>(null);
 
+  const paramsKey = JSON.stringify(params);
+
   const fetch = useCallback(() => {
     if (!address) return;
     setLoading(true);
@@ -101,7 +103,8 @@ export function usePlayerTournaments(
       .then(setTournaments)
       .catch(setError)
       .finally(() => setLoading(false));
-  }, [client, address, params]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, address, paramsKey]);
 
   useEffect(() => { fetch(); }, [fetch]);
 

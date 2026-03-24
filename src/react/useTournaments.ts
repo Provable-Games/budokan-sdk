@@ -12,16 +12,18 @@ export interface UseTournamentsResult {
 
 /**
  * Hook to fetch a paginated list of tournaments.
+ * Pass `undefined` to skip fetching (useful for conditional queries).
  */
 export function useTournaments(params?: TournamentListParams): UseTournamentsResult {
   const client = useBudokanClient();
   const [tournaments, setTournaments] = useState<PaginatedResult<Tournament> | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!!params);
   const [error, setError] = useState<Error | null>(null);
 
   const paramsKey = JSON.stringify(params);
 
   const fetch = useCallback(() => {
+    if (params === undefined) return;
     setLoading(true);
     setError(null);
     client

@@ -1,6 +1,6 @@
 {
   "name": "@provable-games/budokan-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "TypeScript SDK for Budokan — tournament management platform on Starknet",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -72,7 +72,5 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "dependencies": {
-    "@rollup/rollup-linux-arm64-gnu": "^4.59.0"
-  }
+  "dependencies": {}
 }
