@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { QualificationEntry } from "../types/tournament.js";
 import type { PaginatedResult } from "../types/common.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UseQualificationsResult {
   qualifications: PaginatedResult<QualificationEntry> | null;
@@ -18,6 +19,8 @@ export function useQualifications(tournamentId: string | undefined): UseQualific
   const [qualifications, setQualifications] = useState<PaginatedResult<QualificationEntry> | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setQualifications, setError);
 
   const fetch = useCallback(() => {
     if (!tournamentId) return;

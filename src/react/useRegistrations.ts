@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { Registration } from "../types/registration.js";
 import type { PaginatedResult } from "../types/common.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UseRegistrationsResult {
   registrations: PaginatedResult<Registration> | null;
@@ -21,6 +22,8 @@ export function useRegistrations(
   const [registrations, setRegistrations] = useState<PaginatedResult<Registration> | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setRegistrations, setError);
 
   const paramsKey = JSON.stringify(params);
 

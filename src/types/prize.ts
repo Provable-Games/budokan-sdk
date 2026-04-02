@@ -1,3 +1,15 @@
+// ---- Reward types (from budokan_interfaces) ----
+
+export type RewardType =
+  | { Prize: { tokenAddress: string; tokenType: string } }
+  | { EntryFee: EntryFeeRewardType };
+
+export type EntryFeeRewardType =
+  | { Position: number }
+  | { TournamentCreator: Record<string, never> }
+  | { GameCreator: Record<string, never> }
+  | { Refund: string };
+
 export interface Prize {
   prizeId: string;
   tournamentId: string;
@@ -14,7 +26,7 @@ export interface Prize {
 
 export interface RewardClaim {
   tournamentId: string;
-  rewardType: unknown;
+  rewardType: RewardType;
   claimed: boolean;
 }
 

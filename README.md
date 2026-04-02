@@ -120,26 +120,46 @@ interface BudokanClientConfig {
 
 ## Data Source Fallback
 
-The SDK monitors API and RPC health in the background. When the API goes down, methods with RPC fallback automatically switch to direct contract calls. When the API recovers, it switches back.
+The SDK supports two data sources: **API** (REST indexer) and **RPC** (direct Starknet contract calls via BudokanViewer). Set `primarySource: "api"` (default) or `primarySource: "rpc"` in config. When the API goes down, methods with RPC support automatically fall back to direct contract calls.
 
-| Method | API | RPC | Fallback |
-|--------|-----|-----|----------|
-| `getTournaments(params?)` | Yes | Yes | Yes |
-| `getTournament(id)` | Yes | Yes | Yes |
-| `getTournamentLeaderboard(id)` | Yes | Yes | Yes |
-| `getTournamentRegistrations(id)` | Yes | Yes | Yes |
-| `getTournamentPrizes(id)` | Yes | Yes | Yes |
-| `getGameTournaments(addr)` | Yes | Yes | Yes |
-| `getTournamentRewardClaims(id)` | Yes | — | API only |
-| `getTournamentRewardClaimsSummary(id)` | Yes | — | API only |
-| `getTournamentQualifications(id)` | Yes | — | API only |
-| `getTournamentPrizeAggregation(id)` | Yes | — | API only |
-| `getPlayerTournaments(addr)` | Yes | — | API only |
-| `getPlayerStats(addr)` | Yes | — | API only |
-| `getGameStats(addr)` | Yes | — | API only |
-| `getActivity(params?)` | Yes | — | API only |
-| `getActivityStats()` | Yes | — | API only |
-| `getPrizeStats()` | Yes | — | API only |
+### Feature Support
+
+| Method | API | RPC | Notes |
+|--------|:---:|:---:|-------|
+| **Tournaments** | | | |
+| `getTournaments(params?)` | ✅ | ✅ | RPC groups phases: `scheduled` includes Scheduled+Registration+Staging, `live` includes Live+Submission |
+| `getTournament(id)` | ✅ | ✅ | |
+| `getTournamentLeaderboard(id)` | ✅ | ✅ | |
+| `getTournamentRegistrations(id)` | ✅ | ✅ | RPC: `playerAddress` and `gameAddress` fields will be empty |
+| `getTournamentPrizes(id)` | ✅ | ✅ | |
+| `getGameTournaments(addr)` | ✅ | ✅ | |
+| **Prize Aggregation** | | | |
+| `getTournamentPrizeAggregation(id)` | ✅ | ❌ | API only |
+| `includePrizeSummary` param | ✅ | ✅ | RPC fetches prizes per tournament and builds aggregation client-side |
+| **Rewards** | | | |
+| `getTournamentRewardClaims(id)` | ✅ | ✅ | RPC checks `is_prize_claimed` per prize via viewer |
+| `getTournamentRewardClaimsSummary(id)` | ✅ | ✅ | RPC returns totals from viewer |
+| `getTournamentQualifications(id)` | ✅ | ⚠️ | On-chain via `get_qualification_entries` — requires proof input, not yet wired |
+| **Players** | | | |
+| `getPlayerTournaments(addr)` | ✅ | ✅ | RPC iterates tournaments and checks entry ownership via ERC721 |
+| `getPlayerStats(addr)` | ✅ | ❌ | API only — requires aggregated stats |
+| **Games** | | | |
+| `getGameStats(addr)` | ✅ | ❌ | API only — requires aggregated stats |
+| **Activity** | | | |
+| `getActivity(params?)` | ✅ | ❌ | API only — activity is indexed from events |
+| `getActivityStats()` | ✅ | ❌ | API only — requires aggregated stats |
+| `getPrizeStats()` | ✅ | ❌ | API only — requires aggregated stats |
+| **WebSocket** | | | |
+| `subscribe(channels, handler)` | ✅ | ❌ | Requires API WebSocket server |
+
+### RPC Behaviour
+
+When `primarySource: "rpc"`:
+- All tournament queries go directly to the **BudokanViewer** contract — no API calls
+- Phase filtering uses `tournaments_by_phases` for grouped queries (e.g., "scheduled" queries 3 phases in 1 RPC call)
+- Prize aggregation for tournament cards is built client-side from per-tournament prize data
+- API-only methods will throw an error — they require the indexed API
+- Stale data is automatically cleared when switching networks
 
 ## API Reference
 
@@ -193,10 +213,10 @@ Error classes: `BudokanError`, `BudokanApiError`, `BudokanTimeoutError`, `Budoka
 ## Development
 
 ```bash
-npm install
-npm run build        # ESM + CJS to dist/
-npm run typecheck    # TypeScript validation
-npm run dev          # Watch mode
+bun install
+bun run build        # ESM + CJS to dist/
+bun run typecheck    # TypeScript validation
+bun run dev          # Watch mode
 ```
 
 ## Publishing

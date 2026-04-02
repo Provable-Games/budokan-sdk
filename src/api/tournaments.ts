@@ -11,12 +11,8 @@ import { snakeToCamel } from "../utils/mappers.js";
 function normalizeTournament(raw: Record<string, unknown>): Tournament {
   const t = snakeToCamel<Tournament & { id?: string }>(raw);
   // API returns `id`, SDK type uses `tournamentId` — keep both in sync
-  if (t.id && !t.tournamentId) {
-    (t as any).tournamentId = t.id;
-  } else if (t.tournamentId && !t.id) {
-    (t as any).id = t.tournamentId;
-  }
-  return t as Tournament;
+  const id = t.id ?? t.tournamentId;
+  return { ...t, id, tournamentId: id };
 }
 
 interface ApiContext {

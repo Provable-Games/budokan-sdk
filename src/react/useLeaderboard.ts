@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { LeaderboardEntry } from "../types/leaderboard.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UseLeaderboardResult {
   leaderboard: LeaderboardEntry[] | null;
@@ -17,6 +18,8 @@ export function useLeaderboard(tournamentId: string | undefined): UseLeaderboard
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[] | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setLeaderboard, setError);
 
   const fetch = useCallback(() => {
     if (!tournamentId) return;

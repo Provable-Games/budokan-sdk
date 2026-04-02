@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { PlayerStats, PlayerTournament, PlayerTournamentParams } from "../types/player.js";
 import type { PaginatedResult } from "../types/common.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UsePlayerResult {
   tournaments: PaginatedResult<PlayerTournament> | null;
@@ -19,6 +20,8 @@ export function usePlayer(address: string | undefined): UsePlayerResult {
   const [stats, setStats] = useState<PlayerStats | null>(null);
   const [loading, setLoading] = useState(!!address);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setTournaments, setStats, setError);
 
   const fetch = useCallback(() => {
     if (!address) return;
@@ -57,6 +60,8 @@ export function usePlayerStats(address: string | undefined): UsePlayerStatsResul
   const [loading, setLoading] = useState(!!address);
   const [error, setError] = useState<Error | null>(null);
 
+  useResetOnClient(client, setStats, setError);
+
   const fetch = useCallback(() => {
     if (!address) return;
     setLoading(true);
@@ -91,6 +96,8 @@ export function usePlayerTournaments(
   const [tournaments, setTournaments] = useState<PaginatedResult<PlayerTournament> | null>(null);
   const [loading, setLoading] = useState(!!address);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setTournaments, setError);
 
   const paramsKey = JSON.stringify(params);
 

@@ -1,5 +1,7 @@
 import type { Contract } from "starknet";
+import { CairoCustomEnum } from "starknet";
 import type { Tournament } from "../types/tournament.js";
+import type { EntryRequirement, Distribution } from "@provable-games/metagame-sdk";
 import type { LeaderboardEntry } from "../types/leaderboard.js";
 import type { Registration } from "../types/registration.js";
 import type { Prize } from "../types/prize.js";
@@ -68,17 +70,26 @@ function decodeByteArray(value: unknown): string {
   return result;
 }
 
+/** All Phase variant names for CairoCustomEnum */
+const PHASE_VARIANTS = ["Scheduled", "Registration", "Staging", "Live", "Submission", "Finalized"] as const;
+
+const PHASE_NAME_MAP: Record<Phase, string> = {
+  scheduled: "Scheduled",
+  registration: "Registration",
+  staging: "Staging",
+  live: "Live",
+  submission: "Submission",
+  finalized: "Finalized",
+};
+
 /** Convert SDK Phase string to Cairo enum argument for RPC calls */
-function phaseToRpcArg(phase: Phase): Record<string, Record<string, never>> {
-  const map: Record<Phase, string> = {
-    scheduled: "Scheduled",
-    registration: "Registration",
-    staging: "Staging",
-    live: "Live",
-    submission: "Submission",
-    finalized: "Finalized",
-  };
-  return { [map[phase]]: {} };
+function phaseToRpcArg(phase: Phase): CairoCustomEnum {
+  const activeVariant = PHASE_NAME_MAP[phase];
+  const variants: Record<string, unknown> = {};
+  for (const v of PHASE_VARIANTS) {
+    variants[v] = v === activeVariant ? {} : undefined;
+  }
+  return new CairoCustomEnum(variants);
 }
 
 // =========================================================================
@@ -145,13 +156,13 @@ function parseTournament(
       tournamentCreatorShare: Number(ef.tournament_creator_share ?? 0),
       gameCreatorShare: Number(ef.game_creator_share ?? 0),
       refundShare: Number(ef.refund_share ?? 0),
-      distribution: ef.distribution ?? null,
+      distribution: (ef.distribution as Distribution) ?? null,
       distributionCount: Number(ef.distribution_count ?? 0),
     };
   }
 
   // EntryRequirement (Option)
-  const entryRequirement = parseOption(obj.entry_requirement) ?? null;
+  const entryRequirement = parseOption(obj.entry_requirement) as EntryRequirement | null;
   const hasEntryRequirement = entryRequirement !== null;
 
   return {
@@ -244,36 +255,45 @@ function parsePrize(raw: unknown): Prize {
   let payoutPosition = 0;
 
   if (tokenTypeData) {
-    if ("erc20" in tokenTypeData) {
-      const erc20 = tokenTypeData.erc20 as Record<string, unknown>;
+    // starknet.js v9 returns CairoCustomEnum with the active variant as a
+    // non-undefined property. Check activeVariant() or the property value.
+    const activeVariant = typeof tokenTypeData.activeVariant === "function"
+      ? (tokenTypeData.activeVariant as () => string)()
+      : tokenTypeData.erc20 !== undefined ? "erc20"
+      : tokenTypeData.erc721 !== undefined ? "erc721"
+      : null;
+
+    // starknet.js v9 nests data under .variant.{name} or directly under .{name}
+    const variantData = (tokenTypeData as Record<string, unknown>).variant as Record<string, unknown> | undefined;
+    const unwrap = (name: string) =>
+      (variantData?.[name] ?? tokenTypeData[name]) as Record<string, unknown> | undefined;
+
+    if (activeVariant === "erc20") {
+      const erc20 = unwrap("erc20");
       tokenType = "erc20";
-      amount = String(erc20.amount ?? "0");
-      const dist = erc20.distribution as Record<string, unknown> | null;
-      if (dist) {
-        distributionType = String(dist.type ?? null);
-        distributionWeight = dist.weight != null ? Number(dist.weight) : null;
-      }
-      distributionCount = erc20.distribution_count != null ? Number(erc20.distribution_count) : null;
-    } else if ("erc721" in tokenTypeData) {
-      const erc721 = tokenTypeData.erc721 as Record<string, unknown>;
-      tokenType = "erc721";
-      tokenId = String(erc721.id ?? "0");
-    } else if ("variant" in tokenTypeData) {
-      // starknet.js v6 enum style
-      const variant = (tokenTypeData.variant as string)?.toLowerCase();
-      if (variant === "erc20") {
-        tokenType = "erc20";
-        amount = String(tokenTypeData.amount ?? "0");
-        const dist = tokenTypeData.distribution as Record<string, unknown> | null;
-        if (dist) {
-          distributionType = String(dist.type ?? null);
-          distributionWeight = dist.weight != null ? Number(dist.weight) : null;
+      amount = String(erc20?.amount ?? "0");
+
+      // distribution is Option<Distribution> — unwrap the Option then the enum
+      const distOption = erc20?.distribution as Record<string, unknown> | undefined;
+      const distInner = distOption?.Some as Record<string, unknown> | undefined;
+      if (distInner) {
+        // Distribution enum: { variant: { Linear: n } } or { Linear: n }
+        const distVariant = (distInner.variant ?? distInner) as Record<string, unknown>;
+        const distType = Object.keys(distVariant).find((k) => distVariant[k] !== undefined);
+        if (distType) {
+          distributionType = distType.toLowerCase();
+          const distValue = distVariant[distType];
+          distributionWeight = distValue != null ? Number(distValue) : null;
         }
-        distributionCount = tokenTypeData.distribution_count != null ? Number(tokenTypeData.distribution_count) : null;
-      } else if (variant === "erc721") {
-        tokenType = "erc721";
-        tokenId = String(tokenTypeData.id ?? "0");
       }
+
+      // distribution_count is Option<u32>
+      const countOption = erc20?.distribution_count as Record<string, unknown> | undefined;
+      distributionCount = countOption?.Some != null ? Number(countOption.Some) : null;
+    } else if (activeVariant === "erc721") {
+      const erc721 = unwrap("erc721");
+      tokenType = "erc721";
+      tokenId = String(erc721?.id ?? "0");
     }
   }
 
@@ -374,14 +394,36 @@ export async function viewerTournamentsByCreator(
   }, contract.address);
 }
 
+/**
+ * Map a single SDK phase to the group of on-chain phases it represents.
+ * "scheduled" includes Scheduled + Registration + Staging (all pre-game).
+ * "live" includes Live + Submission (active gameplay).
+ * "finalized" stays as-is.
+ */
+const PHASE_GROUPS: Record<Phase, Phase[]> = {
+  scheduled: ["scheduled", "registration", "staging"],
+  registration: ["registration"],
+  staging: ["staging"],
+  live: ["live", "submission"],
+  submission: ["submission"],
+  finalized: ["finalized"],
+};
+
 export async function viewerTournamentsByPhase(
   contract: Contract,
   phase: Phase,
   offset: number,
   limit: number,
 ): Promise<TournamentFilterResult> {
+  const phases = PHASE_GROUPS[phase];
+  if (phases.length === 1) {
+    return wrapRpcCall(async () => {
+      const result = await contract.call("tournaments_by_phase", [phaseToRpcArg(phase), offset, limit]);
+      return parseFilterResult(result);
+    }, contract.address);
+  }
   return wrapRpcCall(async () => {
-    const result = await contract.call("tournaments_by_phase", [phaseToRpcArg(phase), offset, limit]);
+    const result = await contract.call("tournaments_by_phases", [phases.map(phaseToRpcArg), offset, limit]);
     return parseFilterResult(result);
   }, contract.address);
 }
@@ -453,5 +495,58 @@ export async function viewerPrizes(
   return wrapRpcCall(async () => {
     const result = await contract.call("tournament_prizes", [tournamentId]);
     return (result as unknown[]).map(parsePrize);
+  }, contract.address);
+}
+
+// --- Reward Claims ---
+
+export interface ViewerRewardClaim {
+  rewardType: Record<string, unknown>;
+  claimed: boolean;
+}
+
+export interface ViewerRewardClaimResult {
+  claims: ViewerRewardClaim[];
+  total: number;
+  totalClaimed: number;
+  totalUnclaimed: number;
+}
+
+export async function viewerRewardClaims(
+  contract: Contract,
+  tournamentId: string,
+  offset: number,
+  limit: number,
+): Promise<ViewerRewardClaimResult> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("tournament_reward_claims", [tournamentId, offset, limit]);
+    const obj = result as Record<string, unknown>;
+    const claims = (obj.claims as unknown[])?.map((raw) => {
+      const claim = raw as Record<string, unknown>;
+      return {
+        rewardType: claim.reward_type as Record<string, unknown>,
+        claimed: Boolean(claim.claimed),
+      };
+    }) ?? [];
+    return {
+      claims,
+      total: Number(obj.total ?? 0),
+      totalClaimed: Number(obj.total_claimed ?? 0),
+      totalUnclaimed: Number(obj.total_unclaimed ?? 0),
+    };
+  }, contract.address);
+}
+
+// --- Player Tournaments ---
+
+export async function viewerPlayerTournaments(
+  contract: Contract,
+  playerAddress: string,
+  offset: number,
+  limit: number,
+): Promise<TournamentFilterResult> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("player_tournaments", [playerAddress, offset, limit]);
+    return parseFilterResult(result);
   }, contract.address);
 }

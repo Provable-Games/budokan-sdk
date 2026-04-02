@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { Prize } from "../types/prize.js";
 import type { PrizeStats } from "../types/activity.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UsePrizesResult {
   prizes: Prize[] | null;
@@ -18,6 +19,8 @@ export function usePrizes(tournamentId: string | undefined): UsePrizesResult {
   const [prizes, setPrizes] = useState<Prize[] | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setPrizes, setError);
 
   const fetch = useCallback(() => {
     if (!tournamentId) return;
@@ -50,6 +53,8 @@ export function usePrizeStats(): UsePrizeStatsResult {
   const [prizeStats, setPrizeStats] = useState<PrizeStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setPrizeStats, setError);
 
   const fetch = useCallback(() => {
     setLoading(true);

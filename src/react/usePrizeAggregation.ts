@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { PrizeAggregation } from "../types/prize.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UsePrizeAggregationResult {
   prizeAggregation: PrizeAggregation[] | null;
@@ -17,6 +18,8 @@ export function usePrizeAggregation(tournamentId: string | undefined): UsePrizeA
   const [prizeAggregation, setPrizeAggregation] = useState<PrizeAggregation[] | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setPrizeAggregation, setError);
 
   const fetch = useCallback(() => {
     if (!tournamentId) return;
