@@ -14,7 +14,7 @@ export interface WSUnsubscribeMessage {
 export interface WSEventMessage {
   type: "event";
   channel: WSChannel;
-  data: unknown;
+  data: Record<string, unknown>;
   timestamp: string;
 }
 

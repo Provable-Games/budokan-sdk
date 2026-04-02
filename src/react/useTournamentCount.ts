@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Phase } from "../types/tournament.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UseTournamentCountResult {
   count: number | null;
@@ -17,6 +18,8 @@ export function useTournamentCount(phase?: Phase): UseTournamentCountResult {
   const [count, setCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setCount, setError);
 
   const fetch = useCallback(() => {
     setLoading(true);
@@ -44,6 +47,8 @@ export function usePlayerTournamentCount(
   const [count, setCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(!!address);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setCount, setError);
 
   const fetch = useCallback(() => {
     if (!address) return;

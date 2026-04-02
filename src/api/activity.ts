@@ -1,6 +1,6 @@
 import type { ActivityEvent, ActivityParams, PlatformStats, PrizeStats } from "../types/activity.js";
 import type { PaginatedResult } from "../types/common.js";
-import { apiFetch, buildQueryString } from "./base.js";
+import { apiFetch, buildQueryString, extractPagination } from "./base.js";
 import type { ApiFetchOptions } from "./base.js";
 import { snakeToCamel } from "../utils/mappers.js";
 
@@ -33,17 +33,13 @@ export async function getActivity(
     limit: params?.limit,
     offset: params?.offset,
   });
-  const result = await apiFetch<{
-    data: Record<string, unknown>[];
-    total?: number;
-    limit: number;
-    offset: number;
-  }>(`${baseUrl}/activity${qs}`, fetchOpts(ctx));
+  const result = await apiFetch<Record<string, unknown>>(`${baseUrl}/activity${qs}`, fetchOpts(ctx));
+  const { total, limit: resLimit, offset: resOffset } = extractPagination(result, { limit: params?.limit, offset: params?.offset });
   return {
-    data: result.data.map((item) => snakeToCamel<ActivityEvent>(item)),
-    total: (result as any).pagination?.total ?? result.total,
-    limit: (result as any).pagination?.limit ?? result.limit,
-    offset: (result as any).pagination?.offset ?? result.offset,
+    data: (result.data as Record<string, unknown>[]).map((item) => snakeToCamel<ActivityEvent>(item)),
+    total,
+    limit: resLimit,
+    offset: resOffset,
   };
 }
 

@@ -1,3 +1,13 @@
+import type {
+  EntryRequirement,
+  EntryFee,
+  Distribution,
+  QualificationProof,
+} from "@provable-games/metagame-sdk";
+
+// Re-export shared game-components types so consumers can import from budokan-sdk
+export type { EntryRequirement, EntryFee, Distribution, QualificationProof };
+
 export interface Tournament {
   id: string;
   /** @deprecated Use `id` instead */
@@ -38,7 +48,7 @@ export interface Tournament {
   schedule: Schedule | null;
   gameConfig: GameConfig | null;
   entryFee: EntryFee | null;
-  entryRequirement: unknown | null;
+  entryRequirement: EntryRequirement | null;
   leaderboardConfig: LeaderboardConfig | null;
   // Counts
   entryCount: number;
@@ -53,7 +63,7 @@ export interface Tournament {
     nftCount: number;
   }>;
   // Metadata
-  metadata: unknown | null;
+  metadata: Record<string, unknown> | null;
 }
 
 export interface Schedule {
@@ -71,16 +81,6 @@ export interface GameConfig {
   paymaster: boolean;
   clientUrl: string | null;
   renderer: string | null;
-}
-
-export interface EntryFee {
-  tokenAddress: string;
-  amount: string;
-  tournamentCreatorShare: number;
-  gameCreatorShare: number;
-  refundShare: number;
-  distribution: unknown;
-  distributionCount: number;
 }
 
 export interface LeaderboardConfig {
@@ -105,6 +105,6 @@ export interface TournamentListParams {
 
 export interface QualificationEntry {
   tournamentId: string;
-  qualificationProof: unknown;
+  qualificationProof: QualificationProof | null;
   entryCount: number;
 }

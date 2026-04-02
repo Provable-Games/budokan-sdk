@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { RewardClaim, RewardClaimSummary } from "../types/prize.js";
 import type { PaginatedResult } from "../types/common.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UseRewardClaimsResult {
   rewardClaims: PaginatedResult<RewardClaim> | null;
@@ -18,6 +19,8 @@ export function useRewardClaims(tournamentId: string | undefined): UseRewardClai
   const [rewardClaims, setRewardClaims] = useState<PaginatedResult<RewardClaim> | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setRewardClaims, setError);
 
   const fetch = useCallback(() => {
     if (!tournamentId) return;
@@ -50,6 +53,8 @@ export function useRewardClaimsSummary(tournamentId: string | undefined): UseRew
   const [summary, setSummary] = useState<RewardClaimSummary | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setSummary, setError);
 
   const fetch = useCallback(() => {
     if (!tournamentId) return;

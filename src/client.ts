@@ -1,4 +1,4 @@
-import type { RpcProvider, Contract } from "starknet";
+import type { RpcProvider, Contract, Abi } from "starknet";
 import type { BudokanClientConfig } from "./types/config.js";
 import type { Tournament, TournamentListParams } from "./types/tournament.js";
 import type { LeaderboardEntry } from "./types/leaderboard.js";
@@ -51,6 +51,8 @@ import {
   viewerRegistrations,
   viewerLeaderboard,
   viewerPrizes,
+  viewerRewardClaims,
+  viewerPlayerTournaments,
 } from "./rpc/viewer.js";
 
 import viewerAbi from "./rpc/abis/budokanViewer.json";
@@ -158,7 +160,7 @@ export class BudokanClient {
       throw new RpcError("No rpcUrl configured");
     }
     if (this.resolvedConfig.provider) {
-      this.cachedProvider = this.resolvedConfig.provider as RpcProvider;
+      this.cachedProvider = this.resolvedConfig.provider;
       return this.cachedProvider;
     }
     this.cachedProvider = await createProvider(this.resolvedConfig.rpcUrl);
@@ -172,7 +174,7 @@ export class BudokanClient {
     }
     const provider = await this.getProvider();
     this.cachedViewerContract = await createContract(
-      viewerAbi as unknown[],
+      viewerAbi as Abi,
       this.resolvedConfig.viewerAddress,
       provider,
     );
@@ -217,6 +219,44 @@ export class BudokanClient {
       let data: Tournament[] = [];
       if (filterResult.tournamentIds.length > 0) {
         data = await viewerTournamentsBatch(contract, filterResult.tournamentIds);
+
+        // Fetch prize aggregation if requested
+        if (params?.includePrizeSummary) {
+          const prizePromises = data.map((t) =>
+            viewerPrizes(contract, t.id).catch(() => [] as Prize[]),
+          );
+          const allPrizes = await Promise.all(prizePromises);
+          data = data.map((t, i) => {
+            const prizes = allPrizes[i];
+            if (prizes.length === 0) return t;
+            // Build aggregation by token
+            const tokenMap = new Map<string, { tokenAddress: string; tokenType: string; totalAmount: bigint; nftCount: number }>();
+            for (const p of prizes) {
+              const key = p.tokenAddress;
+              const existing = tokenMap.get(key);
+              if (existing) {
+                existing.totalAmount += BigInt(p.amount ?? "0");
+                if (p.tokenType === "erc721") existing.nftCount += 1;
+              } else {
+                tokenMap.set(key, {
+                  tokenAddress: p.tokenAddress,
+                  tokenType: p.tokenType,
+                  totalAmount: BigInt(p.amount ?? "0"),
+                  nftCount: p.tokenType === "erc721" ? 1 : 0,
+                });
+              }
+            }
+            return {
+              ...t,
+              prizeAggregation: Array.from(tokenMap.values()).map((v) => ({
+                tokenAddress: v.tokenAddress,
+                tokenType: v.tokenType,
+                totalAmount: v.totalAmount.toString(),
+                nftCount: v.nftCount,
+              })),
+            };
+          });
+        }
       }
 
       return { data, total: filterResult.total, limit, offset };
@@ -328,13 +368,39 @@ export class BudokanClient {
 
   /**
    * Fetch tournaments that a player has registered for.
-   * API-only — no RPC fallback available.
+   * Supports RPC fallback via viewer contract.
    */
   async getPlayerTournaments(
     address: string,
     params?: PlayerTournamentParams,
   ): Promise<PaginatedResult<PlayerTournament>> {
-    return apiGetPlayerTournaments(this.resolvedConfig.apiBaseUrl, address, params, this.apiCtx);
+    const rpcFallback = async (): Promise<PaginatedResult<PlayerTournament>> => {
+      const contract = await this.getViewerContract();
+      const offset = params?.offset ?? 0;
+      const limit = params?.limit ?? 20;
+      const filterResult = await viewerPlayerTournaments(contract, address, offset, limit);
+
+      let data: PlayerTournament[] = [];
+      if (filterResult.tournamentIds.length > 0) {
+        const tournaments = await viewerTournamentsBatch(contract, filterResult.tournamentIds);
+        data = tournaments.map((t) => ({
+          ...t,
+          tournamentId: t.id,
+        })) as unknown as PlayerTournament[];
+      }
+
+      return { data, total: filterResult.total, limit, offset };
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetPlayerTournaments(this.resolvedConfig.apiBaseUrl, address, params, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**
@@ -388,25 +454,64 @@ export class BudokanClient {
     return apiGetGameStats(this.resolvedConfig.apiBaseUrl, gameAddress, this.apiCtx);
   }
 
-  // ---- Reward Claims & Qualifications (API-only) ----
+  // ---- Reward Claims & Qualifications ----
 
   /**
    * Fetch reward claims for a tournament.
-   * API-only -- no RPC fallback available.
+   * Supports RPC fallback via viewer contract.
    */
   async getTournamentRewardClaims(
     tournamentId: string,
     params?: { limit?: number; offset?: number },
   ): Promise<PaginatedResult<RewardClaim>> {
-    return apiGetTournamentRewardClaims(this.resolvedConfig.apiBaseUrl, tournamentId, params, this.apiCtx);
+    const rpcFallback = async (): Promise<PaginatedResult<RewardClaim>> => {
+      const contract = await this.getViewerContract();
+      const offset = params?.offset ?? 0;
+      const limit = params?.limit ?? 100;
+      const result = await viewerRewardClaims(contract, tournamentId, offset, limit);
+      const data: RewardClaim[] = result.claims.map((c) => ({
+        tournamentId,
+        rewardType: c.rewardType as RewardClaim["rewardType"],
+        claimed: c.claimed,
+      }));
+      return { data, total: result.total, limit, offset };
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetTournamentRewardClaims(this.resolvedConfig.apiBaseUrl, tournamentId, params, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**
    * Fetch reward claims summary for a tournament.
-   * API-only -- no RPC fallback available.
+   * Supports RPC fallback via viewer contract.
    */
   async getTournamentRewardClaimsSummary(tournamentId: string): Promise<RewardClaimSummary> {
-    return apiGetTournamentRewardClaimsSummary(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx);
+    const rpcFallback = async (): Promise<RewardClaimSummary> => {
+      const contract = await this.getViewerContract();
+      const result = await viewerRewardClaims(contract, tournamentId, 0, 0);
+      return {
+        totalPrizes: result.total,
+        totalClaimed: result.totalClaimed,
+        totalUnclaimed: result.totalUnclaimed,
+      };
+    };
+
+    if (this.resolvedConfig.primarySource === "rpc") {
+      return rpcFallback();
+    }
+
+    return withFallback(
+      () => apiGetTournamentRewardClaimsSummary(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /**

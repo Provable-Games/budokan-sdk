@@ -3,7 +3,7 @@ export interface ActivityEvent {
   eventType: string;
   tournamentId: string | null;
   playerAddress: string | null;
-  data: unknown;
+  data: Record<string, unknown>;
   blockNumber: string;
   txHash: string;
   eventIndex: number;

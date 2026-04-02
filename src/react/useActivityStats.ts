@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { PlatformStats, PrizeStats } from "../types/activity.js";
 import { useBudokanClient } from "./context.js";
+import { useResetOnClient } from "./useResetOnClient.js";
 
 export interface UseActivityStatsResult {
   stats: PlatformStats | null;
@@ -17,6 +18,8 @@ export function useActivityStats(): UseActivityStatsResult {
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  useResetOnClient(client, setStats, setError);
 
   const fetch = useCallback(() => {
     setLoading(true);

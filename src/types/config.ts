@@ -1,3 +1,5 @@
+import type { RpcProvider } from "starknet";
+
 export type DataSource = "api" | "rpc";
 
 export interface BudokanClientConfig {
@@ -5,7 +7,7 @@ export interface BudokanClientConfig {
   wsUrl?: string;
   rpcUrl?: string;
   chain?: "mainnet" | "sepolia";
-  provider?: unknown;
+  provider?: RpcProvider;
   viewerAddress?: string;
   budokanAddress?: string;
   primarySource?: DataSource;
