@@ -119,13 +119,18 @@ function parseTournament(
   const gameEndDelay = Number(sched?.game_end_delay ?? 0);
   const submissionDuration = Number(sched?.submission_duration ?? 0);
 
-  // Compute absolute timestamps
+  // Compute absolute timestamps (matching contract: each delay is relative to its anchor)
   const createdAtStr = String(createdAt);
-  const registrationStartTime = String(createdAt + registrationStartDelay);
-  const registrationEndTime = String(createdAt + registrationEndDelay);
-  const gameStartTime = String(createdAt + gameStartDelay);
-  const gameEndTime = String(createdAt + gameEndDelay);
-  const submissionEndTime = String(createdAt + gameEndDelay + submissionDuration);
+  const regStart = createdAt + registrationStartDelay;
+  const regEnd = regStart + registrationEndDelay;
+  const gameStart = createdAt + gameStartDelay;
+  const gameEnd = gameStart + gameEndDelay;
+  const subEnd = gameEnd + submissionDuration;
+  const registrationStartTime = String(regStart);
+  const registrationEndTime = String(regEnd);
+  const gameStartTime = String(gameStart);
+  const gameEndTime = String(gameEnd);
+  const submissionEndTime = String(subEnd);
 
   // GameConfig
   const gc = obj.game_config as Record<string, unknown> | undefined;
