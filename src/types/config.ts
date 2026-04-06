@@ -6,6 +6,8 @@ export interface BudokanClientConfig {
   apiBaseUrl: string;
   wsUrl?: string;
   rpcUrl?: string;
+  /** Custom headers to send with every RPC request (e.g. Authorization). */
+  rpcHeaders?: Record<string, string>;
   chain?: "mainnet" | "sepolia";
   provider?: RpcProvider;
   viewerAddress?: string;

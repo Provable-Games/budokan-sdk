@@ -9,9 +9,15 @@ async function getStarknet(): Promise<typeof import("starknet")> {
   return starknetModule;
 }
 
-export async function createProvider(rpcUrl: string): Promise<RpcProvider> {
+export async function createProvider(
+  rpcUrl: string,
+  headers?: Record<string, string>,
+): Promise<RpcProvider> {
   const { RpcProvider: StarknetRpcProvider } = await getStarknet();
-  const provider = new StarknetRpcProvider({ nodeUrl: rpcUrl });
+  const provider = new StarknetRpcProvider({
+    nodeUrl: rpcUrl,
+    ...(headers && { headers }),
+  });
   return provider;
 }
 
