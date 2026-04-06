@@ -163,7 +163,10 @@ export class BudokanClient {
       this.cachedProvider = this.resolvedConfig.provider;
       return this.cachedProvider;
     }
-    this.cachedProvider = await createProvider(this.resolvedConfig.rpcUrl);
+    this.cachedProvider = await createProvider(
+      this.resolvedConfig.rpcUrl,
+      this.resolvedConfig.rpcHeaders,
+    );
     return this.cachedProvider;
   }
 
