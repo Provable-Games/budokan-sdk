@@ -11,15 +11,15 @@ export const CHAINS: Record<string, ChainConfig> = {
     rpcUrl: "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_10",
     apiBaseUrl: "https://budokan-api-production.up.railway.app",
     wsUrl: "wss://budokan-api-production.up.railway.app/ws",
-    budokanAddress: "0x06137ee50f57d08e1d0d758045e45982e2f5ef4826091ed4db136e7afbafecce",
-    viewerAddress: "0x075d1b9f1a9751e6b8f8b5a4ca8e721f10c58d87607e703cda062e512a434443",
+    budokanAddress: "0x020239968a74f3e190d1b5aa0c6316845062a00cb98f787d661fd4aa860553de",
+    viewerAddress: "0x00ace1cce7933fbf0d7a2f32c3b5d4c36e63462f81c7845b6d7ac5d8dbdbefa4",
   },
   sepolia: {
     rpcUrl: "https://starknet-sepolia.public.blastapi.io",
     apiBaseUrl: "https://budokan-api-sepolia.up.railway.app",
     wsUrl: "wss://budokan-api-sepolia.up.railway.app/ws",
-    budokanAddress: "0x0423583f0e9461708a3eb763f1c4d89dbda03814da0f048af5eefd9c97e742ef",
-    viewerAddress: "0x0568f6078cdf5d9aad881c3a9da1be58fc83018a198bb78ca43a663070a4fcbb",
+    budokanAddress: "0x02a97de0b33fb115f5c32a58232d9941c4a5b2598aa71d30c094076cc592f94d",
+    viewerAddress: "0x001f2be7ed811bfa859f8f6cf72d2458f36103ac172ff8e65a630bbcc6cf98c9",
   },
 } as const;
 
