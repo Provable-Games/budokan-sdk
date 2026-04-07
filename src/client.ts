@@ -295,7 +295,7 @@ export class BudokanClient {
     } catch {
       // API 404 or network error — try RPC fallback
       try {
-        this.connectionStatus.markApiDown();
+        this.connectionStatus.markApiUnavailable();
         return await rpcFallback();
       } catch {
         return null;
