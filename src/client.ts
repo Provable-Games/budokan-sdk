@@ -280,7 +280,7 @@ export class BudokanClient {
    * Fetch a single tournament by its ID.
    * Supports RPC fallback when API is unavailable.
    */
-  async getTournament(tournamentId: string): Promise<Tournament> {
+  async getTournament(tournamentId: string): Promise<Tournament | null> {
     const rpcFallback = async () => {
       const contract = await this.getViewerContract();
       return viewerTournamentDetail(contract, tournamentId);
@@ -290,11 +290,17 @@ export class BudokanClient {
       return rpcFallback();
     }
 
-    return withFallback(
-      () => apiGetTournament(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx),
-      rpcFallback,
-      this.connectionStatus,
-    );
+    try {
+      return await apiGetTournament(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx);
+    } catch {
+      // API 404 or network error — try RPC fallback
+      try {
+        this.connectionStatus.markApiDown();
+        return await rpcFallback();
+      } catch {
+        return null;
+      }
+    }
   }
 
   /**

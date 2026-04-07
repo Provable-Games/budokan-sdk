@@ -438,10 +438,13 @@ export async function viewerTournamentsByPhase(
 export async function viewerTournamentDetail(
   contract: Contract,
   tournamentId: string,
-): Promise<Tournament> {
+): Promise<Tournament | null> {
   return wrapRpcCall(async () => {
     const result = await contract.call("tournament_detail", [tournamentId]);
-    return parseTournamentFullState(result);
+    const tournament = parseTournamentFullState(result);
+    // Viewer returns a zero-filled struct for non-existent tournaments
+    if (!tournament.gameAddress || tournament.gameAddress === "0x0") return null;
+    return tournament;
   }, contract.address);
 }
 
