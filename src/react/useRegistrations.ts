@@ -8,7 +8,7 @@ export interface UseRegistrationsResult {
   registrations: PaginatedResult<Registration> | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -27,15 +27,18 @@ export function useRegistrations(
 
   const paramsKey = JSON.stringify(params);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournamentRegistrations(tournamentId, params)
-      .then(setRegistrations)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournamentRegistrations(tournamentId, params);
+      setRegistrations(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, tournamentId, paramsKey]);
 

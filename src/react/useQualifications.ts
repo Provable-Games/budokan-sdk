@@ -8,7 +8,7 @@ export interface UseQualificationsResult {
   qualifications: PaginatedResult<QualificationEntry> | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -22,15 +22,18 @@ export function useQualifications(tournamentId: string | undefined): UseQualific
 
   useResetOnClient(client, setQualifications, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournamentQualifications(tournamentId)
-      .then(setQualifications)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournamentQualifications(tournamentId);
+      setQualifications(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, tournamentId]);
 
   useEffect(() => { fetch(); }, [fetch]);

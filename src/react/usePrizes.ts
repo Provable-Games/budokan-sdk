@@ -8,7 +8,7 @@ export interface UsePrizesResult {
   prizes: Prize[] | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -22,15 +22,18 @@ export function usePrizes(tournamentId: string | undefined): UsePrizesResult {
 
   useResetOnClient(client, setPrizes, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournamentPrizes(tournamentId)
-      .then(setPrizes)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournamentPrizes(tournamentId);
+      setPrizes(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, tournamentId]);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -42,7 +45,7 @@ export interface UsePrizeStatsResult {
   prizeStats: PrizeStats | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -56,14 +59,17 @@ export function usePrizeStats(): UsePrizeStatsResult {
 
   useResetOnClient(client, setPrizeStats, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     setLoading(true);
     setError(null);
-    client
-      .getPrizeStats()
-      .then(setPrizeStats)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getPrizeStats();
+      setPrizeStats(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client]);
 
   useEffect(() => { fetch(); }, [fetch]);

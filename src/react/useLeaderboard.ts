@@ -7,7 +7,7 @@ export interface UseLeaderboardResult {
   leaderboard: LeaderboardEntry[] | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -21,15 +21,18 @@ export function useLeaderboard(tournamentId: string | undefined): UseLeaderboard
 
   useResetOnClient(client, setLeaderboard, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournamentLeaderboard(tournamentId)
-      .then(setLeaderboard)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournamentLeaderboard(tournamentId);
+      setLeaderboard(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, tournamentId]);
 
   useEffect(() => { fetch(); }, [fetch]);

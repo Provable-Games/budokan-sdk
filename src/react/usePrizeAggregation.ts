@@ -7,7 +7,7 @@ export interface UsePrizeAggregationResult {
   prizeAggregation: PrizeAggregation[] | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -21,15 +21,18 @@ export function usePrizeAggregation(tournamentId: string | undefined): UsePrizeA
 
   useResetOnClient(client, setPrizeAggregation, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournamentPrizeAggregation(tournamentId)
-      .then(setPrizeAggregation)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournamentPrizeAggregation(tournamentId);
+      setPrizeAggregation(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, tournamentId]);
 
   useEffect(() => { fetch(); }, [fetch]);

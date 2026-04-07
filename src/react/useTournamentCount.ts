@@ -7,7 +7,7 @@ export interface UseTournamentCountResult {
   count: number | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -21,14 +21,17 @@ export function useTournamentCount(phase?: Phase): UseTournamentCountResult {
 
   useResetOnClient(client, setCount, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     setLoading(true);
     setError(null);
-    client
-      .getTournaments({ phase, limit: 1 })
-      .then((r) => setCount(r.total ?? 0))
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournaments({ phase, limit: 1 });
+      setCount(result.total ?? 0);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, phase]);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -50,15 +53,18 @@ export function usePlayerTournamentCount(
 
   useResetOnClient(client, setCount, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!address) return;
     setLoading(true);
     setError(null);
-    client
-      .getPlayerTournaments(address, { phase, limit: 1 })
-      .then((r) => setCount(r.total ?? 0))
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getPlayerTournaments(address, { phase, limit: 1 });
+      setCount(result.total ?? 0);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, address, phase]);
 
   useEffect(() => { fetch(); }, [fetch]);

@@ -8,7 +8,7 @@ export interface UseRewardClaimsResult {
   rewardClaims: PaginatedResult<RewardClaim> | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -22,15 +22,18 @@ export function useRewardClaims(tournamentId: string | undefined): UseRewardClai
 
   useResetOnClient(client, setRewardClaims, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournamentRewardClaims(tournamentId)
-      .then(setRewardClaims)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournamentRewardClaims(tournamentId);
+      setRewardClaims(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, tournamentId]);
 
   useEffect(() => { fetch(); }, [fetch]);
@@ -42,7 +45,7 @@ export interface UseRewardClaimsSummaryResult {
   summary: RewardClaimSummary | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -56,15 +59,18 @@ export function useRewardClaimsSummary(tournamentId: string | undefined): UseRew
 
   useResetOnClient(client, setSummary, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournamentRewardClaimsSummary(tournamentId)
-      .then(setSummary)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournamentRewardClaimsSummary(tournamentId);
+      setSummary(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, tournamentId]);
 
   useEffect(() => { fetch(); }, [fetch]);

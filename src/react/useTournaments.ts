@@ -8,7 +8,7 @@ export interface UseTournamentsResult {
   tournaments: PaginatedResult<Tournament> | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -25,15 +25,18 @@ export function useTournaments(params?: TournamentListParams): UseTournamentsRes
 
   useResetOnClient(client, setTournaments, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (params === undefined) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournaments(params)
-      .then(setTournaments)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const result = await client.getTournaments(params);
+      setTournaments(result);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, paramsKey]);
 
@@ -46,7 +49,7 @@ export interface UseTournamentResult {
   tournament: Tournament | null;
   loading: boolean;
   error: Error | null;
-  refetch: () => void;
+  refetch: () => Promise<void>;
 }
 
 /**
@@ -60,15 +63,18 @@ export function useTournament(tournamentId: string | undefined): UseTournamentRe
 
   useResetOnClient(client, setTournament, setError);
 
-  const fetch = useCallback(() => {
+  const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
-    client
-      .getTournament(tournamentId)
-      .then(setTournament)
-      .catch(setError)
-      .finally(() => setLoading(false));
+    try {
+      const data = await client.getTournament(tournamentId);
+      setTournament(data);
+    } catch (e) {
+      setError(e as Error);
+    } finally {
+      setLoading(false);
+    }
   }, [client, tournamentId]);
 
   useEffect(() => { fetch(); }, [fetch]);
