@@ -7,6 +7,8 @@ export {
   viewerTournamentDetail,
   viewerTournamentsBatch,
   viewerRegistrations,
+  viewerRegistrationsByOwner,
+  viewerRegistrationsByTokenIds,
   viewerLeaderboard,
   viewerPrizes,
 } from "./viewer.js";

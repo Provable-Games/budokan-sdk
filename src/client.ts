@@ -49,6 +49,8 @@ import {
   viewerTournamentDetail,
   viewerTournamentsBatch,
   viewerRegistrations,
+  viewerRegistrationsByOwner,
+  viewerRegistrationsByTokenIds,
   viewerLeaderboard,
   viewerPrizes,
   viewerRewardClaims,
@@ -328,7 +330,9 @@ export class BudokanClient {
   /**
    * Fetch registrations for a tournament.
    * Supports RPC fallback when API is unavailable.
-   * Note: In RPC mode, `playerAddress` and `gameAddress` fields will be empty strings.
+   * Note: In RPC mode, `playerAddress` and `gameAddress` fields will be empty strings,
+   * and filter params (`playerAddress`, `gameTokenIds`, `hasSubmitted`, `isBanned`)
+   * are applied via on-chain viewer functions where supported.
    */
   async getTournamentRegistrations(
     tournamentId: string,
@@ -338,6 +342,12 @@ export class BudokanClient {
       const contract = await this.getViewerContract();
       const offset = params?.offset ?? 0;
       const limit = params?.limit ?? 20;
+      if (params?.playerAddress) {
+        return viewerRegistrationsByOwner(contract, tournamentId, params.playerAddress, offset, limit);
+      }
+      if (params?.gameTokenIds?.length) {
+        return viewerRegistrationsByTokenIds(contract, tournamentId, params.gameTokenIds, offset, limit);
+      }
       return viewerRegistrations(contract, tournamentId, offset, limit);
     };
 

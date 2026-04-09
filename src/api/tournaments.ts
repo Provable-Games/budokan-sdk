@@ -100,7 +100,7 @@ export async function getTournamentRegistrations(
 ): Promise<PaginatedResult<Registration>> {
   const qs = buildQueryString({
     player_address: params?.playerAddress,
-    game_token_ids: params?.gameTokenIds?.join(","),
+    game_token_ids: params?.gameTokenIds?.length ? params.gameTokenIds.join(",") : undefined,
     has_submitted: params?.hasSubmitted,
     is_banned: params?.isBanned,
     limit: params?.limit,

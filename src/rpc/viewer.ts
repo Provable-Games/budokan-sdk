@@ -480,6 +480,48 @@ export async function viewerRegistrations(
   }, contract.address);
 }
 
+export async function viewerRegistrationsByOwner(
+  contract: Contract,
+  tournamentId: string,
+  owner: string,
+  offset: number,
+  limit: number,
+): Promise<PaginatedResult<Registration>> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("tournament_registrations_by_owner", [tournamentId, owner, offset, limit]);
+    const obj = result as Record<string, unknown>;
+    const entries = (obj.entries as unknown[]) ?? [];
+    const total = Number(obj.total ?? 0);
+    return {
+      data: entries.map((e) => parseRegistration(e, tournamentId)),
+      total,
+      limit,
+      offset,
+    };
+  }, contract.address);
+}
+
+export async function viewerRegistrationsByTokenIds(
+  contract: Contract,
+  tournamentId: string,
+  tokenIds: string[],
+  offset: number,
+  limit: number,
+): Promise<PaginatedResult<Registration>> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("tournament_registrations_by_token_ids", [tournamentId, tokenIds, offset, limit]);
+    const obj = result as Record<string, unknown>;
+    const entries = (obj.entries as unknown[]) ?? [];
+    const total = Number(obj.total ?? 0);
+    return {
+      data: entries.map((e) => parseRegistration(e, tournamentId)),
+      total,
+      limit,
+      offset,
+    };
+  }, contract.address);
+}
+
 // --- Leaderboard ---
 
 export async function viewerLeaderboard(
