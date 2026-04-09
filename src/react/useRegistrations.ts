@@ -16,7 +16,7 @@ export interface UseRegistrationsResult {
  */
 export function useRegistrations(
   tournamentId: string | undefined,
-  params?: { playerAddress?: string; limit?: number; offset?: number },
+  params?: { playerAddress?: string; gameTokenIds?: string[]; limit?: number; offset?: number },
 ): UseRegistrationsResult {
   const client = useBudokanClient();
   const [registrations, setRegistrations] = useState<PaginatedResult<Registration> | null>(null);
