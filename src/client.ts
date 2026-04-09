@@ -332,7 +332,7 @@ export class BudokanClient {
    */
   async getTournamentRegistrations(
     tournamentId: string,
-    params?: { playerAddress?: string; gameTokenIds?: string[]; limit?: number; offset?: number },
+    params?: { playerAddress?: string; gameTokenIds?: string[]; hasSubmitted?: boolean; isBanned?: boolean; limit?: number; offset?: number },
   ): Promise<PaginatedResult<Registration>> {
     const rpcFallback = async () => {
       const contract = await this.getViewerContract();

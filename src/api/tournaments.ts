@@ -95,12 +95,14 @@ export async function getTournamentLeaderboard(
 export async function getTournamentRegistrations(
   baseUrl: string,
   tournamentId: string,
-  params?: { playerAddress?: string; gameTokenIds?: string[]; limit?: number; offset?: number },
+  params?: { playerAddress?: string; gameTokenIds?: string[]; hasSubmitted?: boolean; isBanned?: boolean; limit?: number; offset?: number },
   ctx?: ApiContext,
 ): Promise<PaginatedResult<Registration>> {
   const qs = buildQueryString({
     player_address: params?.playerAddress,
     game_token_ids: params?.gameTokenIds?.join(","),
+    has_submitted: params?.hasSubmitted,
+    is_banned: params?.isBanned,
     limit: params?.limit,
     offset: params?.offset,
   });
