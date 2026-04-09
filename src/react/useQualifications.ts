@@ -14,7 +14,10 @@ export interface UseQualificationsResult {
 /**
  * Hook to fetch qualification entries for a tournament.
  */
-export function useQualifications(tournamentId: string | undefined): UseQualificationsResult {
+export function useQualifications(
+  tournamentId: string | undefined,
+  params?: { limit?: number; offset?: number },
+): UseQualificationsResult {
   const client = useBudokanClient();
   const [qualifications, setQualifications] = useState<PaginatedResult<QualificationEntry> | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
@@ -22,19 +25,22 @@ export function useQualifications(tournamentId: string | undefined): UseQualific
 
   useResetOnClient(client, setQualifications, setError);
 
+  const paramsKey = JSON.stringify(params);
+
   const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await client.getTournamentQualifications(tournamentId);
+      const result = await client.getTournamentQualifications(tournamentId, params);
       setQualifications(result);
     } catch (e) {
       setError(e as Error);
     } finally {
       setLoading(false);
     }
-  }, [client, tournamentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, tournamentId, paramsKey]);
 
   useEffect(() => { fetch(); }, [fetch]);
 

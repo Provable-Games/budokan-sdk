@@ -14,7 +14,10 @@ export interface UsePlayerResult {
 /**
  * Hook to fetch a player's tournament history and stats.
  */
-export function usePlayer(address: string | undefined): UsePlayerResult {
+export function usePlayer(
+  address: string | undefined,
+  params?: PlayerTournamentParams,
+): UsePlayerResult {
   const client = useBudokanClient();
   const [tournaments, setTournaments] = useState<PaginatedResult<PlayerTournament> | null>(null);
   const [stats, setStats] = useState<PlayerStats | null>(null);
@@ -23,13 +26,15 @@ export function usePlayer(address: string | undefined): UsePlayerResult {
 
   useResetOnClient(client, setTournaments, setStats, setError);
 
+  const paramsKey = JSON.stringify(params);
+
   const fetch = useCallback(async () => {
     if (!address) return;
     setLoading(true);
     setError(null);
     try {
       const [tournamentsResult, statsResult] = await Promise.all([
-        client.getPlayerTournaments(address),
+        client.getPlayerTournaments(address, params),
         client.getPlayerStats(address),
       ]);
       setTournaments(tournamentsResult);
@@ -39,7 +44,8 @@ export function usePlayer(address: string | undefined): UsePlayerResult {
     } finally {
       setLoading(false);
     }
-  }, [client, address]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, address, paramsKey]);
 
   useEffect(() => { fetch(); }, [fetch]);
 

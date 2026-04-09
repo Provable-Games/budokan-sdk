@@ -14,7 +14,10 @@ export interface UseRewardClaimsResult {
 /**
  * Hook to fetch reward claims for a tournament.
  */
-export function useRewardClaims(tournamentId: string | undefined): UseRewardClaimsResult {
+export function useRewardClaims(
+  tournamentId: string | undefined,
+  params?: { limit?: number; offset?: number },
+): UseRewardClaimsResult {
   const client = useBudokanClient();
   const [rewardClaims, setRewardClaims] = useState<PaginatedResult<RewardClaim> | null>(null);
   const [loading, setLoading] = useState(!!tournamentId);
@@ -22,19 +25,22 @@ export function useRewardClaims(tournamentId: string | undefined): UseRewardClai
 
   useResetOnClient(client, setRewardClaims, setError);
 
+  const paramsKey = JSON.stringify(params);
+
   const fetch = useCallback(async () => {
     if (!tournamentId) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await client.getTournamentRewardClaims(tournamentId);
+      const result = await client.getTournamentRewardClaims(tournamentId, params);
       setRewardClaims(result);
     } catch (e) {
       setError(e as Error);
     } finally {
       setLoading(false);
     }
-  }, [client, tournamentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, tournamentId, paramsKey]);
 
   useEffect(() => { fetch(); }, [fetch]);
 
