@@ -256,6 +256,7 @@ function parsePrize(raw: unknown): Prize {
   let tokenId: string | null = null;
   let distributionType: string | null = null;
   let distributionWeight: number | null = null;
+  let distributionShares: number[] | null = null;
   let distributionCount: number | null = null;
   let payoutPosition = 0;
 
@@ -282,13 +283,20 @@ function parsePrize(raw: unknown): Prize {
       const distOption = erc20?.distribution as Record<string, unknown> | undefined;
       const distInner = distOption?.Some as Record<string, unknown> | undefined;
       if (distInner) {
-        // Distribution enum: { variant: { Linear: n } } or { Linear: n }
+        // Distribution enum: { variant: { Linear: n } } or { Linear: n }.
+        // Custom carries a Span<u16>; the scalar variants carry a u32.
         const distVariant = (distInner.variant ?? distInner) as Record<string, unknown>;
         const distType = Object.keys(distVariant).find((k) => distVariant[k] !== undefined);
         if (distType) {
           distributionType = distType.toLowerCase();
           const distValue = distVariant[distType];
-          distributionWeight = distValue != null ? Number(distValue) : null;
+          if (distributionType === "custom") {
+            distributionShares = Array.isArray(distValue)
+              ? (distValue as unknown[]).map((v) => Number(v))
+              : null;
+          } else {
+            distributionWeight = distValue != null ? Number(distValue) : null;
+          }
         }
       }
 
@@ -312,6 +320,7 @@ function parsePrize(raw: unknown): Prize {
     tokenId,
     distributionType,
     distributionWeight,
+    distributionShares,
     distributionCount,
     sponsorAddress: num.toHex(obj.sponsor_address as bigint),
   };

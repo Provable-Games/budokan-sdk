@@ -20,6 +20,9 @@ export interface Prize {
   tokenId: string | null;
   distributionType: string | null;
   distributionWeight: number | null;
+  /** Populated only when `distributionType === "custom"`. Each entry is a u16
+   *  basis-point share summing to 10000, one per paid position. */
+  distributionShares: number[] | null;
   distributionCount: number | null;
   sponsorAddress: string;
 }
