@@ -786,6 +786,22 @@
       },
       {
         "type": "function",
+        "name": "tournament_distribution_shares",
+        "inputs": [
+          {
+            "name": "tournament_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::array::Array::<core::integer::u16>"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "create_tournament",
         "inputs": [
           {

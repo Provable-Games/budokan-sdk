@@ -58,6 +58,8 @@ import {
 } from "./rpc/viewer.js";
 
 import viewerAbi from "./rpc/abis/budokanViewer.json";
+import budokanAbi from "./rpc/abis/budokan.json";
+import { budokanTournamentDistributionShares } from "./rpc/budokan.js";
 
 /** Resolved config with all defaults applied */
 interface ResolvedConfig extends BudokanClientConfig {
@@ -102,6 +104,7 @@ export class BudokanClient {
   private readonly connectionStatus: ConnectionStatus;
   private cachedProvider: RpcProvider | null = null;
   private cachedViewerContract: Contract | null = null;
+  private cachedBudokanContract: Contract | null = null;
 
   constructor(config: BudokanClientConfig) {
     // Merge user config with chain defaults
@@ -184,6 +187,20 @@ export class BudokanClient {
       provider,
     );
     return this.cachedViewerContract;
+  }
+
+  private async getBudokanContract(): Promise<Contract> {
+    if (this.cachedBudokanContract) return this.cachedBudokanContract;
+    if (!this.resolvedConfig.budokanAddress) {
+      throw new RpcError("No budokanAddress configured. Set budokanAddress in config or use a chain preset with a deployed Budokan contract.");
+    }
+    const provider = await this.getProvider();
+    this.cachedBudokanContract = await createContract(
+      budokanAbi as Abi,
+      this.resolvedConfig.budokanAddress,
+      provider,
+    );
+    return this.cachedBudokanContract;
   }
 
   // ---- API context ----
@@ -281,11 +298,20 @@ export class BudokanClient {
   /**
    * Fetch a single tournament by its ID.
    * Supports RPC fallback when API is unavailable.
+   *
+   * On the RPC-fallback path, Custom distribution shares are populated via
+   * a follow-up call to `tournament_distribution_shares(id)` so callers see
+   * the same shape regardless of data source (the API/indexer path fills
+   * shares from the `TournamentCreated` event).
    */
   async getTournament(tournamentId: string): Promise<Tournament | null> {
     const rpcFallback = async () => {
       const contract = await this.getViewerContract();
-      return viewerTournamentDetail(contract, tournamentId);
+      const tournament = await viewerTournamentDetail(contract, tournamentId);
+      if (tournament) {
+        await this.fillCustomSharesIfEmpty(tournament);
+      }
+      return tournament;
     };
 
     if (this.resolvedConfig.primarySource === "rpc") {
@@ -303,6 +329,56 @@ export class BudokanClient {
         return null;
       }
     }
+  }
+
+  /**
+   * If the tournament's entry-fee distribution is `Custom` with an empty
+   * shares array (the on-chain `tournament()` view returns empty spans by
+   * design to keep the hot path small), fetch the shares via the
+   * dedicated view and graft them back onto the distribution object.
+   *
+   * Detection is tolerant: the Distribution shape may appear as
+   * `{ variant: { Custom: [] } }` or a flattened `{ Custom: [] }`
+   * depending on the starknet.js version / serialization path.
+   */
+  private async fillCustomSharesIfEmpty(tournament: Tournament): Promise<void> {
+    const dist = tournament.entryFee?.distribution as unknown;
+    if (!dist || typeof dist !== "object") return;
+
+    const bag =
+      ((dist as { variant?: Record<string, unknown> }).variant ??
+        (dist as Record<string, unknown>)) as Record<string, unknown>;
+    const customValue = bag.Custom ?? bag.custom;
+    if (!Array.isArray(customValue) || customValue.length > 0) return;
+
+    try {
+      const shares = await this.getTournamentDistributionShares(tournament.id);
+      if (shares.length > 0) {
+        // Overwrite in place — Distribution is typed as opaque, so cast.
+        (bag as Record<string, unknown>).Custom = shares;
+      }
+    } catch {
+      // Silent — caller gets the empty array; auto-fill is best-effort.
+    }
+  }
+
+  /**
+   * Fetch the Custom distribution shares for a tournament via the Budokan
+   * contract's `tournament_distribution_shares(id)` view.
+   *
+   * Returns an empty array for tournaments configured with
+   * `Linear` / `Exponential` / `Uniform` distributions (those don't have a
+   * shares array), and for tournaments without an entry fee.
+   *
+   * This is a direct RPC call — consumers going through the primary API
+   * path typically don't need it, since the indexer sources Custom shares
+   * from the `TournamentCreated` event and exposes them via
+   * `getTournament()`'s `entryFee.distribution`. Use this when you need a
+   * fresh on-chain read or you're operating in RPC-only mode.
+   */
+  async getTournamentDistributionShares(tournamentId: string): Promise<number[]> {
+    const contract = await this.getBudokanContract();
+    return budokanTournamentDistributionShares(contract, tournamentId);
   }
 
   /**

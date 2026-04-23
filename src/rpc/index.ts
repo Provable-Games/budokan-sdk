@@ -12,3 +12,4 @@ export {
   viewerLeaderboard,
   viewerPrizes,
 } from "./viewer.js";
+export { budokanTournamentDistributionShares } from "./budokan.js";
