@@ -18,8 +18,8 @@ export const CHAINS: Record<string, ChainConfig> = {
     rpcUrl: "https://starknet-sepolia.public.blastapi.io",
     apiBaseUrl: "https://budokan-api-sepolia.up.railway.app",
     wsUrl: "wss://budokan-api-sepolia.up.railway.app/ws",
-    budokanAddress: "0x02a97de0b33fb115f5c32a58232d9941c4a5b2598aa71d30c094076cc592f94d",
-    viewerAddress: "0x001f2be7ed811bfa859f8f6cf72d2458f36103ac172ff8e65a630bbcc6cf98c9",
+    budokanAddress: "0x06970648aca3eedbd4e276c58f3edb65c9bc9c9901d1138699dfff4d5dd6b31f",
+    viewerAddress: "0x00304e8f0424985ec0c2e92a8c46f2604ae072f2fc3a9056396837ae21cceed7",
   },
 } as const;
 
