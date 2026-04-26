@@ -1,4 +1,4 @@
-export type WSChannel = "tournaments" | "registrations" | "leaderboards" | "prizes" | "rewards" | "metrics";
+export type WSChannel = "tournaments" | "registrations" | "prizes" | "rewards" | "metrics";
 
 export interface WSSubscribeMessage {
   type: "subscribe";

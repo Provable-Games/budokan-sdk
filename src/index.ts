@@ -55,7 +55,6 @@ export type { ConnectionMode, ConnectionStatusState } from "./datasource/health.
 export {
   getTournaments,
   getTournament,
-  getTournamentLeaderboard,
   getTournamentRegistrations,
   getTournamentPrizes,
   getTournamentRewardClaims,
