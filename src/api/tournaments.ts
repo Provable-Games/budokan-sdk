@@ -1,5 +1,4 @@
 import type { Tournament, TournamentListParams, QualificationEntry } from "../types/tournament.js";
-import type { LeaderboardEntry } from "../types/leaderboard.js";
 import type { Registration } from "../types/registration.js";
 import type { Prize, RewardClaim, RewardClaimSummary, PrizeAggregation } from "../types/prize.js";
 import type { PaginatedResult } from "../types/common.js";
@@ -72,21 +71,6 @@ export async function getTournament(
     fetchOpts(ctx),
   );
   return normalizeTournament(result.data);
-}
-
-/**
- * Fetch the leaderboard for a tournament.
- */
-export async function getTournamentLeaderboard(
-  baseUrl: string,
-  tournamentId: string,
-  ctx?: ApiContext,
-): Promise<LeaderboardEntry[]> {
-  const result = await apiFetch<{ data: Record<string, unknown>[] }>(
-    `${baseUrl}/tournaments/${tournamentId}/leaderboard`,
-    fetchOpts(ctx),
-  );
-  return result.data.map((item) => snakeToCamel<LeaderboardEntry>(item));
 }
 
 /**

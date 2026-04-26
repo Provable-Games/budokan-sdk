@@ -14,7 +14,6 @@ import type { ConnectionStatusState } from "./datasource/health.js";
 import {
   getTournaments as apiGetTournaments,
   getTournament as apiGetTournament,
-  getTournamentLeaderboard as apiGetTournamentLeaderboard,
   getTournamentRegistrations as apiGetTournamentRegistrations,
   getTournamentPrizes as apiGetTournamentPrizes,
   getTournamentRewardClaims as apiGetTournamentRewardClaims,
@@ -382,25 +381,15 @@ export class BudokanClient {
   }
 
   /**
-   * Fetch the leaderboard for a tournament.
-   * Supports RPC fallback when API is unavailable.
+   * Fetch the leaderboard for a tournament from the on-chain viewer
+   * contract. Live leaderboard data for UIs is best sourced via
+   * denshokan-sdk's `useLiveLeaderboard`; this method is kept for
+   * one-shot RPC reads (e.g. server-side scoring scripts).
    */
   async getTournamentLeaderboard(tournamentId: string): Promise<LeaderboardEntry[]> {
-    const rpcFallback = async () => {
-      const contract = await this.getViewerContract();
-      // Fetch a large page; on-chain leaderboards are typically small
-      return viewerLeaderboard(contract, tournamentId, 0, 1000);
-    };
-
-    if (this.resolvedConfig.primarySource === "rpc") {
-      return rpcFallback();
-    }
-
-    return withFallback(
-      () => apiGetTournamentLeaderboard(this.resolvedConfig.apiBaseUrl, tournamentId, this.apiCtx),
-      rpcFallback,
-      this.connectionStatus,
-    );
+    const contract = await this.getViewerContract();
+    // Fetch a large page; on-chain leaderboards are typically small
+    return viewerLeaderboard(contract, tournamentId, 0, 1000);
   }
 
   /**
