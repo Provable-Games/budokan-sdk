@@ -11,6 +11,11 @@ export { useLeaderboard } from "./useLeaderboard.js";
 export type { UseLeaderboardResult } from "./useLeaderboard.js";
 export { useRegistrations } from "./useRegistrations.js";
 export type { UseRegistrationsResult } from "./useRegistrations.js";
+export {
+  useTournamentsByOwner,
+  useTournamentsByOwnerCount,
+  useRegistrationsByOwner,
+} from "./useByOwner.js";
 
 // Reward & Prize hooks
 export { useRewardClaims, useRewardClaimsSummary } from "./useRewardClaims.js";
