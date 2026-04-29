@@ -76,15 +76,19 @@ export async function getTournament(
 
 /**
  * Fetch registrations for a tournament.
+ *
+ * No `playerAddress` filter: registrations are keyed by token id, and
+ * the original registrant goes stale on transfer. Callers wanting "the
+ * current user's registrations" should resolve their owned token ids via
+ * denshokan-sdk's useTokens and pass them as `gameTokenIds`.
  */
 export async function getTournamentRegistrations(
   baseUrl: string,
   tournamentId: string,
-  params?: { playerAddress?: string; gameTokenIds?: string[]; hasSubmitted?: boolean; isBanned?: boolean; limit?: number; offset?: number },
+  params?: { gameTokenIds?: string[]; hasSubmitted?: boolean; isBanned?: boolean; limit?: number; offset?: number },
   ctx?: ApiContext,
 ): Promise<PaginatedResult<Registration>> {
   const qs = buildQueryString({
-    player_address: params?.playerAddress,
     game_token_ids: params?.gameTokenIds?.length ? params.gameTokenIds.join(",") : undefined,
     has_submitted: params?.hasSubmitted,
     is_banned: params?.isBanned,

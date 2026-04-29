@@ -4,7 +4,6 @@ import type { Tournament, TournamentListParams } from "./types/tournament.js";
 import type { LeaderboardEntry } from "./types/leaderboard.js";
 import type { Registration } from "./types/registration.js";
 import type { Prize, RewardClaim, RewardClaimSummary, PrizeAggregation } from "./types/prize.js";
-import type { PlayerStats, PlayerTournament, PlayerTournamentParams } from "./types/player.js";
 import type { ActivityEvent, ActivityParams, PlatformStats, PrizeStats } from "./types/activity.js";
 import type { QualificationEntry } from "./types/tournament.js";
 import type { PaginatedResult } from "./types/common.js";
@@ -21,10 +20,6 @@ import {
   getTournamentQualifications as apiGetTournamentQualifications,
   getTournamentPrizeAggregation as apiGetTournamentPrizeAggregation,
 } from "./api/tournaments.js";
-import {
-  getPlayerTournaments as apiGetPlayerTournaments,
-  getPlayerStats as apiGetPlayerStats,
-} from "./api/players.js";
 import {
   getGameTournaments as apiGetGameTournaments,
   getGameStats as apiGetGameStats,
@@ -48,12 +43,10 @@ import {
   viewerTournamentDetail,
   viewerTournamentsBatch,
   viewerRegistrations,
-  viewerRegistrationsByOwner,
   viewerRegistrationsByTokenIds,
   viewerLeaderboard,
   viewerPrizes,
   viewerRewardClaims,
-  viewerPlayerTournaments,
 } from "./rpc/viewer.js";
 
 import viewerAbi from "./rpc/abis/budokanViewer.json";
@@ -401,15 +394,12 @@ export class BudokanClient {
    */
   async getTournamentRegistrations(
     tournamentId: string,
-    params?: { playerAddress?: string; gameTokenIds?: string[]; hasSubmitted?: boolean; isBanned?: boolean; limit?: number; offset?: number },
+    params?: { gameTokenIds?: string[]; hasSubmitted?: boolean; isBanned?: boolean; limit?: number; offset?: number },
   ): Promise<PaginatedResult<Registration>> {
     const rpcFallback = async () => {
       const contract = await this.getViewerContract();
       const offset = params?.offset ?? 0;
       const limit = params?.limit ?? 20;
-      if (params?.playerAddress) {
-        return viewerRegistrationsByOwner(contract, tournamentId, params.playerAddress, offset, limit);
-      }
       if (params?.gameTokenIds?.length) {
         return viewerRegistrationsByTokenIds(contract, tournamentId, params.gameTokenIds, offset, limit);
       }
@@ -446,53 +436,6 @@ export class BudokanClient {
       rpcFallback,
       this.connectionStatus,
     );
-  }
-
-  // ---- Player Queries (API-only, no on-chain equivalent) ----
-
-  /**
-   * Fetch tournaments that a player has registered for.
-   * Supports RPC fallback via viewer contract.
-   */
-  async getPlayerTournaments(
-    address: string,
-    params?: PlayerTournamentParams,
-  ): Promise<PaginatedResult<PlayerTournament>> {
-    const rpcFallback = async (): Promise<PaginatedResult<PlayerTournament>> => {
-      const contract = await this.getViewerContract();
-      const offset = params?.offset ?? 0;
-      const limit = params?.limit ?? 20;
-      const filterResult = await viewerPlayerTournaments(contract, address, offset, limit);
-
-      let data: PlayerTournament[] = [];
-      if (filterResult.tournamentIds.length > 0) {
-        const tournaments = await viewerTournamentsBatch(contract, filterResult.tournamentIds);
-        data = tournaments.map((t) => ({
-          ...t,
-          tournamentId: t.id,
-        })) as unknown as PlayerTournament[];
-      }
-
-      return { data, total: filterResult.total, limit, offset };
-    };
-
-    if (this.resolvedConfig.primarySource === "rpc") {
-      return rpcFallback();
-    }
-
-    return withFallback(
-      () => apiGetPlayerTournaments(this.resolvedConfig.apiBaseUrl, address, params, this.apiCtx),
-      rpcFallback,
-      this.connectionStatus,
-    );
-  }
-
-  /**
-   * Fetch stats for a player.
-   * API-only — no RPC fallback available.
-   */
-  async getPlayerStats(address: string): Promise<PlayerStats> {
-    return apiGetPlayerStats(this.resolvedConfig.apiBaseUrl, address, this.apiCtx);
   }
 
   // ---- Game Queries ----

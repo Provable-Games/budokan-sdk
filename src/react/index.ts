@@ -5,14 +5,12 @@ export type { BudokanProviderProps } from "./context.js";
 // Data hooks
 export { useTournaments, useTournament } from "./useTournaments.js";
 export type { UseTournamentsResult, UseTournamentResult } from "./useTournaments.js";
-export { useTournamentCount, usePlayerTournamentCount } from "./useTournamentCount.js";
+export { useTournamentCount } from "./useTournamentCount.js";
 export type { UseTournamentCountResult } from "./useTournamentCount.js";
 export { useLeaderboard } from "./useLeaderboard.js";
 export type { UseLeaderboardResult } from "./useLeaderboard.js";
 export { useRegistrations } from "./useRegistrations.js";
 export type { UseRegistrationsResult } from "./useRegistrations.js";
-export { usePlayer, usePlayerStats, usePlayerTournaments } from "./usePlayer.js";
-export type { UsePlayerResult, UsePlayerStatsResult, UsePlayerTournamentsResult } from "./usePlayer.js";
 
 // Reward & Prize hooks
 export { useRewardClaims, useRewardClaimsSummary } from "./useRewardClaims.js";

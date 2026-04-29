@@ -239,7 +239,6 @@ function parseRegistration(raw: unknown, tournamentId: string): Registration {
     tournamentId,
     gameTokenId: num.toHex(obj.game_token_id as bigint),
     gameAddress: "", // Not in on-chain struct
-    playerAddress: "", // Not in on-chain struct
     entryNumber: Number(obj.entry_id ?? 0),
     hasSubmitted: Boolean(obj.has_submitted),
     isBanned: Boolean(obj.is_banned),
@@ -489,27 +488,6 @@ export async function viewerRegistrations(
   }, contract.address);
 }
 
-export async function viewerRegistrationsByOwner(
-  contract: Contract,
-  tournamentId: string,
-  owner: string,
-  offset: number,
-  limit: number,
-): Promise<PaginatedResult<Registration>> {
-  return wrapRpcCall(async () => {
-    const result = await contract.call("tournament_registrations_by_owner", [tournamentId, owner, offset, limit]);
-    const obj = result as Record<string, unknown>;
-    const entries = (obj.entries as unknown[]) ?? [];
-    const total = Number(obj.total ?? 0);
-    return {
-      data: entries.map((e) => parseRegistration(e, tournamentId)),
-      total,
-      limit,
-      offset,
-    };
-  }, contract.address);
-}
-
 export async function viewerRegistrationsByTokenIds(
   contract: Contract,
   tournamentId: string,
@@ -596,16 +574,3 @@ export async function viewerRewardClaims(
   }, contract.address);
 }
 
-// --- Player Tournaments ---
-
-export async function viewerPlayerTournaments(
-  contract: Contract,
-  playerAddress: string,
-  offset: number,
-  limit: number,
-): Promise<TournamentFilterResult> {
-  return wrapRpcCall(async () => {
-    const result = await contract.call("player_tournaments", [playerAddress, offset, limit]);
-    return parseFilterResult(result);
-  }, contract.address);
-}

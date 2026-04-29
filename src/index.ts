@@ -19,9 +19,6 @@ export type {
   RewardClaim,
   PrizeAggregation,
   RewardClaimSummary,
-  PlayerStats,
-  PlayerTournament,
-  PlayerTournamentParams,
   ActivityEvent,
   ActivityParams,
   PlatformStats,
@@ -62,7 +59,6 @@ export {
   getTournamentQualifications,
   getTournamentPrizeAggregation,
 } from "./api/tournaments.js";
-export { getPlayerTournaments, getPlayerStats } from "./api/players.js";
 export { getGameTournaments, getGameStats } from "./api/games.js";
 export { getActivity, getActivityStats, getPrizeStats } from "./api/activity.js";
 
