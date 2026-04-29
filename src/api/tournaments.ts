@@ -45,6 +45,7 @@ export async function getTournaments(
     sort: params?.sort,
     from_id: params?.fromId,
     exclude_ids: params?.excludeIds?.join(","),
+    tournament_ids: params?.tournamentIds?.join(","),
     whitelisted_extensions: params?.whitelistedExtensions?.join(","),
     include_prizes: params?.includePrizeSummary,
   });

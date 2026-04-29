@@ -99,6 +99,14 @@ export interface TournamentListParams {
   sort?: "start_time" | "end_time" | "players" | "created_at";
   fromId?: string;
   excludeIds?: string[];
+  /**
+   * Restrict results to this set of tournament IDs. Used by the
+   * "My Tournaments" UX where the caller derives ids from currently-owned
+   * game tokens (denshokan-sdk) and asks Budokan only for those tournaments.
+   * Mutually exclusive with no-filter "show everything" semantics — an empty
+   * array yields zero results, not all tournaments.
+   */
+  tournamentIds?: string[];
   whitelistedExtensions?: string[];
   includePrizeSummary?: "summary" | boolean;
 }
