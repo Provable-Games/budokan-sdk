@@ -4,7 +4,7 @@ import type { Tournament, TournamentListParams } from "./types/tournament.js";
 import type { LeaderboardEntry } from "./types/leaderboard.js";
 import type { Registration } from "./types/registration.js";
 import type { Prize, RewardClaim, RewardClaimSummary, PrizeAggregation } from "./types/prize.js";
-import type { ActivityEvent, ActivityParams, PlatformStats, PrizeStats } from "./types/activity.js";
+import type { PlatformStats, PrizeStats } from "./types/activity.js";
 import type { QualificationEntry } from "./types/tournament.js";
 import type { PaginatedResult } from "./types/common.js";
 import type { WSChannel, WSEventHandler } from "./types/websocket.js";
@@ -25,7 +25,6 @@ import {
   getGameStats as apiGetGameStats,
 } from "./api/games.js";
 import {
-  getActivity as apiGetActivity,
   getActivityStats as apiGetActivityStats,
   getPrizeStats as apiGetPrizeStats,
 } from "./api/activity.js";
@@ -561,14 +560,6 @@ export class BudokanClient {
   }
 
   // ---- Activity Queries (API-only, activity is indexed) ----
-
-  /**
-   * Fetch activity events with optional filtering.
-   * API-only — no RPC fallback available.
-   */
-  async getActivity(params?: ActivityParams): Promise<PaginatedResult<ActivityEvent>> {
-    return apiGetActivity(this.resolvedConfig.apiBaseUrl, params, this.apiCtx);
-  }
 
   /**
    * Fetch platform-wide activity stats.
