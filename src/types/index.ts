@@ -13,8 +13,6 @@ export type { Registration } from "./registration.js";
 export type { LeaderboardEntry } from "./leaderboard.js";
 export type { Prize, RewardClaim, PrizeAggregation, RewardClaimSummary } from "./prize.js";
 export type {
-  ActivityEvent,
-  ActivityParams,
   PlatformStats,
   PrizeStats,
 } from "./activity.js";

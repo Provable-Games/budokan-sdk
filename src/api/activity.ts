@@ -1,6 +1,5 @@
-import type { ActivityEvent, ActivityParams, PlatformStats, PrizeStats } from "../types/activity.js";
-import type { PaginatedResult } from "../types/common.js";
-import { apiFetch, buildQueryString, extractPagination } from "./base.js";
+import type { PlatformStats, PrizeStats } from "../types/activity.js";
+import { apiFetch } from "./base.js";
 import type { ApiFetchOptions } from "./base.js";
 import { snakeToCamel } from "../utils/mappers.js";
 
@@ -15,31 +14,6 @@ function fetchOpts(ctx?: ApiContext): Partial<ApiFetchOptions> {
     retryAttempts: ctx?.retryAttempts,
     retryDelay: ctx?.retryDelay,
     timeout: ctx?.timeout,
-  };
-}
-
-/**
- * Fetch activity events with optional filtering.
- */
-export async function getActivity(
-  baseUrl: string,
-  params?: ActivityParams,
-  ctx?: ApiContext,
-): Promise<PaginatedResult<ActivityEvent>> {
-  const qs = buildQueryString({
-    event_type: params?.eventType,
-    tournament_id: params?.tournamentId,
-    player_address: params?.playerAddress,
-    limit: params?.limit,
-    offset: params?.offset,
-  });
-  const result = await apiFetch<Record<string, unknown>>(`${baseUrl}/activity${qs}`, fetchOpts(ctx));
-  const { total, limit: resLimit, offset: resOffset } = extractPagination(result, { limit: params?.limit, offset: params?.offset });
-  return {
-    data: (result.data as Record<string, unknown>[]).map((item) => snakeToCamel<ActivityEvent>(item)),
-    total,
-    limit: resLimit,
-    offset: resOffset,
   };
 }
 

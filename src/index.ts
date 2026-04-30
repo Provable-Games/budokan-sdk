@@ -19,8 +19,6 @@ export type {
   RewardClaim,
   PrizeAggregation,
   RewardClaimSummary,
-  ActivityEvent,
-  ActivityParams,
   PlatformStats,
   PrizeStats,
   PaginatedResult,
@@ -60,7 +58,7 @@ export {
   getTournamentPrizeAggregation,
 } from "./api/tournaments.js";
 export { getGameTournaments, getGameStats } from "./api/games.js";
-export { getActivity, getActivityStats, getPrizeStats } from "./api/activity.js";
+export { getActivityStats, getPrizeStats } from "./api/activity.js";
 
 // WebSocket
 export { WSManager } from "./ws/manager.js";
