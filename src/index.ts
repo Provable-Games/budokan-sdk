@@ -23,6 +23,8 @@ export type {
   ActivityParams,
   PlatformStats,
   PrizeStats,
+  PlayerRewards,
+  PlayerPlacement,
   PaginatedResult,
   WSChannel,
   WSSubscribeMessage,

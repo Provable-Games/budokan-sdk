@@ -199,6 +199,11 @@ export function useRegistrationsByOwner(
   const enabled =
     !!owner && !!budokanAddress && tournamentId != null && contextId !== undefined;
 
+  // Don't pass `hasContext: true` here — `contextId` alone is sufficient,
+  // and the denshokan API treats `has_context=true & context_id=X` as an
+  // intersection that drops tokens whose packed-ID `hasContext` bit is 0
+  // even when they have a real `contextId`. Matches the call shape that
+  // `useLiveLeaderboard` makes.
   const { data: tokensResult, isLoading: tokensLoading } = useTokens(
     enabled
       ? {
@@ -225,10 +230,18 @@ export function useRegistrationsByOwner(
     return ids;
   }, [enabled, tokensResult]);
 
+  // The registrations API defaults `limit` to 50 when omitted. Since we've
+  // already collected up to MAX_OWNED_TOKENS owned-token ids upstream, default
+  // the registrations fetch to the same size so we never silently truncate.
+  // Consumer-supplied `params.limit` still takes precedence (spread runs after).
   const inner = useRegistrations(
     ownedGameTokenIds && ownedGameTokenIds.length > 0 ? tournamentId : undefined,
     ownedGameTokenIds && ownedGameTokenIds.length > 0
-      ? { ...params, gameTokenIds: ownedGameTokenIds }
+      ? {
+          limit: Math.min(ownedGameTokenIds.length, MAX_OWNED_TOKENS),
+          ...params,
+          gameTokenIds: ownedGameTokenIds,
+        }
       : undefined,
   );
 
