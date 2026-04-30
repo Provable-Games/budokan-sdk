@@ -537,8 +537,21 @@ export async function viewerPrizes(
 
 // --- Reward Claims ---
 
+import type { RewardClaimKind } from "../types/prize.js";
+
+/**
+ * Flat reward-claim shape returned by the on-chain viewer's
+ * `tournament_reward_claims` view, after translating the Cairo
+ * `RewardType` enum (deserialized as a CairoCustomEnum by starknet.js)
+ * into the structured fields the API also exposes. Mirrors the
+ * `RewardClaim` SDK type so the RPC and API paths are interchangeable.
+ */
 export interface ViewerRewardClaim {
-  rewardType: Record<string, unknown>;
+  claimKind: RewardClaimKind;
+  prizeId: string | null;
+  payoutIndex: number | null;
+  position: number | null;
+  refundTokenId: string | null;
   claimed: boolean;
 }
 
@@ -547,6 +560,105 @@ export interface ViewerRewardClaimResult {
   total: number;
   totalClaimed: number;
   totalUnclaimed: number;
+}
+
+/**
+ * Translate the on-chain `RewardType` CairoCustomEnum (as returned by
+ * starknet.js for the `tournament_reward_claims` view) into the same
+ * structured fields the API exposes. Both starknet.js shapes are accepted —
+ * one with `activeVariant()` and a `variant` bag, one with a flat record
+ * keyed by variant name — depending on the contract ABI codegen.
+ */
+function translateCairoRewardType(rewardType: unknown): {
+  claimKind: RewardClaimKind;
+  prizeId: string | null;
+  payoutIndex: number | null;
+  position: number | null;
+  refundTokenId: string | null;
+} {
+  if (!rewardType || typeof rewardType !== "object") {
+    throw new Error(`Unexpected RewardType payload: ${JSON.stringify(rewardType)}`);
+  }
+  const rt = rewardType as Record<string, any>;
+  const outer =
+    typeof rt.activeVariant === "function" ? rt.activeVariant() : null;
+  const innerBag = (typeof rt.activeVariant === "function" ? rt.variant : rt) as Record<string, any>;
+
+  if (outer === "Prize" || innerBag.Prize !== undefined) {
+    const prize = innerBag.Prize;
+    const subVariant = typeof prize?.activeVariant === "function" ? prize.activeVariant() : null;
+    const subBag = (typeof prize?.activeVariant === "function" ? prize.variant : prize) as Record<string, any>;
+
+    if (subVariant === "Single" || subBag?.Single !== undefined) {
+      return {
+        claimKind: "prize_single",
+        prizeId: BigInt(subBag.Single).toString(),
+        payoutIndex: null,
+        position: null,
+        refundTokenId: null,
+      };
+    }
+    if (subVariant === "Distributed" || subBag?.Distributed !== undefined) {
+      const distributed = subBag.Distributed;
+      const prizeId = distributed?.["0"] ?? distributed?.[0];
+      const payoutIndex = distributed?.["1"] ?? distributed?.[1];
+      return {
+        claimKind: "prize_distributed",
+        prizeId: BigInt(prizeId).toString(),
+        payoutIndex: Number(payoutIndex),
+        position: null,
+        refundTokenId: null,
+      };
+    }
+  }
+
+  if (outer === "EntryFee" || innerBag.EntryFee !== undefined) {
+    const entryFee = innerBag.EntryFee;
+    const subVariant =
+      typeof entryFee?.activeVariant === "function" ? entryFee.activeVariant() : null;
+    const subBag = (typeof entryFee?.activeVariant === "function" ? entryFee.variant : entryFee) as Record<string, any>;
+
+    if (subVariant === "Position" || subBag?.Position !== undefined) {
+      return {
+        claimKind: "entry_fee_position",
+        prizeId: null,
+        payoutIndex: null,
+        position: Number(subBag.Position),
+        refundTokenId: null,
+      };
+    }
+    if (subVariant === "TournamentCreator" || subBag?.TournamentCreator !== undefined) {
+      return {
+        claimKind: "entry_fee_tournament_creator",
+        prizeId: null,
+        payoutIndex: null,
+        position: null,
+        refundTokenId: null,
+      };
+    }
+    if (subVariant === "GameCreator" || subBag?.GameCreator !== undefined) {
+      return {
+        claimKind: "entry_fee_game_creator",
+        prizeId: null,
+        payoutIndex: null,
+        position: null,
+        refundTokenId: null,
+      };
+    }
+    if (subVariant === "Refund" || subBag?.Refund !== undefined) {
+      return {
+        claimKind: "entry_fee_refund",
+        prizeId: null,
+        payoutIndex: null,
+        position: null,
+        refundTokenId: `0x${BigInt(subBag.Refund).toString(16)}`,
+      };
+    }
+  }
+
+  throw new Error(
+    `Unrecognised on-chain RewardType variant: ${JSON.stringify(rewardType)}`,
+  );
 }
 
 export async function viewerRewardClaims(
@@ -558,10 +670,10 @@ export async function viewerRewardClaims(
   return wrapRpcCall(async () => {
     const result = await contract.call("tournament_reward_claims", [tournamentId, offset, limit]);
     const obj = result as Record<string, unknown>;
-    const claims = (obj.claims as unknown[])?.map((raw) => {
+    const claims: ViewerRewardClaim[] = (obj.claims as unknown[])?.map((raw) => {
       const claim = raw as Record<string, unknown>;
       return {
-        rewardType: claim.reward_type as Record<string, unknown>,
+        ...translateCairoRewardType(claim.reward_type),
         claimed: Boolean(claim.claimed),
       };
     }) ?? [];

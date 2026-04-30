@@ -497,8 +497,7 @@ export class BudokanClient {
       const result = await viewerRewardClaims(contract, tournamentId, offset, limit);
       const data: RewardClaim[] = result.claims.map((c) => ({
         tournamentId,
-        rewardType: c.rewardType as RewardClaim["rewardType"],
-        claimed: c.claimed,
+        ...c,
       }));
       return { data, total: result.total, limit, offset };
     };

@@ -1,15 +1,3 @@
-// ---- Reward types (from budokan_interfaces) ----
-
-export type RewardType =
-  | { Prize: { tokenAddress: string; tokenType: string } }
-  | { EntryFee: EntryFeeRewardType };
-
-export type EntryFeeRewardType =
-  | { Position: number }
-  | { TournamentCreator: Record<string, never> }
-  | { GameCreator: Record<string, never> }
-  | { Refund: string };
-
 export interface Prize {
   prizeId: string;
   tournamentId: string;
@@ -27,9 +15,32 @@ export interface Prize {
   sponsorAddress: string;
 }
 
+/**
+ * Discriminator for `RewardClaim.claimKind`. Picks one of the six terminal
+ * variants of the on-chain `RewardType` enum (Prize::Single, Prize::Distributed,
+ * EntryFee::Position / TournamentCreator / GameCreator / Refund). The
+ * variant-specific fields below are populated only for the kinds that carry
+ * them; the two pure-marker creator kinds leave all four nullable fields null.
+ */
+export type RewardClaimKind =
+  | "prize_single"
+  | "prize_distributed"
+  | "entry_fee_position"
+  | "entry_fee_tournament_creator"
+  | "entry_fee_game_creator"
+  | "entry_fee_refund";
+
 export interface RewardClaim {
   tournamentId: string;
-  rewardType: RewardType;
+  claimKind: RewardClaimKind;
+  /** Populated for `prize_single` and `prize_distributed`. Stringified u64. */
+  prizeId: string | null;
+  /** Populated for `prize_distributed`. */
+  payoutIndex: number | null;
+  /** Populated for `entry_fee_position`. */
+  position: number | null;
+  /** Populated for `entry_fee_refund`. felt252 hex string of the game token. */
+  refundTokenId: string | null;
   claimed: boolean;
 }
 
