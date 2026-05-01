@@ -61,9 +61,6 @@
     },
     "starknet": {
       "optional": true
-    },
-    "@provable-games/denshokan-sdk": {
-      "optional": true
     }
   },
   "dependencies": {
