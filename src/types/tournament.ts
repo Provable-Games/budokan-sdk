@@ -2,11 +2,10 @@ import type {
   EntryRequirement,
   EntryFee,
   Distribution,
-  QualificationProof,
 } from "@provable-games/metagame-sdk";
 
 // Re-export shared game-components types so consumers can import from budokan-sdk
-export type { EntryRequirement, EntryFee, Distribution, QualificationProof };
+export type { EntryRequirement, EntryFee, Distribution };
 
 export interface Tournament {
   id: string;
@@ -111,8 +110,20 @@ export interface TournamentListParams {
   includePrizeSummary?: "summary" | boolean;
 }
 
+/**
+ * Discriminator for `QualificationEntry.qualificationKind`. Picks one of
+ * the two terminal variants of the on-chain `QualificationProof` enum
+ * (NFT, Extension). `nftTokenId` is populated only for `nft`;
+ * `extensionConfig` only for `extension`.
+ */
+export type QualificationKind = "nft" | "extension";
+
 export interface QualificationEntry {
   tournamentId: string;
-  qualificationProof: QualificationProof | null;
+  qualificationKind: QualificationKind;
+  /** Populated when `qualificationKind === "nft"`. u256 token id, decimal string. */
+  nftTokenId: string | null;
+  /** Populated when `qualificationKind === "extension"`. List of felt252 hex strings. */
+  extensionConfig: string[] | null;
   entryCount: number;
 }
