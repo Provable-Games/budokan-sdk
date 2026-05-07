@@ -29,16 +29,26 @@ export interface UsePlayerRewardsResult {
  *     ↓ filter to finalized
  *   for each finalized tournament (parallel):
  *     budokan getTournamentPrizes        — full prize records
- *     budokan getTournamentRewardClaims  — claim records
+ *     budokan getTournamentRewardClaims  — paginated, all pages
  *     denshokan getTokenRanks (bulk)     — final ranks for owned tokens
  *     ↓ filter ranks to paid positions  (max position derived from prizes
  *       + entry-fee distribution_count)
+ *
+ * Per-tournament failures are tolerated: a 5xx on one tournament's prize/
+ * claim/rank fetch skips that tournament and continues, rather than
+ * failing the whole hook. Failures are logged via `console.warn`.
  *
  * Why source ownership from denshokan: PR #243 dropped
  * `registrations.player_address` because the indexed value goes stale on
  * transfer. The contract keys registrations by token_id only, so the only
  * trustworthy answer to "what tournaments has this wallet placed in" is
  * to ask denshokan who currently holds Budokan-minted tokens.
+ *
+ * Staleness: the hook only re-fetches when the player's owned token set
+ * changes (transfers/new mints) or when the underlying tournament list
+ * changes. It does *not* observe time-based finalization transitions on
+ * its own — if a tournament's submission window closes while the
+ * consumer is mounted, call `refetch()` to pick up the new placement.
  *
  * Pass `undefined` to skip fetching.
  */
@@ -127,16 +137,22 @@ export function usePlayerRewards(
     setError(null);
 
     try {
-      const perTournament = await Promise.all(
+      // `allSettled` so a single tournament's API/RPC failure doesn't blank
+      // the whole profile — log the per-tournament error and aggregate from
+      // the rest.
+      const settled = await Promise.allSettled(
         finalized.map(async (t) => {
           const tid = t.id;
           const tokenIds = tokensByTournament.get(tid) ?? [];
           if (tokenIds.length === 0) return null;
 
           // Fetch prizes / claims / ranks in parallel — independent calls.
-          const [prizes, claimsResult, ranksResult] = await Promise.all([
+          // Reward claims paginate until exhausted; the budokan API caps
+          // page size at 100 server-side, so a 100-claim default would
+          // silently miss the player's claim in larger tournaments.
+          const [prizes, allClaims, ranksResult] = await Promise.all([
             budokan.getTournamentPrizes(tid),
-            budokan.getTournamentRewardClaims(tid, { limit: 1000 }),
+            fetchAllRewardClaims(budokan, tid),
             denshokan.getTokenRanks(tokenIds, {
               contextId: Number(tid),
               minterAddress: budokanAddress!,
@@ -160,8 +176,8 @@ export function usePlayerRewards(
           if (maxPaid === 0) return null;
 
           const placements: PlayerPlacement[] = ranksResult.data
-            .filter((r: { rank: number }) => r.rank > 0 && r.rank <= maxPaid)
-            .map((r: { tokenId: string; rank: number; score: number | string }) => ({
+            .filter((r) => r.rank > 0 && r.rank <= maxPaid)
+            .map((r) => ({
               tournamentId: tid,
               tokenId: r.tokenId,
               position: r.rank,
@@ -173,15 +189,24 @@ export function usePlayerRewards(
           return {
             tournament: t,
             prizes,
-            rewardClaims: claimsResult.data,
+            rewardClaims: allClaims,
             placements,
           };
         }),
       );
 
-      const valid = perTournament.filter(
-        (r): r is NonNullable<typeof r> => r !== null,
-      );
+      const valid = settled
+        .map((s, i) => {
+          if (s.status === "fulfilled") return s.value;
+          // Skip the failed tournament; log so the consumer can wire
+          // observability if they want, but don't fail the whole hook.
+          console.warn(
+            `usePlayerRewards: tournament ${finalized[i].id} fetch failed; skipping`,
+            s.reason,
+          );
+          return null;
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null);
 
       const allPlacements: PlayerPlacement[] = valid.flatMap(
         (r) => r.placements,
@@ -209,6 +234,8 @@ export function usePlayerRewards(
     } finally {
       setAggregating(false);
     }
+    // setRewards / setError / setAggregating come from useState and have
+    // stable identities — intentionally omitted from the dependency list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     tokensEnabled,
@@ -256,4 +283,44 @@ function emptyRewards(): PlayerRewards {
     prizes: [],
     rewardClaims: [],
   };
+}
+
+/**
+ * Fetch every reward-claim row for a tournament, paginating until the
+ * accumulated length matches `total` reported by the API.
+ *
+ * The budokan-api caps `/tournaments/:id/reward-claims` at 100 rows per
+ * page server-side; the default cap on the SDK helper is 50. Without
+ * pagination, a tournament with > 100 claims silently truncates and
+ * `usePlayerRewards` would miss any of the player's placements whose
+ * claim row falls in the unfetched tail.
+ */
+async function fetchAllRewardClaims(
+  client: ReturnType<typeof useBudokanClient>,
+  tournamentId: string,
+): Promise<RewardClaim[]> {
+  // First page also tells us `total`, which drives the loop bound.
+  const first = await client.getTournamentRewardClaims(tournamentId, {
+    limit: 100,
+  });
+  const accumulated: RewardClaim[] = [...first.data];
+  const total = first.total ?? accumulated.length;
+
+  if (accumulated.length >= total) return accumulated;
+
+  // Match whatever page size the server returned for the first page so we
+  // ride whatever cap is live (API currently caps at 100; if that rises
+  // later, the page size adapts automatically).
+  const pageSize = Math.max(first.data.length, 1);
+  let offset = accumulated.length;
+  while (offset < total) {
+    const next = await client.getTournamentRewardClaims(tournamentId, {
+      limit: pageSize,
+      offset,
+    });
+    if (next.data.length === 0) break;
+    accumulated.push(...next.data);
+    offset += next.data.length;
+  }
+  return accumulated;
 }

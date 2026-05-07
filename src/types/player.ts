@@ -11,7 +11,7 @@ export interface PlayerPlacement {
   tokenId: string;
   /** 1-indexed rank in the tournament's final leaderboard. */
   position: number;
-  /** Token's final score (string to preserve felt252 precision). */
+  /** Token's final score as a decimal string (preserves felt252 precision). */
   score: string;
 }
 
