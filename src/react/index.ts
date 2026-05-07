@@ -31,6 +31,10 @@ export type { UseQualificationsResult } from "./useQualifications.js";
 export { useActivityStats } from "./useActivityStats.js";
 export type { UseActivityStatsResult } from "./useActivityStats.js";
 
+// Player hooks
+export { usePlayerRewards } from "./usePlayerRewards.js";
+export type { UsePlayerRewardsResult } from "./usePlayerRewards.js";
+
 // WebSocket hooks
 export { useSubscription } from "./useSubscription.js";
 export type { UseSubscriptionResult } from "./useSubscription.js";

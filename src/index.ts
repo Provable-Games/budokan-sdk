@@ -21,6 +21,8 @@ export type {
   RewardClaimSummary,
   PlatformStats,
   PrizeStats,
+  PlayerRewards,
+  PlayerPlacement,
   PaginatedResult,
   WSChannel,
   WSSubscribeMessage,
