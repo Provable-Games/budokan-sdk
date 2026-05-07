@@ -41,12 +41,17 @@ function useOwnedTournamentIds(
   const budokanAddress = client.clientConfig.budokanAddress;
   const enabled = !!owner && !!budokanAddress;
 
+  // Don't pass `hasContext: true` here — same reason
+  // `useRegistrationsByOwner` doesn't: the server-side intersection
+  // drops tokens whose packed-ID `hasContext` bit is 0 even when they
+  // have a real `contextId`, which on Sepolia loses every Budokan
+  // token. We filter by `contextId !== 0` client-side instead, which
+  // is the actual invariant we want.
   const { data, isLoading } = useTokens(
     enabled
       ? {
           owner,
           minterAddress: budokanAddress,
-          hasContext: true,
           ...(contextId != null ? { contextId } : {}),
           limit: MAX_OWNED_TOKENS,
         }
@@ -58,6 +63,9 @@ function useOwnedTournamentIds(
     if (!data?.data) return null;
     const ids = new Set<string>();
     for (const t of data.data) {
+      // Filter to tokens with a real tournament context. `contextId === 0`
+      // is the "no context" sentinel and should not produce a tournament
+      // entry. Anything truthy is a valid tournament id.
       if (t.contextId) ids.add(String(t.contextId));
     }
     return [...ids];
