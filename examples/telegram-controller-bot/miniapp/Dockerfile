@@ -1,33 +1,38 @@
-# Mini App image. Two-stage build: Bun compiles, a tiny static server hosts.
+# Mini App image. Three stages:
+#  - deps: install via Bun (matches the bun.lock shipped in the repo).
+#  - build: run Vite via Node, because vite-plugin-top-level-await uses a
+#    CommonJS require() shim that Bun's runtime doesn't fully support
+#    (TypeError: virtualModule.require is not a function on Bun 1.3 + Vite 6).
+#  - runtime: Node + `serve` for static hosting.
 #
 # VITE_BOT_PUBLIC_URL must be available at BUILD time because Vite inlines it
 # into the bundle. On Railway, set it via service variables so it's exposed
 # during the docker build (Railway forwards build-time variables).
 
-FROM oven/bun:1.3-slim AS build
+FROM oven/bun:1.3-slim AS deps
 
 WORKDIR /app
-
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
 
-COPY index.html tsconfig.json vite.config.ts ./
+# --- Build stage: Node, not Bun. ---
+FROM node:22-slim AS build
+
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json vite.config.ts index.html ./
 COPY src ./src
 
-# Vite reads import.meta.env.VITE_BOT_PUBLIC_URL at build time.
 ARG VITE_BOT_PUBLIC_URL
 ENV VITE_BOT_PUBLIC_URL=${VITE_BOT_PUBLIC_URL}
 
-RUN bun run build
+RUN npx vite build
 
-# --- Runtime stage: tiny static server ---
-FROM oven/bun:1.3-slim AS runtime
+# --- Runtime stage: tiny static server. ---
+FROM node:22-slim AS runtime
 
 WORKDIR /app
-
-# `serve` is a small, well-trodden static server. We install it as a one-off
-# rather than baking it into deps so the dev image stays minimal.
-RUN bun add -g serve@14
+RUN npm install -g serve@14
 
 COPY --from=build /app/dist ./dist
 
