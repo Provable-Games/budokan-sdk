@@ -1,0 +1,27 @@
+{
+  "name": "@example/budokan-telegram-bot-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "bun --env-file=../.env --watch src/index.ts",
+    "start": "bun --env-file=../.env src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cartridge/controller": "^0.10.7",
+    "@cartridge/controller-wasm": "^0.10.1",
+    "@fastify/cors": "^10.0.0",
+    "@provable-games/budokan-sdk": "^0.1.23",
+    "fastify": "^5.0.0",
+    "starknet": "^9.2.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
