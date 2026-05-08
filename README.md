@@ -100,6 +100,26 @@ function TournamentFeed({ tournamentId }: { tournamentId: string }) {
 }
 ```
 
+### Telegram Tournament Bot Example
+
+This repo includes a dependency-free Telegram bot example that lets a chat follow Budokan tournaments and receive live updates as registrations, scores, prizes, and reward claims land.
+
+```bash
+bun run build
+TELEGRAM_BOT_TOKEN=123456789:your-token node examples/telegram-tournament-bot.mjs
+```
+
+In Telegram:
+
+```text
+/follow 42
+/tournament 42
+/leaderboard 42
+/play 42
+```
+
+Full setup, testing, and deployment instructions are in `examples/telegram-tournament-bot.md`. Optional environment variables are listed in `examples/telegram-tournament-bot.env.example`. The bot persists chat follows in `.telegram-tournament-bot-registrations.json` by default. Tournament actions (entering, submitting a score, claiming a prize) are surfaced as deeplinks back to `https://budokan.gg` so the user signs with their Cartridge wallet in the browser.
+
 ## Configuration
 
 ```ts
