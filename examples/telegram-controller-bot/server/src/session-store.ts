@@ -29,7 +29,10 @@ export interface SessionInfo {
 export interface StoredSession {
   signer: SessionSigner;
   session: SessionInfo;
-  policies?: unknown;       // stored as parsed JSON; opaque to this module
+  // ParsedSessionPolicies from @cartridge/controller — stored verbatim so
+  // SessionProvider.probe() can validate the session was created with
+  // a superset of the currently-required policies. Opaque to this module.
+  policies: unknown;
   chain: "mainnet" | "sepolia";
 }
 

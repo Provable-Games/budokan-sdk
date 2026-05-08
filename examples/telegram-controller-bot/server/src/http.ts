@@ -16,7 +16,7 @@ import { CHAINS } from "@provable-games/budokan-sdk";
 import type { Config } from "./config.ts";
 import type { HandshakeStore } from "./handshake.ts";
 import type { SessionStore, StoredSession } from "./session-store.ts";
-import { buildSessionPolicies } from "./policies.ts";
+import { buildSessionPolicies, parsedPoliciesFor } from "./policies.ts";
 import type { TelegramApi } from "./telegram-api.ts";
 
 interface BuildOptions {
@@ -94,6 +94,14 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
     let stored: StoredSession;
     try {
       stored = parseSessionBody(req.body, config.chain);
+      // Persist the policy bundle (in ParsedSessionPolicies shape)
+      // alongside signer/session. SessionProvider.probe() uses it to
+      // validate the session was created with a superset of the
+      // currently-required policies. Server-side derivation: we know
+      // exactly which bundle the Mini App was given (deterministic
+      // function of chain), so trust it from policies.ts rather than
+      // accepting it from the client.
+      stored.policies = parsedPoliciesFor(config.chain, config.budokanAddress);
     } catch (error) {
       reply.code(400);
       return { error: error instanceof Error ? error.message : "Invalid session body." };
@@ -150,6 +158,9 @@ function parseSessionBody(body: SessionPostBody, chain: "mainnet" | "sepolia"): 
       metadataHash,
       sessionKeyGuid,
     },
+    // Filled in by the caller from the server-side policies module so we
+    // don't trust the client to set its own policy scope.
+    policies: undefined,
     chain,
   };
 }

@@ -4,10 +4,19 @@
 // Stage 2 commands: /start, /help, /connect, /disconnect, /whoami.
 // Stages 3-5 add: /claim, /create, /enter, plus read-only /follow etc.
 
+import { CHAINS } from "@provable-games/budokan-sdk";
+
 import type { Config } from "./config.ts";
 import type { HandshakeStore } from "./handshake.ts";
 import type { SessionStore } from "./session-store.ts";
 import { TelegramApi, webAppButton } from "./telegram-api.ts";
+import { resolveAccount } from "./controller-account.ts";
+import {
+  buildClaimRewardCall,
+  buildSubmitScoreCall,
+  type RewardType,
+} from "./budokan-calls.ts";
+import * as create from "./commands/create.ts";
 
 interface TelegramMessage {
   chat: { id: number };
@@ -80,8 +89,15 @@ export class TelegramBot {
   private async handleMessage(message: TelegramMessage): Promise<void> {
     const chatId = String(message.chat.id);
     const text = (message.text ?? "").trim();
-    const [rawCommand, ..._args] = text.split(/\s+/);
+    const [rawCommand, ...args] = text.split(/\s+/);
     const command = (rawCommand ?? "").split("@")[0]?.toLowerCase();
+    const isCommand = command?.startsWith("/") ?? false;
+
+    // Multi-turn /create state takes priority for plain text input. A user
+    // typing the next answer should not also trigger an unknown-command path.
+    if (!isCommand && create.isPending(chatId)) {
+      return create.handleAnswer(this.api, this.config, chatId, text);
+    }
 
     switch (command) {
       case "/start":
@@ -93,10 +109,123 @@ export class TelegramBot {
         return this.disconnect(chatId);
       case "/whoami":
         return this.whoami(chatId);
+      case "/cancel":
+        return this.cancel(chatId);
+      case "/submit_score":
+      case "/submitscore":
+        return this.submitScore(chatId, args);
+      case "/claim":
+        return this.claim(chatId, args);
+      case "/create":
+        return create.start(this.api, chatId);
       default:
-        // Silently ignore unknown commands. Stages 3-5 add more commands;
-        // unrecognized text remains a no-op so the bot doesn't spam users.
         return;
+    }
+  }
+
+  private async cancel(chatId: string): Promise<void> {
+    if (create.cancel(chatId)) {
+      await this.api.sendMessage(chatId, "Cancelled.");
+    } else {
+      await this.api.sendMessage(chatId, "Nothing to cancel.");
+    }
+  }
+
+  private async submitScore(chatId: string, args: string[]): Promise<void> {
+    if (args.length !== 3) {
+      await this.api.sendMessage(
+        chatId,
+        "Usage: /submit_score <tournamentId> <tokenId> <position>",
+      );
+      return;
+    }
+    const [tournamentIdRaw, tokenIdRaw, positionRaw] = args;
+    if (!/^\d+$/.test(tournamentIdRaw!)) {
+      await this.api.sendMessage(chatId, "tournamentId must be a positive integer.");
+      return;
+    }
+    if (!/^(0x[0-9a-fA-F]+|\d+)$/.test(tokenIdRaw!)) {
+      await this.api.sendMessage(chatId, "tokenId must be a hex (0x…) or decimal integer.");
+      return;
+    }
+    if (!/^\d+$/.test(positionRaw!)) {
+      await this.api.sendMessage(chatId, "position must be a positive integer.");
+      return;
+    }
+
+    const result = await resolveAccount(chatId, this.config);
+    if (!result.ok) {
+      await this.api.sendMessage(chatId, sessionErrorMessage(result.reason));
+      return;
+    }
+
+    const budokanAddress = this.config.budokanAddress ?? CHAINS[this.config.chain]?.budokanAddress;
+    if (!budokanAddress) {
+      await this.api.sendMessage(chatId, "Internal error: no Budokan address configured.");
+      return;
+    }
+
+    const call = buildSubmitScoreCall(budokanAddress, {
+      tournamentId: tournamentIdRaw!,
+      tokenId: tokenIdRaw!,
+      position: Number(positionRaw),
+    });
+
+    await this.api.sendMessage(chatId, `Submitting score for tournament ${tournamentIdRaw}…`);
+    try {
+      const tx = await result.data.account.execute([call]);
+      await this.api.sendMessage(chatId, `Score submitted ✓\ntx: ${tx.transaction_hash}`);
+    } catch (error) {
+      await this.api.sendMessage(chatId, `Submission failed: ${formatError(error)}`);
+    }
+  }
+
+  // /claim <tournamentId> <kind> [<kindArgs...>]
+  //   /claim 42 prize 7                  → RewardType::Prize(PrizeType::Single(7))
+  //   /claim 42 dist 7 2                 → RewardType::Prize(PrizeType::Distributed((7, 2)))
+  //   /claim 42 position 1               → RewardType::EntryFee(EntryFeeRewardType::Position(1))
+  //   /claim 42 tournament_creator       → RewardType::EntryFee(EntryFeeRewardType::TournamentCreator)
+  //   /claim 42 game_creator             → RewardType::EntryFee(EntryFeeRewardType::GameCreator)
+  //   /claim 42 refund 0xTOKEN           → RewardType::EntryFee(EntryFeeRewardType::Refund(token))
+  private async claim(chatId: string, args: string[]): Promise<void> {
+    if (args.length < 2) {
+      await this.api.sendMessage(chatId, claimUsage());
+      return;
+    }
+    const [tournamentIdRaw, kindRaw, ...rest] = args;
+    if (!/^\d+$/.test(tournamentIdRaw!)) {
+      await this.api.sendMessage(chatId, "tournamentId must be a positive integer.");
+      return;
+    }
+    const reward = parseRewardType(kindRaw!.toLowerCase(), rest);
+    if (!reward) {
+      await this.api.sendMessage(chatId, claimUsage());
+      return;
+    }
+
+    const result = await resolveAccount(chatId, this.config);
+    if (!result.ok) {
+      await this.api.sendMessage(chatId, sessionErrorMessage(result.reason));
+      return;
+    }
+
+    const budokanAddress = this.config.budokanAddress ?? CHAINS[this.config.chain]?.budokanAddress;
+    if (!budokanAddress) {
+      await this.api.sendMessage(chatId, "Internal error: no Budokan address configured.");
+      return;
+    }
+
+    const call = buildClaimRewardCall(budokanAddress, {
+      tournamentId: tournamentIdRaw!,
+      reward,
+    });
+
+    await this.api.sendMessage(chatId, `Claiming reward for tournament ${tournamentIdRaw}…`);
+    try {
+      const tx = await result.data.account.execute([call]);
+      await this.api.sendMessage(chatId, `Reward claimed ✓\ntx: ${tx.transaction_hash}`);
+    } catch (error) {
+      await this.api.sendMessage(chatId, `Claim failed: ${formatError(error)}`);
     }
   }
 
@@ -106,11 +235,17 @@ export class TelegramBot {
       [
         `Budokan Telegram bot (chain: ${this.config.chain})`,
         "",
-        "/connect — authorize the bot via Cartridge in a Telegram Mini App",
-        "/disconnect — clear your stored session",
-        "/whoami — show the connected account",
+        "Auth:",
+        "  /connect — authorize the bot via Cartridge in a Telegram Mini App",
+        "  /disconnect — clear your stored session",
+        "  /whoami — show the connected account",
         "",
-        "Signed actions (/claim, /create, /enter) land in upcoming stages.",
+        "Signed actions (require /connect first):",
+        "  /create — multi-turn flow to create a tournament",
+        "  /submit_score <tournamentId> <tokenId> <position>",
+        "  /claim <tournamentId> <kind> [args]",
+        "    kinds: prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
+        "  /cancel — abort an in-flight /create flow",
       ].join("\n"),
     );
   }
@@ -170,6 +305,56 @@ export class TelegramBot {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch"): string {
+  if (reason === "no_session") return "Not connected — run /connect first.";
+  if (reason === "expired") return "Your session expired. Run /connect to authorize again.";
+  return "Your session doesn't cover this action. Run /connect again to widen consent.";
+}
+
+function claimUsage(): string {
+  return [
+    "Usage: /claim <tournamentId> <kind> [args]",
+    "  /claim 42 prize 7                 — single sponsored prize id 7",
+    "  /claim 42 dist 7 2                — distributed prize 7, payout position 2",
+    "  /claim 42 position 1              — entry-fee share for placement 1",
+    "  /claim 42 tournament_creator",
+    "  /claim 42 game_creator",
+    "  /claim 42 refund 0xTOKEN          — refund for a bought-in entry",
+  ].join("\n");
+}
+
+function parseRewardType(kind: string, rest: string[]): RewardType | null {
+  switch (kind) {
+    case "prize": {
+      const [id] = rest;
+      if (!id || !/^\d+$/.test(id)) return null;
+      return { kind: "prize_single", prizeId: id };
+    }
+    case "dist": {
+      const [id, pos] = rest;
+      if (!id || !/^\d+$/.test(id)) return null;
+      if (!pos || !/^\d+$/.test(pos)) return null;
+      return { kind: "prize_distributed", prizeId: id, payoutPosition: Number(pos) };
+    }
+    case "position": {
+      const [n] = rest;
+      if (!n || !/^\d+$/.test(n)) return null;
+      return { kind: "entry_fee_position", position: Number(n) };
+    }
+    case "tournament_creator":
+      return { kind: "entry_fee_tournament_creator" };
+    case "game_creator":
+      return { kind: "entry_fee_game_creator" };
+    case "refund": {
+      const [token] = rest;
+      if (!token || !/^(0x[0-9a-fA-F]+|\d+)$/.test(token)) return null;
+      return { kind: "entry_fee_refund", tokenId: token };
+    }
+    default:
+      return null;
+  }
 }
 
 function isAbortError(error: unknown): boolean {
