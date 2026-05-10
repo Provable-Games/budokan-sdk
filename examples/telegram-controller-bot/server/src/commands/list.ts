@@ -152,32 +152,45 @@ export async function myTournaments(
     return;
   }
 
-  // Page the IDs ourselves before asking budokan — keeps each request small
-  // when the user is in many tournaments.
-  const pageIds = tournamentIds.slice(offset, offset + PAGE_SIZE);
-  if (pageIds.length === 0) {
-    await api.sendMessage(chatId, `No tournaments at page ${page}. Try a lower page.`);
-    return;
-  }
-
+  // Hand budokan ALL the IDs at once. The indexer filters out IDs that
+  // don't resolve to real tournaments (e.g. stale contextIds from tokens
+  // whose tournaments were removed), so we get back only the ones that
+  // exist. Paginating raw IDs before asking would cause pages to under-
+  // fill in proportion to the unresolved count, which looked like a bug.
   let result;
   try {
     result = await sdkClient(config, chain).getTournaments({
-      tournamentIds: pageIds,
-      limit: PAGE_SIZE,
+      tournamentIds,
+      limit: tournamentIds.length, // ask for all matches up front
       offset: 0,
+      sort: "created_at",
     });
   } catch (error) {
     await api.sendMessage(chatId, `Lookup failed: ${formatError(error)}`);
     return;
   }
 
+  const resolved = result.data;
+  const total = resolved.length;
+  if (total === 0) {
+    await api.sendMessage(
+      chatId,
+      `No tournaments for ${session.session.username} on ${chain}. (You have ${tournamentIds.length} game tokens but none of their tournaments are indexed.)`,
+    );
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (page > totalPages) {
+    await api.sendMessage(chatId, `No tournaments at page ${page}. Last page is ${totalPages}.`);
+    return;
+  }
+  const pageData = resolved.slice(offset, offset + PAGE_SIZE);
+
   const gameNames = await buildGameNameMap(chain);
-  const totalPages = Math.max(1, Math.ceil(tournamentIds.length / PAGE_SIZE));
   const lines = [
-    `Tournaments for ${session.session.username} on ${chain} (page ${page}/${totalPages}, ${tournamentIds.length} total):`,
+    `Tournaments for ${session.session.username} on ${chain} (page ${page}/${totalPages}, ${total} total):`,
     "",
-    ...result.data.map((t) => formatTournamentLine(t, gameNames)),
+    ...pageData.map((t) => formatTournamentLine(t, gameNames)),
   ];
   if (totalPages > 1 && page < totalPages) {
     lines.push("", `Reply '/my_tournaments ${page + 1}' for the next page.`);
