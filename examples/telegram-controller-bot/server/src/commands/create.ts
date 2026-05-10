@@ -49,6 +49,7 @@ type Step =
   | "entryFeeRefundShare"
   | "entryFeeDistCount"
   | "entryFeeDistType"
+  | "entryFeeDistWeight"
   | "prizesChoice"
   | "prizesPick"
   | "prizesAmount"
@@ -146,6 +147,7 @@ interface State {
   entryFeeRefundBps?: number;       // refund share for non-placers
   entryFeeDistType?: "linear" | "exponential" | "uniform";
   entryFeeDistCount?: number;       // # placements that share the leaderboard pool
+  entryFeeDistWeight?: number;      // client-units weight (×10 on chain). 1 = default.
   // Prizes — picked from the user's wallet balances.
   voyagerBalances?: VoyagerTokenBalance[];
   prizesSoFar: PrizeSpec[];
@@ -229,6 +231,8 @@ export async function handleAnswer(
       return handleEntryFeeDistCount(api, config, state, chatId, trimmed);
     case "entryFeeDistType":
       return handleEntryFeeDistType(api, config, state, chatId, trimmed);
+    case "entryFeeDistWeight":
+      return handleEntryFeeDistWeight(api, config, state, chatId, trimmed);
     case "prizesChoice":
       return handlePrizesChoice(api, config, state, chatId, trimmed);
     case "prizesPick":
@@ -576,7 +580,7 @@ async function handleEntryFeeCreatorShare(api: TelegramApi, _config: Config, sta
   state.step = "entryFeeRefundShare";
   await api.sendMessage(
     chatId,
-    "Player refund cut? (% refunded to non-placers, default 0)",
+    "Refund cut? (% of each entry refunded back to that entrant after the tournament, default 0)",
   );
 }
 
@@ -626,7 +630,102 @@ async function handleEntryFeeDistType(api: TelegramApi, config: Config, state: S
   const idx = parsePickIndex(input, 3);
   if (idx === null) { await api.sendMessage(chatId, "Reply 1, 2, or 3."); return; }
   state.entryFeeDistType = idx === 0 ? "linear" : idx === 1 ? "exponential" : "uniform";
-  await moveToPrizes(api, config, state, chatId);
+  if (state.entryFeeDistType === "uniform") {
+    // Uniform has no weight — every paid placement gets the same share.
+    return moveToPrizes(api, config, state, chatId);
+  }
+  // Linear / exponential: ask for weight + render preview curve.
+  state.entryFeeDistWeight = 1;
+  state.step = "entryFeeDistWeight";
+  await renderDistributionCurve(api, state, chatId);
+}
+
+/**
+ * Show the per-position percentages for the current distribution type +
+ * weight. User can either accept ("ok") or send a new weight to recompute.
+ *
+ * Steeper exponentials (higher weight) concentrate more of the pool on the
+ * top placements; the client's slider goes 0–10 with default 1.
+ */
+async function renderDistributionCurve(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  const distType = state.entryFeeDistType!;
+  const count = state.entryFeeDistCount!;
+  const weight = state.entryFeeDistWeight ?? 1;
+  const percentages = calculateDistributionPercentages(count, weight, distType);
+
+  // Render only the top N rows for chat brevity, but always include the last
+  // row so the user can see where it bottoms out.
+  const TOP_LIMIT = 10;
+  const lines: string[] = [
+    `Distribution: ${distType}, weight ${weight}, ${count} places.`,
+    "Pool share per placement:",
+  ];
+  const showRow = (i: number) => {
+    const pct = percentages[i] ?? 0;
+    lines.push(`  ${i + 1}. ${pct.toFixed(2)}%`);
+  };
+  if (percentages.length <= TOP_LIMIT) {
+    percentages.forEach((_, i) => showRow(i));
+  } else {
+    for (let i = 0; i < TOP_LIMIT - 1; i++) showRow(i);
+    lines.push(`  …`);
+    showRow(percentages.length - 1);
+  }
+  lines.push("");
+  lines.push("Reply 'ok' to keep, or send a new weight (e.g. '2', '0.5') to recalculate.");
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function handleEntryFeeDistWeight(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  if (/^ok$/i.test(input.trim())) {
+    return moveToPrizes(api, config, state, chatId);
+  }
+  // Otherwise treat as a new weight value.
+  const t = input.trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) {
+    await api.sendMessage(chatId, "Send 'ok' to keep, or a non-negative number.");
+    return;
+  }
+  const w = Number(t);
+  if (!Number.isFinite(w) || w < 0 || w > 100) {
+    await api.sendMessage(chatId, "Weight must be 0–100.");
+    return;
+  }
+  state.entryFeeDistWeight = w;
+  await renderDistributionCurve(api, state, chatId);
+}
+
+/**
+ * Per-position percentage shares of the leaderboard pool. Mirrors
+ * metagame-sdk's calculateDistribution so the chat preview matches what the
+ * contract will produce on chain. Returns percentages summing to 100,
+ * length === positions.
+ */
+function calculateDistributionPercentages(
+  positions: number,
+  weight: number,
+  distributionType: "linear" | "exponential" | "uniform",
+): number[] {
+  if (positions <= 0) return [];
+  let raw: number[] = [];
+  if (distributionType === "uniform") {
+    raw = Array(positions).fill(1);
+  } else if (distributionType === "linear") {
+    for (let i = 0; i < positions; i++) {
+      const positionValue = positions - i;
+      raw.push(1 + (positionValue - 1) * (weight / 10));
+    }
+  } else {
+    for (let i = 0; i < positions; i++) {
+      raw.push(Math.pow(1 - i / positions, weight));
+    }
+  }
+  const total = raw.reduce((a, b) => a + b, 0);
+  if (total === 0) return Array(positions).fill(0);
+  const bp = raw.map((d) => Math.floor((d / total) * 10000));
+  const remaining = 10000 - bp.reduce((a, b) => a + b, 0);
+  if (remaining !== 0) bp[0] = (bp[0] ?? 0) + remaining;
+  return bp.map((b) => b / 100);
 }
 
 async function moveToPrizes(api: TelegramApi, config: Config, state: State, chatId: string): Promise<void> {
@@ -808,7 +907,7 @@ function buildEntryFeeArgs(state: State): EntryFeeArgs | undefined {
   const distribution: DistributionSpec =
     distType === "uniform"
       ? { kind: "uniform" }
-      : { kind: distType, weight: 1 }; // client-units weight; encoder scales ×10
+      : { kind: distType, weight: state.entryFeeDistWeight ?? 1 };
   return {
     tokenAddress: state.entryFeeToken.address,
     amount: state.entryFeeAmount,
@@ -850,8 +949,11 @@ function formatSummary(s: State): string {
     lines.push(`  Entry fee: ${formatTokenAmount(s.entryFeeAmount, s.entryFeeToken.decimals)} ${s.entryFeeToken.symbol}`);
     lines.push(`    Tournament creator: ${creator}%`);
     lines.push(`    Game creator: ${game}%`);
-    lines.push(`    Refund (non-placers): ${refund}%`);
-    lines.push(`    Leaderboard pool: ${pool.toFixed(2)}% to top ${s.entryFeeDistCount} via ${s.entryFeeDistType}`);
+    lines.push(`    Refund per entrant: ${refund}%`);
+    const distSuffix = s.entryFeeDistType === "uniform"
+      ? ""
+      : `, weight ${s.entryFeeDistWeight ?? 1}`;
+    lines.push(`    Leaderboard pool: ${pool.toFixed(2)}% to top ${s.entryFeeDistCount} via ${s.entryFeeDistType}${distSuffix}`);
   } else {
     lines.push(`  Entry fee: none`);
   }
