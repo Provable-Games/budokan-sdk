@@ -6,7 +6,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "dev": "bun --env-file=../.env --watch src/index.ts",
-    "start": "bun --env-file=../.env src/index.ts",
+    "start": "node --experimental-wasm-modules --import tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -15,10 +15,12 @@
     "@fastify/cors": "^10.0.0",
     "@provable-games/budokan-sdk": "^0.1.23",
     "fastify": "^5.0.0",
-    "starknet": "^9.2.1"
+    "starknet": "^9.2.1",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
+    "@types/node": "^22.0.0",
     "typescript": "^5.7.3"
   },
   "engines": {
