@@ -140,7 +140,7 @@ export async function start(api: TelegramApi, chatId: string, chain: Chain): Pro
     `Let's create a tournament on ${chain}. /cancel to abort.`,
     "",
     "Pick a game:",
-    ...games.map((g, i) => `  ${i + 1}. ${g.name}`),
+    ...games.map((g, i) => `  ${i + 1}. ${g.name} — ${shortHex(g.contractAddress)}`),
     "",
     "Reply with a number.",
   ].join("\n"));
@@ -196,7 +196,10 @@ async function handleGame(api: TelegramApi, state: State, chatId: string, input:
   }
   state.game = state.gamesList[idx];
   state.step = "name";
-  await api.sendMessage(chatId, `Selected: ${state.game!.name}\n\nTournament name? (≤31 ASCII characters)`);
+  await api.sendMessage(
+    chatId,
+    `Selected: ${state.game!.name} (${shortHex(state.game!.contractAddress)})\n\nTournament name? (≤31 ASCII characters)`,
+  );
 }
 
 async function handleName(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
@@ -715,6 +718,14 @@ function formatTokenAmount(rawAmount: string, decimals: number): string {
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + "…";
+}
+
+// Shortened hex form for displaying contract addresses inline. e.g.
+// 0x07ae26eecf027… → "0x07ae26ee…c89202831". Long enough that two games
+// with similar prefixes are still distinguishable.
+function shortHex(value: string): string {
+  if (!value || value.length <= 18) return value;
+  return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
 function formatError(error: unknown): string {
