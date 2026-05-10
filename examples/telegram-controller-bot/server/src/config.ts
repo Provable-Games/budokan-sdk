@@ -16,6 +16,10 @@ export interface Config {
   rpcUrl?: string;
   budokanAddress?: string;
   viewerAddress?: string;
+  /** Optional. Voyager API proxy used to fetch user token balances for
+   *  prize-sponsorship pickers. If unset, prize sponsorship at /create
+   *  time is disabled and the bot tells the user to add prizes via budokan.gg. */
+  voyagerProxyUrl?: string;
 }
 
 export function loadConfig(): Config {
@@ -63,6 +67,7 @@ export function loadConfig(): Config {
     rpcUrl: env("BUDOKAN_RPC_URL"),
     budokanAddress: env("BUDOKAN_ADDRESS"),
     viewerAddress: env("BUDOKAN_VIEWER_ADDRESS"),
+    voyagerProxyUrl: env("BUDOKAN_VOYAGER_PROXY_URL"),
   };
 }
 
