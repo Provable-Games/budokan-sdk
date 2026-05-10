@@ -7,12 +7,88 @@
 //   contracts/packages/interfaces/src/budokan.cairo (RewardType, EntryFeeRewardType)
 //   game-components/.../prize.cairo (PrizeType)
 
-import { CallData, num } from "starknet";
+import { CallData, num, uint256 } from "starknet";
 
 export interface Call {
   contractAddress: string;
   entrypoint: string;
   calldata: string[];
+}
+
+/** ERC20 approve(spender, amount) */
+export function buildErc20ApproveCall(
+  tokenAddress: string,
+  spender: string,
+  amount: string,
+): Call {
+  return {
+    contractAddress: tokenAddress,
+    entrypoint: "approve",
+    calldata: CallData.compile([spender, uint256.bnToUint256(amount)]),
+  };
+}
+
+/**
+ * enter_tournament(tournament_id: u64, player_name: Option<felt252>,
+ *                  player_address: ContractAddress,
+ *                  qualification: Option<QualificationProof>,
+ *                  salt: u16, metadata_value: u16)
+ *
+ * Returns (felt252, u32) on-chain — game_token_id and entry_number — but
+ * starknet.js execute() only surfaces the tx hash. Callers can fetch the
+ * receipt + parse events if they need those values.
+ *
+ * Tournaments with non-trivial entry_requirement (NFT-gated, validator
+ * extensions) need a real QualificationProof; those should not be entered
+ * via this call. Caller is responsible for checking and routing.
+ */
+export interface EnterTournamentArgs {
+  tournamentId: string;
+  playerAddress: string;
+  playerName?: string;     // Optional felt252 short string. Omit → Option::None.
+  salt?: number;
+  metadataValue?: number;
+}
+
+export function buildEnterTournamentCall(
+  budokanAddress: string,
+  args: EnterTournamentArgs,
+): Call {
+  // Hand-build calldata: starknet.js's enum encoding is brittle for
+  // Option<felt252> in some versions; doing it manually keeps it explicit.
+  const calldata: string[] = [
+    num.toHex(args.tournamentId),  // tournament_id u64
+  ];
+  // player_name: Option<felt252>. Cairo Option tags: 0 = Some, 1 = None.
+  if (args.playerName) {
+    calldata.push("0x0", felt252FromShortString(args.playerName));
+  } else {
+    calldata.push("0x1");
+  }
+  calldata.push(args.playerAddress);  // player_address
+  // qualification: Option<QualificationProof>. We only support None here;
+  // qualified tournaments are routed out via deeplink.
+  calldata.push("0x1");
+  calldata.push(num.toHex(args.salt ?? 0));            // salt u16
+  calldata.push(num.toHex(args.metadataValue ?? 0));   // metadata_value u16
+  return {
+    contractAddress: budokanAddress,
+    entrypoint: "enter_tournament",
+    calldata,
+  };
+}
+
+// Felt252 short-string encoding: ASCII bytes packed big-endian into a felt.
+// Throws if the input is too long (>31 bytes) or non-ASCII.
+function felt252FromShortString(s: string): string {
+  if (s.length > 31) throw new Error(`String too long for felt252: ${s.length} bytes`);
+  let value = 0n;
+  for (const char of s) {
+    const code = char.charCodeAt(0);
+    if (code > 0x7f) throw new Error("Felt252 short strings must be ASCII");
+    value = (value << 8n) | BigInt(code);
+  }
+  return "0x" + value.toString(16);
 }
 
 /** submit_score(tournament_id: u64, token_id: felt252, position: u32) */

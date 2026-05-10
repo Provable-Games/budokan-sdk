@@ -206,6 +206,68 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
     },
   );
 
+  // --- Tx-mode handshake (paid /enter, future paid /create with prizes etc.) ---
+  //
+  // Bot mints a tx-mode token whose payload is { calls, summary } — the calls
+  // the Mini App should ask the user to sign. The Mini App fetches the token,
+  // displays the summary, runs Cartridge openExecute(), and POSTs the
+  // resulting tx hash back. Bot relays to the chat.
+  //
+  // Token is consumed on POST. GET is non-consuming so the Mini App can fetch
+  // payload on mount; the user needs the same token for both.
+
+  app.get<{ Params: { token: string } }>("/api/tx/:token", async (req, reply) => {
+    const handshake = handshakes.peek(req.params.token);
+    if (!handshake || handshake.mode !== "tx" || !handshake.payload) {
+      reply.code(404);
+      return { error: "Tx token invalid or expired." };
+    }
+    const rpcUrl = config.rpcUrl ?? CHAINS[config.chain]?.rpcUrl;
+    if (!rpcUrl) {
+      reply.code(500);
+      return { error: `No RPC URL configured for chain '${config.chain}'.` };
+    }
+    return {
+      chain: config.chain,
+      rpcUrl,
+      calls: handshake.payload.calls,
+      summary: handshake.payload.summary,
+    };
+  });
+
+  app.post<{
+    Params: { token: string };
+    Body: { txHash?: unknown; error?: unknown };
+  }>("/api/tx/:token", async (req, reply) => {
+    const handshake = handshakes.consume(req.params.token);
+    if (!handshake || handshake.mode !== "tx") {
+      reply.code(404);
+      return { error: "Tx token invalid, expired, or already used." };
+    }
+
+    if (typeof req.body?.error === "string") {
+      // User cancelled or Cartridge returned an error.
+      telegram
+        .sendMessage(handshake.chatId, `Transaction cancelled: ${req.body.error}`)
+        .catch((error: unknown) => app.log.error({ err: error }, "Failed chat notify"));
+      return { ok: true };
+    }
+
+    if (typeof req.body?.txHash !== "string" || req.body.txHash.length === 0) {
+      reply.code(400);
+      return { error: "Body must include txHash (string)." };
+    }
+    const txHash = req.body.txHash;
+
+    // Best-effort chat notify. We don't wait for inclusion here — the Mini App
+    // already showed the user the tx hash, and the chat just gets confirmation.
+    telegram
+      .sendMessage(handshake.chatId, `Transaction submitted ✓\ntx: ${txHash}`)
+      .catch((error: unknown) => app.log.error({ err: error }, "Failed chat notify"));
+
+    return { ok: true };
+  });
+
   return app;
 }
 

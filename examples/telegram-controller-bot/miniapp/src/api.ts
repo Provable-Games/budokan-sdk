@@ -1,7 +1,7 @@
 // Bot HTTP client. Talks to the Fastify server defined in
 // server/src/http.ts. Both endpoints live behind VITE_BOT_PUBLIC_URL.
 
-import type { ConnectInfoResponse, ConnectPostBody } from "./types.ts";
+import type { ConnectInfoResponse, ConnectPostBody, TxInfoResponse, TxPostBody } from "./types.ts";
 
 const BOT_URL = import.meta.env.VITE_BOT_PUBLIC_URL?.replace(/\/$/, "") ?? "";
 
@@ -34,6 +34,34 @@ export async function postConnectSession(token: string, body: ConnectPostBody): 
   }
   if (!res.ok) {
     throw new Error(`Bot rejected session: ${res.status} — ${await safeText(res)}`);
+  }
+}
+
+export async function fetchTxInfo(token: string): Promise<TxInfoResponse> {
+  const res = await fetch(`${BOT_URL}/api/tx/${encodeURIComponent(token)}`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  if (res.status === 404) {
+    throw new Error("This transaction link has expired or already been used. Run the command again from chat.");
+  }
+  if (!res.ok) {
+    throw new Error(`Bot returned ${res.status}: ${await safeText(res)}`);
+  }
+  return (await res.json()) as TxInfoResponse;
+}
+
+export async function postTxResult(token: string, body: TxPostBody): Promise<void> {
+  const res = await fetch(`${BOT_URL}/api/tx/${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 404) {
+    throw new Error("This transaction link expired before we could report the result.");
+  }
+  if (!res.ok) {
+    throw new Error(`Bot rejected tx report: ${res.status} — ${await safeText(res)}`);
   }
 }
 

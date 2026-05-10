@@ -31,3 +31,24 @@ export interface ConnectPostBody {
   sessionKeyGuid: string;
   signer: { privKey: string; pubKey: string };
 }
+
+export interface TxCall {
+  contractAddress: string;
+  entrypoint: string;
+  calldata: string[];
+}
+
+// Tx-mode handshake. GET /api/tx/<token> returns this; the Mini App displays
+// summary and asks Cartridge to execute the calls.
+export interface TxInfoResponse {
+  chain: Chain;
+  rpcUrl: string;
+  calls: TxCall[];
+  summary: string;
+}
+
+// POST /api/tx/<token> body: either txHash on success, or error on cancel.
+export interface TxPostBody {
+  txHash?: string;
+  error?: string;
+}
