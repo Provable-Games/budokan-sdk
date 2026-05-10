@@ -47,6 +47,13 @@ type Step =
   | "prizesAmount"
   | "confirm";
 
+// Schedule presets — both "fixed registration" (closed before play starts)
+// and "open registration" (players can join throughout the tournament).
+//
+// Open tournaments are encoded by setting both registration_start_delay and
+// registration_end_delay to 0. The contract's `has_registration()` returns
+// false in that case, so the phase machine skips Registration and entries
+// are accepted from creation until the tournament ends.
 type SchedulePreset = {
   name: string;
   regStart: number;
@@ -56,18 +63,40 @@ type SchedulePreset = {
   submission: number;
 };
 
-const SCHEDULE_PRESETS: readonly SchedulePreset[] = [
-  { name: "Quickfire (1h reg / 1h play / 1h submit)",
-    regStart: 0, regDuration: 3600, staging: 0, gameDuration: 3600, submission: 3600 },
-  { name: "Same-day (1h reg / 8h play / 4h submit)",
-    regStart: 0, regDuration: 3600, staging: 0, gameDuration: 28800, submission: 14400 },
-  { name: "Standard (24h reg / 24h play / 24h submit)",
-    regStart: 0, regDuration: 86400, staging: 0, gameDuration: 86400, submission: 86400 },
-  { name: "Weekend (24h reg / 48h play / 24h submit)",
-    regStart: 0, regDuration: 86400, staging: 0, gameDuration: 172800, submission: 86400 },
-  { name: "Weeklong (24h reg / 7d play / 24h submit)",
-    regStart: 0, regDuration: 86400, staging: 0, gameDuration: 604800, submission: 86400 },
+// Submission window is hardcoded to 24h across all presets and the custom
+// flow. Tournament creators almost always pick this; can be lifted into a
+// question if it becomes a real constraint.
+const SUBMISSION_SECONDS = 86400;
+
+const FIXED_PRESETS: readonly SchedulePreset[] = [
+  { name: "Quickfire — 1h reg / 1h play",
+    regStart: 0, regDuration: 3600, staging: 0, gameDuration: 3600, submission: SUBMISSION_SECONDS },
+  { name: "Same-day — 1h reg / 8h play",
+    regStart: 0, regDuration: 3600, staging: 0, gameDuration: 28800, submission: SUBMISSION_SECONDS },
+  { name: "Standard — 24h reg / 24h play",
+    regStart: 0, regDuration: 86400, staging: 0, gameDuration: 86400, submission: SUBMISSION_SECONDS },
+  { name: "Weekend — 24h reg / 48h play",
+    regStart: 0, regDuration: 86400, staging: 0, gameDuration: 172800, submission: SUBMISSION_SECONDS },
+  { name: "Weeklong — 24h reg / 7d play",
+    regStart: 0, regDuration: 86400, staging: 0, gameDuration: 604800, submission: SUBMISSION_SECONDS },
 ];
+
+// Open variants: regStart=0, regDuration=0, staging=0 → tournament begins
+// immediately, registration stays open throughout play.
+const OPEN_PRESETS: readonly SchedulePreset[] = [
+  { name: "Open Quickfire — 1h play",
+    regStart: 0, regDuration: 0, staging: 0, gameDuration: 3600, submission: SUBMISSION_SECONDS },
+  { name: "Open Same-day — 8h play",
+    regStart: 0, regDuration: 0, staging: 0, gameDuration: 28800, submission: SUBMISSION_SECONDS },
+  { name: "Open Standard — 24h play",
+    regStart: 0, regDuration: 0, staging: 0, gameDuration: 86400, submission: SUBMISSION_SECONDS },
+  { name: "Open Weekend — 48h play",
+    regStart: 0, regDuration: 0, staging: 0, gameDuration: 172800, submission: SUBMISSION_SECONDS },
+  { name: "Open Weeklong — 7d play",
+    regStart: 0, regDuration: 0, staging: 0, gameDuration: 604800, submission: SUBMISSION_SECONDS },
+];
+
+const SCHEDULE_PRESETS: readonly SchedulePreset[] = [...FIXED_PRESETS, ...OPEN_PRESETS];
 
 interface SettingsPage {
   data: GameSettingDetails[];
@@ -97,7 +126,8 @@ interface State {
   settingsPage?: SettingsPage;
   schedule?: { regStart: number; regDuration: number; staging: number; gameDuration: number; submission: number };
   customSchedule?: Partial<{ regStart: number; regDuration: number; staging: number; gameDuration: number; submission: number }>;
-  customScheduleStep?: "regStart" | "regDuration" | "staging" | "gameDuration" | "submission";
+  customScheduleStep?: "style" | "regStart" | "regDuration" | "staging" | "gameDuration" | "submission";
+  customScheduleStyle?: "fixed" | "open";
   leaderboardSize?: number;
   leaderboardAscending?: boolean;
   gameMustBeOver?: boolean;
@@ -291,15 +321,26 @@ async function handleSettings(api: TelegramApi, state: State, chatId: string, in
 
 async function moveToSchedule(api: TelegramApi, state: State, chatId: string): Promise<void> {
   state.step = "schedule";
-  await api.sendMessage(chatId, [
+  // Group presets by style so the user sees the structural choice
+  // (fixed vs open registration) before picking durations.
+  const lines: string[] = [
     `Settings: ${state.settingsName}`,
     "",
-    "Pick a schedule preset:",
-    ...SCHEDULE_PRESETS.map((p, i) => `  ${i + 1}. ${p.name}`),
+    "Pick a schedule preset.",
+    "",
+    "Fixed registration (registration window closes before play starts):",
+    ...FIXED_PRESETS.map((p, i) => `  ${i + 1}. ${p.name}`),
+    "",
+    "Open registration (players can join throughout play):",
+    ...OPEN_PRESETS.map(
+      (p, i) => `  ${FIXED_PRESETS.length + i + 1}. ${p.name}`,
+    ),
+    "",
     `  ${SCHEDULE_PRESETS.length + 1}. Custom (I'll ask for each window)`,
     "",
     "Reply with a number.",
-  ].join("\n"));
+  ];
+  await api.sendMessage(chatId, lines.join("\n"));
 }
 
 async function handleSchedule(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
@@ -313,15 +354,41 @@ async function handleSchedule(api: TelegramApi, state: State, chatId: string, in
     state.schedule = { regStart: p.regStart, regDuration: p.regDuration, staging: p.staging, gameDuration: p.gameDuration, submission: p.submission };
     return moveToLeaderboard(api, state, chatId);
   }
-  // Custom path.
+  // Custom path — ask registration style first.
   state.step = "scheduleCustom";
   state.customSchedule = {};
-  state.customScheduleStep = "regStart";
-  await api.sendMessage(chatId, "When does registration open? Send 'now', or '2h', '30m', '1d'.");
+  state.customScheduleStep = "style";
+  await api.sendMessage(chatId, [
+    "Custom schedule. Registration style?",
+    "  1. Fixed — registration window closes before play starts",
+    "  2. Open — players can join throughout play",
+    "",
+    "Reply with a number.",
+  ].join("\n"));
 }
 
 async function handleScheduleCustom(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
   const step = state.customScheduleStep!;
+
+  // Step 1 — pick fixed vs open. Branches the rest of the prompts.
+  if (step === "style") {
+    const idx = parsePickIndex(input, 2);
+    if (idx === null) { await api.sendMessage(chatId, "Reply 1 (fixed) or 2 (open)."); return; }
+    state.customScheduleStyle = idx === 0 ? "fixed" : "open";
+    if (state.customScheduleStyle === "fixed") {
+      state.customScheduleStep = "regStart";
+      await api.sendMessage(chatId, "When does registration open? Send 'now', or a duration like '2h', '30m', '1d'.");
+    } else {
+      // Open: skip reg fields entirely (they stay 0). Optional staging delay
+      // before play starts.
+      state.customSchedule!.regStart = 0;
+      state.customSchedule!.regDuration = 0;
+      state.customScheduleStep = "staging";
+      await api.sendMessage(chatId, "When does play start? Send 'now', or '1h', '2h' for a delay.");
+    }
+    return;
+  }
+
   const seconds = parseDuration(input, step === "regStart" || step === "staging");
   if (seconds === null || (step !== "regStart" && step !== "staging" && seconds <= 0)) {
     await api.sendMessage(chatId, "Couldn't parse that. Examples: 'now', '0', '2h', '1d', '30m'.");
@@ -341,21 +408,18 @@ async function handleScheduleCustom(api: TelegramApi, state: State, chatId: stri
       state.customScheduleStep = "gameDuration";
       await api.sendMessage(chatId, "How long is the live game? (e.g. '24h', '7d')");
       return;
-    case "gameDuration":
-      state.customScheduleStep = "submission";
-      await api.sendMessage(chatId, "Submission window after the game ends? (e.g. '24h')");
-      return;
-    case "submission": {
+    case "gameDuration": {
       const c = state.customSchedule!;
       state.schedule = {
-        regStart: c.regStart!,
-        regDuration: c.regDuration!,
-        staging: c.staging!,
+        regStart: c.regStart ?? 0,
+        regDuration: c.regDuration ?? 0,
+        staging: c.staging ?? 0,
         gameDuration: c.gameDuration!,
-        submission: c.submission!,
+        submission: SUBMISSION_SECONDS,
       };
       state.customSchedule = undefined;
       state.customScheduleStep = undefined;
+      state.customScheduleStyle = undefined;
       return moveToLeaderboard(api, state, chatId);
     }
   }
@@ -618,21 +682,25 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
 
 function formatSummary(s: State): string {
   const sched = s.schedule!;
+  const isOpen = sched.regStart === 0 && sched.regDuration === 0;
   const lines = [
     "Ready to create:",
     `  Game: ${s.game!.name}`,
     `  Name: ${s.name}`,
     `  Description: ${s.description || "(none)"}`,
     `  Settings: ${s.settingsName}`,
-    `  Registration opens: ${formatDuration(sched.regStart)}`,
-    `  Registration window: ${formatDuration(sched.regDuration)}`,
-    `  Staging: ${formatDuration(sched.staging)}`,
+    `  Registration: ${isOpen ? "open (players can join during play)" : `fixed (opens in ${formatDuration(sched.regStart)}, lasts ${formatDuration(sched.regDuration)})`}`,
+  ];
+  if (sched.staging > 0) {
+    lines.push(`  Staging delay: ${formatDuration(sched.staging)}`);
+  }
+  lines.push(
     `  Live game: ${formatDuration(sched.gameDuration)}`,
-    `  Submission: ${formatDuration(sched.submission)}`,
+    `  Submission window: ${formatDuration(sched.submission)}`,
     `  Leaderboard size: ${s.leaderboardSize}`,
     `  Lower scores win: ${s.leaderboardAscending ? "yes" : "no"}`,
     `  Require game over: ${s.gameMustBeOver ? "yes" : "no"}`,
-  ];
+  );
   if (s.entryFeeToken && s.entryFeeAmount) {
     lines.push(`  Entry fee: ${formatTokenAmount(s.entryFeeAmount, s.entryFeeToken.decimals)} ${s.entryFeeToken.symbol}`);
   } else {
