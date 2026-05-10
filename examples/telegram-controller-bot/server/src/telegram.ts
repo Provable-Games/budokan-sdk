@@ -4,7 +4,7 @@
 // Stage 2 commands: /start, /help, /connect, /disconnect, /whoami.
 // Stages 3-5 add: /claim, /create, /enter, plus read-only /follow etc.
 
-import { CHAINS, createBudokanClient } from "@provable-games/budokan-sdk";
+import { CHAINS } from "@provable-games/budokan-sdk";
 
 import type { Config } from "./config.ts";
 import type { Chain, ChatStateStore } from "./chat-state.ts";
@@ -15,14 +15,12 @@ import { TelegramApi, urlButton, webAppButton } from "./telegram-api.ts";
 import { resolveAccount } from "./controller-account.ts";
 import {
   buildClaimRewardCall,
-  buildEnterTournamentCall,
-  buildErc20ApproveCall,
   buildSubmitScoreCall,
-  type Call,
   type RewardType,
 } from "./budokan-calls.ts";
 import * as create from "./commands/create.ts";
 import * as addPrize from "./commands/add-prize.ts";
+import * as enterCmd from "./commands/enter.ts";
 import * as listCmds from "./commands/list.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 
@@ -117,6 +115,9 @@ export class TelegramBot {
     if (!isCommand && addPrize.isPending(chatId)) {
       return addPrize.handleAnswer(this.api, this.config, this.handshakes, chatId, text);
     }
+    if (!isCommand && enterCmd.isPending(chatId)) {
+      return enterCmd.handleAnswer(this.api, this.config, this.handshakes, chatId, text);
+    }
 
     switch (command) {
       case "/start":
@@ -140,8 +141,10 @@ export class TelegramBot {
         return this.submitScore(chatId, args);
       case "/claim":
         return this.claim(chatId, args);
-      case "/enter":
-        return this.enter(chatId, args);
+      case "/enter": {
+        const chain = await this.chatStates.getChain(chatId);
+        return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, args);
+      }
       case "/create": {
         const chain = await this.chatStates.getChain(chatId);
         return create.start(this.api, chatId, chain);
@@ -166,7 +169,7 @@ export class TelegramBot {
   }
 
   private async cancel(chatId: string): Promise<void> {
-    const cancelled = create.cancel(chatId) || addPrize.cancel(chatId);
+    const cancelled = create.cancel(chatId) || addPrize.cancel(chatId) || enterCmd.cancel(chatId);
     if (cancelled) {
       await this.api.sendMessage(chatId, "Cancelled.");
     } else {
@@ -274,122 +277,6 @@ export class TelegramBot {
     }
   }
 
-  // /enter <tournamentId>
-  // Branches by tournament shape:
-  //   - no entry_fee, no entry_requirement → server-side via session
-  //   - has entry_fee, no entry_requirement → Mini App per-tx flow (user
-  //     confirms approve + enter in browser, paid from their wallet)
-  //   - has entry_requirement → punt with deeplink; we don't build a
-  //     QualificationProof from scratch in chat
-  private async enter(chatId: string, args: string[]): Promise<void> {
-    if (args.length !== 1 || !args[0] || !/^\d+$/.test(args[0])) {
-      await this.api.sendMessage(chatId, "Usage: /enter <tournamentId>");
-      return;
-    }
-    const tournamentId = args[0];
-
-    const chain = await this.chatStates.getChain(chatId);
-    const session = await resolveAccount(chatId, chain, this.config);
-    if (!session.ok) {
-      await this.api.sendMessage(chatId, sessionErrorMessage(session.reason, chain));
-      return;
-    }
-
-    const budokanAddress = this.config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
-    if (!budokanAddress) {
-      await this.api.sendMessage(chatId, `Internal error: no Budokan address configured for ${chain}.`);
-      return;
-    }
-
-    // Fetch tournament metadata to detect fee + requirement. The SDK's
-    // BudokanClientConfig types apiBaseUrl as required, but the runtime
-    // reads chain defaults when it's omitted — pass only the values we
-    // actually have to override and let the SDK fill the rest.
-    const sdkClient = createBudokanClient({
-      chain,
-      ...(this.config.apiUrl ? { apiBaseUrl: this.config.apiUrl } : {}),
-      ...(this.config.rpcUrl ? { rpcUrl: this.config.rpcUrl } : {}),
-      ...(this.config.budokanAddress ? { budokanAddress: this.config.budokanAddress } : {}),
-      ...(this.config.viewerAddress ? { viewerAddress: this.config.viewerAddress } : {}),
-    } as Parameters<typeof createBudokanClient>[0]);
-    let tournament;
-    try {
-      tournament = await sdkClient.getTournament(tournamentId);
-    } catch (error) {
-      await this.api.sendMessage(chatId, `Couldn't fetch tournament: ${formatError(error)}`);
-      return;
-    }
-    if (!tournament) {
-      await this.api.sendMessage(chatId, `Tournament ${tournamentId} not found.`);
-      return;
-    }
-
-    const hasRequirement = !!tournament.entryRequirement || tournament.hasEntryRequirement === true;
-    if (hasRequirement) {
-      await this.api.sendMessage(
-        chatId,
-        [
-          "This tournament has an entry requirement (NFT-gated or extension-gated).",
-          "Building a qualification proof from chat input isn't supported here.",
-          "",
-          `Open: https://budokan.gg/tournament/${tournamentId}`,
-        ].join("\n"),
-      );
-      return;
-    }
-
-    const enterCall = buildEnterTournamentCall(budokanAddress, {
-      tournamentId,
-      playerAddress: session.data.address,
-    });
-
-    const fee = tournament.entryFeeAmount && tournament.entryFeeToken
-      ? { token: tournament.entryFeeToken, amount: tournament.entryFeeAmount }
-      : null;
-
-    if (!fee) {
-      // Free entry — sessioned execute server-side.
-      await this.api.sendMessage(chatId, `Entering tournament ${tournamentId}…`);
-      try {
-        const tx = await session.data.account.execute([enterCall]);
-        await this.api.sendMessage(chatId, `Entered ✓\ntx: ${tx.transaction_hash}`);
-      } catch (error) {
-        await this.api.sendMessage(chatId, `Entry failed: ${formatError(error)}`);
-      }
-      return;
-    }
-
-    // Paid entry — build approve + enter and route through Mini App tx mode
-    // so the user signs the payment in their browser (no funds movement
-    // authorized by the bot's session).
-    const calls: Call[] = [
-      buildErc20ApproveCall(fee.token, budokanAddress, fee.amount),
-      enterCall,
-    ];
-    const summary = [
-      `Tournament ${tournamentId} — ${tournament.name || "(unnamed)"}`,
-      `Entry fee: ${fee.amount} of ${shortAddr(fee.token)}`,
-      "",
-      `Calls (${calls.length}):`,
-      `  1. approve(${shortAddr(budokanAddress)}, ${fee.amount}) on token ${shortAddr(fee.token)}`,
-      `  2. enter_tournament(${tournamentId}, ...)`,
-    ].join("\n");
-
-    const handshake = this.handshakes.mint(chatId, "tx", chain, { payload: { calls, summary } });
-    const url = `${this.config.miniAppUrl}/?token=${encodeURIComponent(handshake.token)}&mode=tx`;
-
-    await this.api.sendMessage(
-      chatId,
-      [
-        "This tournament has an entry fee.",
-        "Tap the button below — the Mini App will open and Cartridge will ask you to approve and submit the payment.",
-        "",
-        summary,
-      ].join("\n"),
-      { replyMarkup: webAppButton("Open to confirm payment", url) },
-    );
-  }
-
   private async sendHelp(chatId: string): Promise<void> {
     const chain = await this.chatStates.getChain(chatId);
     await this.api.sendMessage(
@@ -409,11 +296,11 @@ export class TelegramBot {
         "",
         "Signed actions (require /connect first):",
         "  /create — multi-turn flow to create a tournament",
-        "  /enter <tournamentId> — enter a tournament (free in chat; paid via Mini App)",
+        "  /enter [tournamentId] — enter a tournament (no id → picker; paid via Mini App)",
         "  /submit_score <tournamentId> <tokenId> <position>",
         "  /claim <tournamentId> <kind> [args]",
         "    kinds: prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
-        "  /add_prize <tournamentId> — sponsor an ERC-20 prize (signs in Mini App)",
+        "  /add_prize [tournamentId] — sponsor an ERC-20 prize (no id → picker)",
         "  /cancel — abort an in-flight multi-turn flow",
         "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
       ].join("\n"),

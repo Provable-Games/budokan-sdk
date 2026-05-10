@@ -26,8 +26,10 @@ import {
   type DistributionSpec,
 } from "../budokan-calls.ts";
 import { fetchVoyagerBalances, type VoyagerTokenBalance } from "../voyager.ts";
+import { gamesForChain } from "../catalog/games.ts";
 
 type Step =
+  | "tournamentPick"
   | "tokenPick"
   | "amount"
   | "split"
@@ -39,11 +41,16 @@ type Step =
 interface State {
   step: Step;
   chain: Chain;
-  tournamentId: string;
-  tournamentName: string;
-  sponsorAddress: string;
-  balances: VoyagerTokenBalance[];
-  // Filled progressively
+  // Set once the tournament has been resolved — either from /add_prize <id>
+  // or after the picker step.
+  tournamentId?: string;
+  tournamentName?: string;
+  sponsorAddress?: string;
+  balances?: VoyagerTokenBalance[];
+  // Picker-step scratch: tournaments displayed to the user. Cleared after pick.
+  pickerTournaments?: Array<{ id: string; name: string; gameAddress: string; entryCount: number }>;
+  pickerGameNames?: Map<string, string>;
+  // Filled progressively after token pick
   token?: VoyagerTokenBalance;
   amountRaw?: string;        // u128 raw decimal string
   splitChoice?: "single" | "distributed";
@@ -63,9 +70,10 @@ export function cancel(chatId: string): boolean {
 }
 
 /**
- * Kick off /add-prize <tournamentId>. Validates the tournament exists,
- * resolves the user's session (needed for sponsor address + balances),
- * fetches Voyager balances, and presents the token picker.
+ * Kick off /add_prize [tournamentId]. With an id, validates + advances to
+ * token picker. Without one, fetches non-finalized tournaments and shows a
+ * tournament picker first; the picker's selection then drives the same
+ * balance/token-picker flow.
  */
 export async function start(
   api: TelegramApi,
@@ -74,12 +82,6 @@ export async function start(
   chain: Chain,
   args: string[],
 ): Promise<void> {
-  if (args.length !== 1 || !args[0] || !/^\d+$/.test(args[0])) {
-    await api.sendMessage(chatId, "Usage: /add-prize <tournamentId>");
-    return;
-  }
-  const tournamentId = args[0];
-
   if (!config.voyagerProxyUrl || !config.voyagerProxyToken) {
     await api.sendMessage(
       chatId,
@@ -89,24 +91,93 @@ export async function start(
   }
 
   // Need a session to (a) sign add_prize, (b) know the sponsor address,
-  // (c) fetch balances tied to that address.
+  // (c) fetch balances tied to that address. Resolved up front so both
+  // paths (direct-id and picker) fail fast if not connected.
   const session = await resolveAccount(chatId, chain, config);
   if (!session.ok) {
     await api.sendMessage(chatId, `Not connected on ${chain} — run /connect first.`);
     return;
   }
 
-  // Verify tournament exists + grab name for the summary.
-  const sdkClient = createBudokanClient({
+  // Explicit id: skip the picker.
+  if (args.length === 1 && args[0] && /^\d+$/.test(args[0])) {
+    return resolveTournamentAndShowTokens(api, config, chatId, chain, session.data.address, args[0]);
+  }
+  if (args.length !== 0) {
+    await api.sendMessage(chatId, "Usage: /add_prize [tournamentId]\nWith no id I'll show a picker.");
+    return;
+  }
+
+  // No-args: show picker of non-finalized tournaments.
+  const sdk = sdkClient(config, chain);
+  const phasesToShow = ["scheduled", "registration", "staging", "live", "submission"] as const;
+  let pool: Array<{ id: string; name: string; gameAddress: string; entryCount: number }>;
+  try {
+    const lists = await Promise.all(
+      phasesToShow.map((phase) =>
+        sdk.getTournaments({ phase, limit: 25, sort: "created_at" }).then((r) => r.data),
+      ),
+    );
+    const byId = new Map<string, { id: string; name: string; gameAddress: string; entryCount: number }>();
+    for (const list of lists) {
+      for (const t of list) {
+        byId.set(t.id, {
+          id: t.id,
+          name: t.name || "(unnamed)",
+          gameAddress: t.gameAddress,
+          entryCount: t.entryCount,
+        });
+      }
+    }
+    pool = Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't fetch tournaments: ${formatError(error)}`);
+    return;
+  }
+  if (pool.length === 0) {
+    await api.sendMessage(chatId, `No active tournaments on ${chain} to sponsor.`);
+    return;
+  }
+  const gameNames = await buildGameNameMap(chain);
+
+  states.set(chatId, {
+    step: "tournamentPick",
     chain,
-    ...(config.apiUrl ? { apiBaseUrl: config.apiUrl } : {}),
-    ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}),
-    ...(config.budokanAddress ? { budokanAddress: config.budokanAddress } : {}),
-    ...(config.viewerAddress ? { viewerAddress: config.viewerAddress } : {}),
-  } as Parameters<typeof createBudokanClient>[0]);
+    sponsorAddress: session.data.address,
+    pickerTournaments: pool,
+    pickerGameNames: gameNames,
+  });
+
+  const lines = [
+    `Pick a tournament to sponsor on ${chain}:`,
+    "",
+    ...pool.map((t, i) => {
+      const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
+      return `  ${i + 1}. #${t.id} ${t.name} — ${game} · ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
+    }),
+    "",
+    "Reply with a number, or /cancel.",
+  ];
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+/**
+ * Looks up the tournament by id, fetches balances, sets state, and prompts
+ * for token selection. Shared by both the direct-id path and the picker's
+ * selection callback so the user reaches the same place either way.
+ */
+async function resolveTournamentAndShowTokens(
+  api: TelegramApi,
+  config: Config,
+  chatId: string,
+  chain: Chain,
+  sponsorAddress: string,
+  tournamentId: string,
+): Promise<void> {
+  // Verify tournament exists + grab name for the summary.
   let tournament;
   try {
-    tournament = await sdkClient.getTournament(tournamentId);
+    tournament = await sdkClient(config, chain).getTournament(tournamentId);
   } catch (error) {
     await api.sendMessage(chatId, `Couldn't fetch tournament: ${formatError(error)}`);
     return;
@@ -116,12 +187,11 @@ export async function start(
     return;
   }
 
-  // Voyager balances — same picker as /create's prize step.
   let balances: VoyagerTokenBalance[];
   try {
     balances = await fetchVoyagerBalances(
       config.voyagerProxyUrl,
-      session.data.address,
+      sponsorAddress,
       config.voyagerProxyToken,
     );
   } catch (error) {
@@ -139,7 +209,7 @@ export async function start(
     chain,
     tournamentId,
     tournamentName: tournament.name || "(unnamed)",
-    sponsorAddress: session.data.address,
+    sponsorAddress,
     balances: eligible,
   });
 
@@ -168,6 +238,8 @@ export async function handleAnswer(
   const trimmed = text.trim();
 
   switch (state.step) {
+    case "tournamentPick":
+      return handleTournamentPick(api, config, state, chatId, trimmed);
     case "tokenPick":
       return handleTokenPick(api, state, chatId, trimmed);
     case "amount":
@@ -185,13 +257,35 @@ export async function handleAnswer(
   }
 }
 
-async function handleTokenPick(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
-  const idx = parsePickIndex(input, state.balances.length);
+async function handleTournamentPick(
+  api: TelegramApi,
+  config: Config,
+  state: State,
+  chatId: string,
+  input: string,
+): Promise<void> {
+  const pool = state.pickerTournaments ?? [];
+  const idx = parsePickIndex(input, pool.length);
   if (idx === null) {
-    await api.sendMessage(chatId, `Reply 1-${state.balances.length}, or /cancel.`);
+    await api.sendMessage(chatId, `Reply 1-${pool.length}, or /cancel.`);
     return;
   }
-  state.token = state.balances[idx];
+  const chosen = pool[idx]!;
+  // Clear the picker scratch fields; the rest of the flow only cares
+  // about resolved state.
+  state.pickerTournaments = undefined;
+  state.pickerGameNames = undefined;
+  await resolveTournamentAndShowTokens(api, config, chatId, state.chain, state.sponsorAddress!, chosen.id);
+}
+
+async function handleTokenPick(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const balances = state.balances ?? [];
+  const idx = parsePickIndex(input, balances.length);
+  if (idx === null) {
+    await api.sendMessage(chatId, `Reply 1-${balances.length}, or /cancel.`);
+    return;
+  }
+  state.token = balances[idx];
   state.step = "amount";
   await api.sendMessage(
     chatId,
@@ -355,12 +449,12 @@ async function handleConfirm(
       : undefined;
 
   const addPrizeArgs: AddPrizeArgs = {
-    tournamentId: state.tournamentId,
+    tournamentId: state.tournamentId!,
     tokenAddress: token.tokenAddress,
     amount: state.amountRaw!,
     distribution,
     distributionCount: state.distCount,
-    sponsorAddress: state.sponsorAddress,
+    sponsorAddress: state.sponsorAddress!,
   };
   const calls: Call[] = [
     buildErc20ApproveCall(token.tokenAddress, budokanAddress, state.amountRaw!),
@@ -391,6 +485,23 @@ async function handleConfirm(
     ].join("\n"),
     { replyMarkup: webAppButton("Confirm in Cartridge", url) },
   );
+}
+
+function sdkClient(config: Config, chain: Chain) {
+  return createBudokanClient({
+    chain,
+    ...(config.apiUrl ? { apiBaseUrl: config.apiUrl } : {}),
+    ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}),
+    ...(config.budokanAddress ? { budokanAddress: config.budokanAddress } : {}),
+    ...(config.viewerAddress ? { viewerAddress: config.viewerAddress } : {}),
+  } as Parameters<typeof createBudokanClient>[0]);
+}
+
+async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
+  const games = await gamesForChain(chain);
+  const map = new Map<string, string>();
+  for (const g of games) map.set(g.contractAddress.toLowerCase(), g.name);
+  return map;
 }
 
 // --- helpers (duplicated from create.ts; would consolidate if a third
