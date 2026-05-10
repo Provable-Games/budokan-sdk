@@ -792,7 +792,7 @@ async function handlePrizesChoice(api: TelegramApi, config: Config, state: State
   }
   let balances: VoyagerTokenBalance[];
   try {
-    balances = await fetchVoyagerBalances(config.voyagerProxyUrl, result.data.address);
+    balances = await fetchVoyagerBalances(config.voyagerProxyUrl, result.data.address, config.voyagerProxyToken);
   } catch (error) {
     await api.sendMessage(chatId, `Couldn't fetch balances: ${formatError(error)}\nSkipping prize step.`);
     return moveToConfirm(api, state, chatId);

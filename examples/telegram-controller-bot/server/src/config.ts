@@ -20,6 +20,10 @@ export interface Config {
    *  prize-sponsorship pickers. If unset, prize sponsorship at /create
    *  time is disabled and the bot tells the user to add prizes via budokan.gg. */
   voyagerProxyUrl?: string;
+  /** Optional. Bearer token required by the proxy for server-to-server
+   *  callers. Must match one of the comma-separated tokens in the proxy's
+   *  PROXY_AUTH_TOKENS env var. */
+  voyagerProxyToken?: string;
 }
 
 export function loadConfig(): Config {
@@ -68,6 +72,7 @@ export function loadConfig(): Config {
     budokanAddress: env("BUDOKAN_ADDRESS"),
     viewerAddress: env("BUDOKAN_VIEWER_ADDRESS"),
     voyagerProxyUrl: env("BUDOKAN_VOYAGER_PROXY_URL"),
+    voyagerProxyToken: env("BUDOKAN_VOYAGER_PROXY_TOKEN"),
   };
 }
 

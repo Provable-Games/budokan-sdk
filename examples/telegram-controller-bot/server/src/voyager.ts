@@ -35,10 +35,17 @@ export interface VoyagerTokenBalance {
  * Fetch ERC-20 balances for an address from a Voyager proxy. Returns an
  * empty array if the proxy URL is unset (caller should treat as
  * "feature unavailable").
+ *
+ * The proxy now requires a bearer token for server-to-server callers
+ * (browsers from allowed origins are still let through via CORS). If
+ * the proxy is configured to require auth and we don't have a token,
+ * the call will fail 401 — caller should surface that to the user as
+ * a config issue.
  */
 export async function fetchVoyagerBalances(
   proxyUrl: string | undefined,
   ownerAddress: string,
+  authToken?: string,
 ): Promise<VoyagerTokenBalance[]> {
   if (!proxyUrl) return [];
 
@@ -46,13 +53,19 @@ export async function fetchVoyagerBalances(
   const padded = padAddress(ownerAddress).toLowerCase();
   const url = `${proxyUrl.replace(/\/$/, "")}/api/voyager/contracts/${padded}/token-balances`;
 
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
   let res: Response;
   try {
-    res = await fetch(url, { method: "GET", headers: { "Content-Type": "application/json" } });
+    res = await fetch(url, { method: "GET", headers });
   } catch (error) {
     throw new Error(`Voyager proxy unreachable: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("Voyager proxy rejected our bearer token. Check BUDOKAN_VOYAGER_PROXY_TOKEN matches a value in the proxy's PROXY_AUTH_TOKENS.");
+    }
     throw new Error(`Voyager proxy returned ${res.status}`);
   }
   const data = (await res.json()) as VoyagerApiResponse;
