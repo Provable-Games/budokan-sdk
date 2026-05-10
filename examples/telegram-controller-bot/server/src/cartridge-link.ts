@@ -13,10 +13,34 @@ import { signerToGuid } from "@cartridge/controller-wasm";
 
 import type { Config } from "./config.ts";
 import type { Chain } from "./chat-state.ts";
-import { CHAINS } from "@provable-games/budokan-sdk";
 import { parsedPoliciesFor } from "./policies.ts";
 
 const KEYCHAIN_URL = "https://x.cartridge.gg";
+
+// Cartridge's own Starknet RPC endpoints. Used for the auth flow because
+// they're CORS-permissive (allow-origin: *) for browser callers — the
+// Cartridge keychain needs to fetch account info during login, and public
+// RPC providers like Blast don't allow x.cartridge.gg as an origin.
+//
+// Note: budokan-sdk's CHAINS table can point sepolia at Blast for read-only
+// indexer queries; that's fine for our bot's read paths but not for what
+// the keychain UI itself fetches. We override here.
+const CARTRIDGE_RPC_URLS: Record<Chain, string> = {
+  mainnet: "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_10",
+  sepolia: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
+};
+
+/**
+ * RPC URL safe to hand to anything Cartridge keychain uses (auth flow,
+ * Mini App ControllerProvider). Caller-supplied override wins; otherwise
+ * we use Cartridge's own RPC, never Blast or other public endpoints whose
+ * CORS lists don't include x.cartridge.gg.
+ */
+export function keychainSafeRpcUrl(chain: Chain, override?: string): string {
+  const url = override ?? CARTRIDGE_RPC_URLS[chain];
+  if (!url) throw new Error(`No keychain-safe RPC URL for chain '${chain}'`);
+  return url;
+}
 
 export interface SessionKeypair {
   privKey: string;          // 0x-prefixed hex felt
@@ -40,10 +64,7 @@ export function buildAuthUrl(args: {
   callbackUrl: string;
 }): string {
   const { config, chain, pubKey, callbackUrl } = args;
-  const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
-  if (!rpcUrl) {
-    throw new Error(`No RPC URL for chain '${chain}'`);
-  }
+  const rpcUrl = keychainSafeRpcUrl(chain, config.rpcUrl);
   const policies = parsedPoliciesFor(chain, config.budokanAddress);
 
   // Match the URL shape produced by SessionProvider's connect() in

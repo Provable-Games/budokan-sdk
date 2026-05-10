@@ -11,15 +11,13 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 
-import { CHAINS } from "@provable-games/budokan-sdk";
-
 import type { Config } from "./config.ts";
 import type { Chain } from "./chat-state.ts";
 import type { HandshakeStore } from "./handshake.ts";
 import type { SessionStore, StoredSession } from "./session-store.ts";
 import { parsedPoliciesFor } from "./policies.ts";
 import type { TelegramApi } from "./telegram-api.ts";
-import { decodeStartapp } from "./cartridge-link.ts";
+import { decodeStartapp, keychainSafeRpcUrl } from "./cartridge-link.ts";
 
 interface BuildOptions {
   config: Config;
@@ -71,10 +69,12 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
       return { error: "Token invalid or expired." };
     }
     const chain = handshake.chain;
-    const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
-    if (!rpcUrl) {
+    let rpcUrl: string;
+    try {
+      rpcUrl = keychainSafeRpcUrl(chain, config.rpcUrl);
+    } catch (error) {
       reply.code(500);
-      return { error: `No RPC URL configured for chain '${chain}'.` };
+      return { error: error instanceof Error ? error.message : String(error) };
     }
     return {
       chain,
@@ -224,10 +224,12 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
       return { error: "Tx token invalid or expired." };
     }
     const chain: Chain = handshake.chain;
-    const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
-    if (!rpcUrl) {
+    let rpcUrl: string;
+    try {
+      rpcUrl = keychainSafeRpcUrl(chain, config.rpcUrl);
+    } catch (error) {
       reply.code(500);
-      return { error: `No RPC URL configured for chain '${chain}'.` };
+      return { error: error instanceof Error ? error.message : String(error) };
     }
     return {
       chain,
