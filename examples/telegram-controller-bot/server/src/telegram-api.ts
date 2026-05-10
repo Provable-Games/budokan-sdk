@@ -95,3 +95,13 @@ export function splitForTelegram(text: string): string[] {
 export function webAppButton(text: string, url: string): { inline_keyboard: InlineKeyboardButton[][] } {
   return { inline_keyboard: [[{ text, web_app: { url } }]] };
 }
+
+/**
+ * Inline keyboard with a single regular URL button. Tapping it opens the URL
+ * in the user's external browser (vs `web_app` which opens inside Telegram).
+ * Used for the slot-pattern Cartridge auth flow where the redirect target is
+ * an HTTPS URL Telegram itself never sees.
+ */
+export function urlButton(text: string, url: string): { inline_keyboard: InlineKeyboardButton[][] } {
+  return { inline_keyboard: [[{ text, url }]] };
+}

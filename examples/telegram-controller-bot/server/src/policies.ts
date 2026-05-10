@@ -67,6 +67,14 @@ export function buildSessionPolicies(
             entrypoint: "submit_score",
             description: "Submit a tournament score",
           },
+          // enter_tournament works for FREE-entry tournaments only via the
+          // session. Paid entries require ERC20 approve(), which is
+          // deliberately NOT in this list — those go through the per-tx
+          // Mini App flow in stage 5.
+          {
+            entrypoint: "enter_tournament",
+            description: "Enter a tournament (free-entry only)",
+          },
         ],
       },
     },

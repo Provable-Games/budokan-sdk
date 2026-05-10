@@ -14,6 +14,13 @@ export interface HandshakeToken {
   mode: HandshakeMode;
   /** Unix ms */
   expiresAt: number;
+  /**
+   * mode === "connect": ephemeral session keypair + sessionKeyGuid the bot
+   * generated when the token was minted. Cartridge signs an authorization
+   * for `pubKey`; combined with `privKey` and the redirect-returned session
+   * registration, this is what the bot needs to sign on the user's behalf.
+   */
+  signer?: { privKey: string; pubKey: string; sessionKeyGuid: string };
   /** mode === "tx": the calls to authorize and a human summary. */
   payload?: TxPayload;
 }
@@ -50,14 +57,19 @@ export class HandshakeStore {
     }
   }
 
-  mint(chatId: string, mode: HandshakeMode, payload?: TxPayload): HandshakeToken {
+  mint(
+    chatId: string,
+    mode: HandshakeMode,
+    options: { signer?: HandshakeToken["signer"]; payload?: TxPayload } = {},
+  ): HandshakeToken {
     const token = randomUUID();
     const handshake: HandshakeToken = {
       token,
       chatId,
       mode,
       expiresAt: Date.now() + this.ttlMs,
-      payload,
+      signer: options.signer,
+      payload: options.payload,
     };
     this.tokens.set(token, handshake);
     return handshake;

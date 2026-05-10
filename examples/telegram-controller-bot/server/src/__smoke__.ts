@@ -147,6 +147,64 @@ async function main() {
     if (after !== null) throw new Error("session still present");
   });
 
+  // --- Slot-pattern callback ---
+
+  await check("GET /api/connect/<unknown>/callback returns 404 HTML", async () => {
+    const res = await fetch(`${baseUrl}/api/connect/00000000-0000-0000-0000-000000000000/callback`);
+    if (res.status !== 404) throw new Error(`expected 404, got ${res.status}`);
+    const text = await res.text();
+    if (!text.includes("Authorization link expired")) throw new Error("missing expected error html");
+  });
+
+  await check("Callback without startapp returns 400 HTML", async () => {
+    const handshake = handshakes.mint("777777", "connect", {
+      signer: { privKey: "0xaa", pubKey: "0xbb", sessionKeyGuid: "0xcc" },
+    });
+    const res = await fetch(`${baseUrl}/api/connect/${handshake.token}/callback`);
+    if (res.status !== 400) throw new Error(`expected 400, got ${res.status}`);
+    const text = await res.text();
+    if (!text.includes("Authorization missing")) throw new Error("missing expected error html");
+  });
+
+  await check("Callback with malformed startapp returns 400 HTML", async () => {
+    const handshake = handshakes.mint("888888", "connect", {
+      signer: { privKey: "0xaa", pubKey: "0xbb", sessionKeyGuid: "0xcc" },
+    });
+    const res = await fetch(`${baseUrl}/api/connect/${handshake.token}/callback?startapp=not-base64-json`);
+    if (res.status !== 400) throw new Error(`expected 400, got ${res.status}`);
+    const text = await res.text();
+    if (!text.includes("Authorization malformed")) throw new Error("missing expected error html");
+  });
+
+  await check("Callback with valid startapp persists session, fires chat notify", async () => {
+    const handshake = handshakes.mint("555555", "connect", {
+      signer: { privKey: "0xaaaa", pubKey: "0xbbbb", sessionKeyGuid: "0xcccc" },
+    });
+    const sessionPayload = {
+      username: "slotuser",
+      address: "0x" + "1".repeat(64),
+      ownerGuid: "0x" + "2".repeat(40),
+      expiresAt: String(Math.floor(Date.now() / 1000) + 3600),
+    };
+    const startapp = Buffer.from(JSON.stringify(sessionPayload)).toString("base64");
+
+    fakeTelegram.sent = [];
+    const res = await fetch(`${baseUrl}/api/connect/${handshake.token}/callback?startapp=${encodeURIComponent(startapp)}`);
+    if (!res.ok) throw new Error(`status ${res.status}: ${await res.text()}`);
+    const text = await res.text();
+    if (!text.includes("Connected as slotuser")) throw new Error("missing success html");
+
+    const stored = await sessions.get("555555");
+    if (!stored) throw new Error("session not persisted");
+    if (stored.session.username !== "slotuser") throw new Error("wrong username");
+    if (stored.signer.privKey !== "0xaaaa") throw new Error("privKey not preserved from handshake");
+    if (stored.session.sessionKeyGuid !== "0xcccc") throw new Error("sessionKeyGuid fallback wrong");
+
+    await new Promise((r) => setTimeout(r, 20));
+    if (fakeTelegram.sent.length === 0) throw new Error("no chat notify");
+    if (fakeTelegram.sent[0]?.chatId !== "555555") throw new Error("notify went to wrong chat");
+  });
+
   await app.close();
   await rm(dataDir, { recursive: true, force: true });
 

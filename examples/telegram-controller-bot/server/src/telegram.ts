@@ -9,7 +9,7 @@ import { CHAINS } from "@provable-games/budokan-sdk";
 import type { Config } from "./config.ts";
 import type { HandshakeStore } from "./handshake.ts";
 import type { SessionStore } from "./session-store.ts";
-import { TelegramApi, webAppButton } from "./telegram-api.ts";
+import { TelegramApi, urlButton } from "./telegram-api.ts";
 import { resolveAccount } from "./controller-account.ts";
 import {
   buildClaimRewardCall,
@@ -17,6 +17,7 @@ import {
   type RewardType,
 } from "./budokan-calls.ts";
 import * as create from "./commands/create.ts";
+import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 
 interface TelegramMessage {
   chat: { id: number };
@@ -260,12 +261,28 @@ export class TelegramBot {
       return;
     }
 
-    const handshake = this.handshakes.mint(chatId, "connect");
-    const url = this.miniAppUrl(handshake.token, "connect");
+    // Slot-pattern auth: bot mints the session keypair, sends the user to
+    // Cartridge's keychain page, and Cartridge redirects back to a callback
+    // URL on our server with the auth result encoded as ?startapp=<base64>.
+    // Mirrors cartridge-gg/slot's CLI login flow — see cartridge-link.ts.
+    const signer = generateSessionKeypair();
+    const handshake = this.handshakes.mint(chatId, "connect", { signer });
+
+    const callbackUrl = `${this.config.botPublicUrl}/api/connect/${handshake.token}/callback`;
+    const url = buildAuthUrl({
+      config: this.config,
+      pubKey: signer.pubKey,
+      callbackUrl,
+    });
+
     await this.api.sendMessage(
       chatId,
-      "Tap the button below to authorize the bot. Sign in with Cartridge and approve the session policies. The window will close automatically when done.",
-      { replyMarkup: webAppButton("Open authorization", url) },
+      [
+        "Tap the button below to authorize the bot.",
+        "",
+        "Cartridge opens in your browser, you sign in (passkey / google / etc.) and approve the session policies. When done, return to this chat — I'll confirm the connection here.",
+      ].join("\n"),
+      { replyMarkup: urlButton("Open Cartridge to authorize", url) },
     );
   }
 
