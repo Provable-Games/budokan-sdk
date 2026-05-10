@@ -100,6 +100,38 @@ function TournamentFeed({ tournamentId }: { tournamentId: string }) {
 }
 ```
 
+### Whitelisted Games
+
+The SDK ships a curated per-chain list of games and per-game UX metadata
+(homepage URLs, default entry-fee token, controller-only flag, etc.) that
+the official Budokan client uses to filter the on-chain denshokan registry.
+Other integrations — Telegram bot, third-party UIs — can use the same
+list to stay consistent.
+
+```ts
+import {
+  getWhitelistedGames,
+  findWhitelistedGame,
+  isGameWhitelisted,
+  getGameDefaults,
+} from "@provable-games/budokan-sdk";
+
+// Sorted by name, disabled entries last
+const games = getWhitelistedGames("mainnet");
+// → [{ contractAddress: "0x4de0...", name: "Death Mountain", url: "...", ... }, ...]
+
+const dm = findWhitelistedGame("mainnet", "0x4de0351c..."); // address auto-normalized
+const ok = isGameWhitelisted("sepolia", anyAddress);
+
+// Defaults block — falls back to STRK / 1% / $0.25 when the game isn't whitelisted
+const { minEntryFeeUsd, defaultEntryFeeToken, defaultGameFeePercentage } =
+  getGameDefaults("mainnet", gameAddress);
+```
+
+The denshokan registry is still the source of truth for which games *exist*;
+this whitelist is a layer on top that callers can intersect with the
+registry to filter to "games we trust + display metadata for."
+
 ### Telegram Tournament Bot Example
 
 This repo includes a dependency-free Telegram bot example that lets a chat follow Budokan tournaments and receive live updates as registrations, scores, prizes, and reward claims land.

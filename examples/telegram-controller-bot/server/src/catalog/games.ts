@@ -1,9 +1,16 @@
 // Per-chain game catalog. Source of truth is denshokan-sdk's game registry
 // (DenshokanClient.getGames) — that's the same registry settings live in,
-// so games and their settings are always consistent. We layer some
-// metadata on top (defaults from budokan/client/src/assets/games/index.tsx)
-// when the registered address matches a known game, but lookups never
-// fail just because there's no metadata.
+// so games and their settings are always consistent. We layer metadata
+// on top (default fee token, controllerOnly flag) when the registered
+// address matches a known game, but lookups never fail for missing
+// metadata.
+//
+// MIGRATION NOTE: the metadata table below duplicates what
+// `@provable-games/budokan-sdk` now exports as `getWhitelistedGames` /
+// `findWhitelistedGame`. Once a budokan-sdk release with that export
+// lands on npm and we bump the bot's dep, replace METADATA below with
+// `findWhitelistedGame(chain, contractAddress)` so the data lives in
+// exactly one place.
 //
 // The bot uses this for:
 //   - /create's first picker (numbered list of registered games)

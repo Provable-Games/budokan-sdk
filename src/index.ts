@@ -73,3 +73,18 @@ export { withRetry } from "./utils/retry.js";
 // Chains
 export { CHAINS, getChainConfig } from "./chains/constants.js";
 export type { ChainConfig } from "./chains/constants.js";
+
+// Game whitelist + per-game UX metadata. The denshokan registry is the
+// source of truth for which games exist; this whitelist is the subset
+// we recommend / support, plus extra metadata that doesn't live on chain.
+export {
+  getWhitelistedGames,
+  findWhitelistedGame,
+  isGameWhitelisted,
+  getGameDefaults,
+} from "./games/whitelist.js";
+export type {
+  WhitelistedGame,
+  WhitelistChain,
+  GameDefaults,
+} from "./games/whitelist.js";
