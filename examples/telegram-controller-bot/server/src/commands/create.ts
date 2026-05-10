@@ -128,7 +128,6 @@ interface State {
   customSchedule?: Partial<{ regStart: number; regDuration: number; staging: number; gameDuration: number; submission: number }>;
   customScheduleStep?: "style" | "regStart" | "regDuration" | "staging" | "gameDuration" | "submission";
   customScheduleStyle?: "fixed" | "open";
-  leaderboardSize?: number;
   leaderboardAscending?: boolean;
   gameMustBeOver?: boolean;
   // Entry fee
@@ -430,22 +429,15 @@ async function moveToLeaderboard(api: TelegramApi, state: State, chatId: string)
   await api.sendMessage(chatId, [
     `Schedule set.`,
     "",
-    "Leaderboard size? (number of placements that count, e.g. 10)",
+    "Lower scores win? (yes/no — 'yes' for golf-style, 'no' for points-style)",
   ].join("\n"));
 }
 
 async function handleLeaderboard(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
-  // We collect leaderboard size, ascending, gameMustBeOver in three quick yes/no steps.
-  if (state.leaderboardSize === undefined) {
-    const n = parseUint(input);
-    if (n === null || n === 0 || n > 1000) {
-      await api.sendMessage(chatId, "Must be 1–1000.");
-      return;
-    }
-    state.leaderboardSize = n;
-    await api.sendMessage(chatId, "Lower scores win? (yes/no — 'yes' for golf-style, 'no' for points-style)");
-    return;
-  }
+  // Two yes/no questions — leaderboard config is just (ascending, gameMustBeOver).
+  // "Leaderboard size" isn't a contract field; it's distribution_count on EntryFee
+  // and on distributed prizes, asked there if/when the user opts into a fee or
+  // distributed prize.
   if (state.leaderboardAscending === undefined) {
     const b = parseYesNo(input);
     if (b === null) { await api.sendMessage(chatId, "Send 'yes' or 'no'."); return; }
@@ -697,7 +689,6 @@ function formatSummary(s: State): string {
   lines.push(
     `  Live game: ${formatDuration(sched.gameDuration)}`,
     `  Submission window: ${formatDuration(sched.submission)}`,
-    `  Leaderboard size: ${s.leaderboardSize}`,
     `  Lower scores win: ${s.leaderboardAscending ? "yes" : "no"}`,
     `  Require game over: ${s.gameMustBeOver ? "yes" : "no"}`,
   );
@@ -744,12 +735,6 @@ function formatDuration(seconds: number): string {
   if (seconds % 3600 === 0) return `${seconds / 3600}h`;
   if (seconds % 60 === 0) return `${seconds / 60}m`;
   return `${seconds}s`;
-}
-
-function parseUint(s: string): number | null {
-  if (!/^\d+$/.test(s)) return null;
-  const n = Number(s);
-  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function parseYesNo(s: string): boolean | null {
