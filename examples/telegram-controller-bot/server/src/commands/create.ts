@@ -24,6 +24,7 @@ import {
   type CreateTournamentArgs,
   type DistributionSpec,
   type EntryFeeArgs,
+  type EntryRequirementArgs,
 } from "../budokan-calls.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { CHAINS } from "@provable-games/budokan-sdk";
@@ -51,6 +52,9 @@ type Step =
   | "entryFeeDistCount"
   | "entryFeeDistType"
   | "entryFeeDistWeight"
+  | "entryReqChoice"
+  | "entryReqTokenAddress"
+  | "entryReqLimit"
   | "prizesChoice"
   | "prizesPick"
   | "prizesAmount"
@@ -125,7 +129,7 @@ interface PrizeSpec {
 // see fresh state and re-ask the right questions).
 type SectionId =
   | "game" | "metadata" | "settings" | "schedule"
-  | "leaderboard" | "entryFee" | "prizes";
+  | "leaderboard" | "entryFee" | "entryRequirement" | "prizes";
 
 interface State {
   step: Step;
@@ -161,6 +165,11 @@ interface State {
   entryFeeDistType?: "linear" | "exponential" | "uniform";
   entryFeeDistCount?: number;       // # placements that share the leaderboard pool
   entryFeeDistWeight?: number;      // client-units weight (×10 on chain). 1 = default.
+  // Entry requirement (gating) — token-only path. Extension validators
+  // are out of scope for chat; users wanting those go via budokan.gg.
+  entryReqEnabled?: boolean;
+  entryReqTokenAddress?: string;    // ERC-721/ERC-20 contract — token-gated.
+  entryReqEntryLimit?: number;      // u32; max entries per qualifying token.
   // Prizes — picked from the user's wallet balances.
   voyagerBalances?: VoyagerTokenBalance[];
   prizesSoFar: PrizeSpec[];
@@ -246,6 +255,12 @@ export async function handleAnswer(
       return handleEntryFeeDistType(api, config, state, chatId, trimmed);
     case "entryFeeDistWeight":
       return handleEntryFeeDistWeight(api, config, state, chatId, trimmed);
+    case "entryReqChoice":
+      return handleEntryReqChoice(api, config, state, chatId, trimmed);
+    case "entryReqTokenAddress":
+      return handleEntryReqTokenAddress(api, state, chatId, trimmed);
+    case "entryReqLimit":
+      return handleEntryReqLimit(api, config, state, chatId, trimmed);
     case "prizesChoice":
       return handlePrizesChoice(api, config, state, chatId, trimmed);
     case "prizesPick":
@@ -525,7 +540,7 @@ async function handleEntryFeeChoice(api: TelegramApi, config: Config, state: Sta
   const idx = parsePickIndex(input, 2);
   if (idx === null) { await api.sendMessage(chatId, "Reply 1 or 2."); return; }
   if (idx === 0) {
-    return moveToPrizes(api, config, state, chatId);
+    return moveToEntryRequirement(api, config, state, chatId);
   }
   state.step = "entryFeeToken";
   const tokens = tokensForChain(state.chain);
@@ -544,6 +559,76 @@ async function handleEntryFeeToken(api: TelegramApi, _config: Config, state: Sta
   state.entryFeeToken = tokens[idx];
   state.step = "entryFeeAmount";
   await api.sendMessage(chatId, `Entry fee per player in ${state.entryFeeToken!.symbol}? (decimal, e.g. '0.5' or '10')`);
+}
+
+/**
+ * Entry-requirement section. Two choices:
+ *   1. No gating (anyone can enter)
+ *   2. Token-gated (must own a token from the given contract)
+ *
+ * Token-gated is the only contract-supported requirement we can collect
+ * via chat. Extension-validator gating (ERC-20 balance thresholds, Opus
+ * Troves, Merkle proofs, custom) needs domain-specific config formats
+ * the chat can't reasonably ask for — those tournaments are made via
+ * budokan.gg.
+ */
+async function moveToEntryRequirement(api: TelegramApi, _config: Config, state: State, chatId: string): Promise<void> {
+  if (await maybeReturnToConfirm(api, state, chatId)) return;
+  state.step = "entryReqChoice";
+  await api.sendMessage(chatId, [
+    "Gate who can enter?",
+    "  1. No (anyone can enter)",
+    "  2. Token-gated (must own a token from a specific contract)",
+    "",
+    "Reply with a number.",
+  ].join("\n"));
+}
+
+async function handleEntryReqChoice(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const idx = parsePickIndex(input, 2);
+  if (idx === null) { await api.sendMessage(chatId, "Reply 1 or 2."); return; }
+  if (idx === 0) {
+    state.entryReqEnabled = false;
+    return moveToPrizes(api, config, state, chatId);
+  }
+  state.entryReqEnabled = true;
+  state.step = "entryReqTokenAddress";
+  await api.sendMessage(
+    chatId,
+    "Token contract address? (0x-prefixed — entrants must own at least one token from this contract)",
+  );
+}
+
+async function handleEntryReqTokenAddress(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  if (!/^0x[0-9a-fA-F]{1,64}$/.test(input.trim())) {
+    await api.sendMessage(chatId, "That doesn't look like a Starknet address. Try again.");
+    return;
+  }
+  state.entryReqTokenAddress = input.trim().toLowerCase();
+  state.step = "entryReqLimit";
+  await api.sendMessage(
+    chatId,
+    "How many entries per qualifying token? (default 1 — each token in the collection can enter up to N times)",
+  );
+}
+
+async function handleEntryReqLimit(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const trimmed = input.trim();
+  let limit = 1;
+  if (trimmed.length > 0 && !/^skip$/i.test(trimmed)) {
+    if (!/^\d+$/.test(trimmed)) {
+      await api.sendMessage(chatId, "Must be a positive integer, or 'skip' / empty for default 1.");
+      return;
+    }
+    const n = Number(trimmed);
+    if (n <= 0 || n > 1_000_000) {
+      await api.sendMessage(chatId, "Must be 1–1,000,000.");
+      return;
+    }
+    limit = n;
+  }
+  state.entryReqEntryLimit = limit;
+  return moveToPrizes(api, config, state, chatId);
 }
 
 async function handleEntryFeeAmount(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
@@ -662,7 +747,7 @@ async function handleEntryFeeDistType(api: TelegramApi, config: Config, state: S
   state.entryFeeDistType = idx === 0 ? "linear" : idx === 1 ? "exponential" : "uniform";
   if (state.entryFeeDistType === "uniform") {
     // Uniform has no weight — every paid placement gets the same share.
-    return moveToPrizes(api, config, state, chatId);
+    return moveToEntryRequirement(api, config, state, chatId);
   }
   // Linear / exponential: ask for weight + render preview curve.
   state.entryFeeDistWeight = 1;
@@ -708,7 +793,7 @@ async function renderDistributionCurve(api: TelegramApi, state: State, chatId: s
 
 async function handleEntryFeeDistWeight(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
   if (/^ok$/i.test(input.trim())) {
-    return moveToPrizes(api, config, state, chatId);
+    return moveToEntryRequirement(api, config, state, chatId);
   }
   // Otherwise treat as a new weight value.
   const t = input.trim();
@@ -912,6 +997,7 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   }
   const sched = state.schedule!;
   const entryFee = buildEntryFeeArgs(state);
+  const entryRequirement = buildEntryRequirementArgs(state);
   const args: CreateTournamentArgs = {
     creatorRewardsAddress: result.data.address,
     name: state.name!,
@@ -927,6 +1013,7 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
     },
     leaderboard: { ascending: state.leaderboardAscending!, gameMustBeOver: state.gameMustBeOver! },
     entryFee,
+    entryRequirement,
   };
   // Defining an entry fee in create_tournament doesn't move funds (the fee
   // gets paid by entrants, not the creator), so this stays a single
@@ -952,6 +1039,14 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   } catch (error) {
     await api.sendMessage(chatId, `Tournament creation failed: ${formatError(error)}`);
   }
+}
+
+function buildEntryRequirementArgs(state: State): EntryRequirementArgs | undefined {
+  if (!state.entryReqEnabled || !state.entryReqTokenAddress) return undefined;
+  return {
+    entryLimit: state.entryReqEntryLimit ?? 1,
+    type: { kind: "token", tokenAddress: state.entryReqTokenAddress },
+  };
 }
 
 /** Assemble EntryFeeArgs from state, or undefined if the user opted out. */
@@ -995,6 +1090,13 @@ function formatSummary(s: State): string {
     `  Lower scores win: ${s.leaderboardAscending ? "yes" : "no"}`,
     `  Require game over: ${s.gameMustBeOver ? "yes" : "no"}`,
   );
+  if (s.entryReqEnabled && s.entryReqTokenAddress) {
+    lines.push(
+      `  Entry requirement: token-gated (${shortHex(s.entryReqTokenAddress)}), up to ${s.entryReqEntryLimit ?? 1} ${s.entryReqEntryLimit === 1 ? "entry" : "entries"} per token`,
+    );
+  } else {
+    lines.push("  Entry requirement: none");
+  }
   if (s.entryFeeToken && s.entryFeeAmount) {
     const creator = (s.entryFeeCreatorBps ?? 0) / 100;
     const game = (s.entryFeeGameBps ?? 0) / 100;
@@ -1088,6 +1190,13 @@ const SECTIONS: readonly SectionDef[] = [
     ],
   },
   {
+    id: "entryRequirement",
+    title: "Entry requirement (gating)",
+    firstStep: "entryReqChoice",
+    steps: ["entryReqChoice", "entryReqTokenAddress", "entryReqLimit"],
+    clear: ["entryReqEnabled", "entryReqTokenAddress", "entryReqEntryLimit"],
+  },
+  {
     id: "prizes",
     title: "Sponsored prizes",
     firstStep: "prizesChoice",
@@ -1175,6 +1284,15 @@ async function renderStepPrompt(api: TelegramApi, state: State, chatId: string, 
         "Add an entry fee?",
         "  1. No (free entry)",
         "  2. Yes",
+        "",
+        "Reply with a number.",
+      ].join("\n"));
+      return;
+    case "entryReqChoice":
+      await api.sendMessage(chatId, [
+        "Gate who can enter?",
+        "  1. No (anyone can enter)",
+        "  2. Token-gated (must own a token from a specific contract)",
         "",
         "Reply with a number.",
       ].join("\n"));

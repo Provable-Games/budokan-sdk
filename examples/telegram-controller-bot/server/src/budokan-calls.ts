@@ -204,6 +204,24 @@ export interface EntryFeeArgs {
   distributionCount: number;
 }
 
+/**
+ * Entry-requirement gating. The chain has two variants on the
+ * EntryRequirementType enum:
+ *   - token: ContractAddress — must own a token from this contract
+ *   - extension: ExtensionConfig — custom validator contract
+ *
+ * Only the token-gated case is exposed via chat. Extensions are
+ * surface-area for protocol integrators and require domain-specific
+ * config formats; budokan.gg handles those.
+ */
+export type EntryRequirementSpec =
+  | { kind: "token"; tokenAddress: string };
+
+export interface EntryRequirementArgs {
+  entryLimit: number;       // max entries per qualifying token / extension match
+  type: EntryRequirementSpec;
+}
+
 export interface CreateTournamentArgs {
   creatorRewardsAddress: string;
   name: string;          // ≤ 31 ASCII bytes (felt252 short string)
@@ -220,6 +238,8 @@ export interface CreateTournamentArgs {
   leaderboard: { ascending: boolean; gameMustBeOver: boolean };
   /** Optional. When set, encoded as Option::Some(EntryFee) on chain. */
   entryFee?: EntryFeeArgs;
+  /** Optional. When set, encoded as Option::Some(EntryRequirement) on chain. */
+  entryRequirement?: EntryRequirementArgs;
   salt?: number;
   metadataValue?: number;
 }
@@ -251,7 +271,7 @@ export function buildCreateTournamentCall(
       renderer: { type: "core::option::Option::<core::starknet::contract_address::ContractAddress>", variant: { None: {} } },
     },
     entry_fee: encodeEntryFeeOption(args.entryFee),
-    entry_requirement: { type: "core::option::Option::<game_components_interfaces::entry_requirement::EntryRequirement>", variant: { None: {} } },
+    entry_requirement: encodeEntryRequirementOption(args.entryRequirement),
     leaderboard_config: {
       ascending: args.leaderboard.ascending,
       game_must_be_over: args.leaderboard.gameMustBeOver,
@@ -355,6 +375,31 @@ export function buildAddPrizeCall(
     entrypoint: "add_prize",
     calldata,
   };
+}
+
+function encodeEntryRequirementOption(req: EntryRequirementArgs | undefined) {
+  const type = "core::option::Option::<game_components_interfaces::entry_requirement::EntryRequirement>";
+  if (!req) return { type, variant: { None: {} } };
+  return {
+    type,
+    variant: {
+      Some: {
+        entry_limit: req.entryLimit,
+        entry_requirement_type: encodeEntryRequirementType(req.type),
+      },
+    },
+  };
+}
+
+function encodeEntryRequirementType(spec: EntryRequirementSpec) {
+  const type = "game_components_interfaces::entry_requirement::EntryRequirementType";
+  // The chain enum has lowercase variant names. starknet.js's CairoCustomEnum
+  // matches by exact key.
+  if (spec.kind === "token") {
+    return { type, variant: { token: spec.tokenAddress } };
+  }
+  // Future: extension. Unreachable while only "token" is exposed.
+  throw new Error(`Unsupported entry requirement kind: ${(spec as { kind: string }).kind}`);
 }
 
 function encodeEntryFeeOption(fee: EntryFeeArgs | undefined) {
