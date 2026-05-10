@@ -23,6 +23,7 @@ import {
 } from "./budokan-calls.ts";
 import * as create from "./commands/create.ts";
 import * as addPrize from "./commands/add-prize.ts";
+import * as listCmds from "./commands/list.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 
 interface TelegramMessage {
@@ -153,6 +154,12 @@ export class TelegramBot {
       }
       case "/chain":
         return this.chain(chatId, args);
+      case "/tournaments":
+        return listCmds.tournaments(this.api, this.config, this.chatStates, chatId, args);
+      case "/my_tournaments":
+      case "/my-tournaments":
+      case "/mytournaments":
+        return listCmds.myTournaments(this.api, this.config, this.chatStates, this.sessions, chatId, args);
       default:
         return;
     }
@@ -396,6 +403,10 @@ export class TelegramBot {
         "  /whoami — show the connected account",
         `  /chain [${SUPPORTED_CHAINS.join("|")}] — show or switch your active chain`,
         "",
+        "Browse:",
+        "  /tournaments [phase] [page] — list tournaments on this chain",
+        "  /my_tournaments [page] — list tournaments you've entered",
+        "",
         "Signed actions (require /connect first):",
         "  /create — multi-turn flow to create a tournament",
         "  /enter <tournamentId> — enter a tournament (free in chat; paid via Mini App)",
@@ -528,6 +539,8 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "disconnect", description: "Clear your stored session" },
   { command: "whoami", description: "Show the connected account" },
   { command: "chain", description: "Show or switch your active chain" },
+  { command: "tournaments", description: "List tournaments on this chain" },
+  { command: "my_tournaments", description: "List tournaments you've entered" },
   { command: "create", description: "Multi-turn flow to create a tournament" },
   { command: "enter", description: "Enter a tournament" },
   { command: "submit_score", description: "Submit a score" },
