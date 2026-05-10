@@ -84,6 +84,10 @@ interface PrizeSpec {
 interface State {
   step: Step;
   chain: Chain;
+  // Snapshot of the games list at /create-start time, so the numbering the
+  // user sees matches the indices we resolve against. denshokan registry
+  // updates between picker render and pick would otherwise shift indices.
+  gamesList: Game[];
   // Filled progressively.
   game?: Game;
   name?: string;
@@ -117,12 +121,21 @@ export function cancel(chatId: string): boolean {
 }
 
 export async function start(api: TelegramApi, chatId: string, chain: Chain): Promise<void> {
-  const games = gamesForChain(chain);
-  if (games.length === 0) {
-    await api.sendMessage(chatId, `No games configured for ${chain}. Contact the bot operator.`);
+  let games: Game[];
+  try {
+    games = await gamesForChain(chain);
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't load the game registry: ${formatError(error)}`);
     return;
   }
-  states.set(chatId, { step: "game", chain, prizesSoFar: [] });
+  if (games.length === 0) {
+    await api.sendMessage(
+      chatId,
+      `No games registered on ${chain}. They may still be propagating; try again in a minute.`,
+    );
+    return;
+  }
+  states.set(chatId, { step: "game", chain, prizesSoFar: [], gamesList: games });
   await api.sendMessage(chatId, [
     `Let's create a tournament on ${chain}. /cancel to abort.`,
     "",
@@ -176,13 +189,12 @@ export async function handleAnswer(
 }
 
 async function handleGame(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
-  const games = gamesForChain(state.chain);
-  const idx = parsePickIndex(input, games.length);
+  const idx = parsePickIndex(input, state.gamesList.length);
   if (idx === null) {
-    await api.sendMessage(chatId, `Reply with a number 1-${games.length}, or /cancel.`);
+    await api.sendMessage(chatId, `Reply with a number 1-${state.gamesList.length}, or /cancel.`);
     return;
   }
-  state.game = games[idx];
+  state.game = state.gamesList[idx];
   state.step = "name";
   await api.sendMessage(chatId, `Selected: ${state.game!.name}\n\nTournament name? (≤31 ASCII characters)`);
 }
