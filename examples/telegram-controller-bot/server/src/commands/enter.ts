@@ -26,6 +26,7 @@ import {
   type Call,
 } from "../budokan-calls.ts";
 import { gamesForChain } from "../catalog/games.ts";
+import { formatError } from "../format-error.ts";
 
 type Step = "picker";
 
@@ -266,6 +267,3 @@ function shortAddr(addr: string): string {
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

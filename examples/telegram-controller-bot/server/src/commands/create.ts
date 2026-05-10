@@ -32,6 +32,7 @@ import { gamesForChain, gameMetadataFor, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, type GameSettingDetails } from "../catalog/settings.ts";
 import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
+import { formatError } from "../format-error.ts";
 
 type Step =
   | "game"
@@ -1305,6 +1306,3 @@ function shortHex(value: string): string {
   return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

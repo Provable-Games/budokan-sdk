@@ -13,6 +13,7 @@ import type { Chain, ChatStateStore } from "../chat-state.ts";
 import type { SessionStore } from "../session-store.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { TelegramApi } from "../telegram-api.ts";
+import { formatError } from "../format-error.ts";
 
 const PAGE_SIZE = 5;
 
@@ -268,6 +269,3 @@ function shortHex(value: string): string {
   return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

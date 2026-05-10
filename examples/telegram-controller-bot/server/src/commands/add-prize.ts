@@ -27,6 +27,7 @@ import {
 } from "../budokan-calls.ts";
 import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
 import { gamesForChain } from "../catalog/games.ts";
+import { formatError } from "../format-error.ts";
 
 type Step =
   | "tournamentPick"
@@ -568,6 +569,3 @@ function shortAddr(addr: string): string {
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
 
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

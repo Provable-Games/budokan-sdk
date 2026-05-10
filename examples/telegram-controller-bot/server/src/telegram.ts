@@ -23,6 +23,7 @@ import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
 import * as listCmds from "./commands/list.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
+import { formatError } from "./format-error.ts";
 
 interface TelegramMessage {
   chat: { id: number };
@@ -410,10 +411,6 @@ export class TelegramBot {
     const base = this.config.miniAppUrl;
     return `${base}/?token=${encodeURIComponent(token)}&mode=${mode}`;
   }
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // Telegram's setMyCommands payload — descriptions show in the "/" autocomplete
