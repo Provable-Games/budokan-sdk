@@ -22,6 +22,7 @@ import {
   type RewardType,
 } from "./budokan-calls.ts";
 import * as create from "./commands/create.ts";
+import * as addPrize from "./commands/add-prize.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 
 interface TelegramMessage {
@@ -56,6 +57,13 @@ export class TelegramBot {
   async start(): Promise<void> {
     // getUpdates conflicts with a configured webhook; clear in case one is set.
     await this.api.call("deleteWebhook", { drop_pending_updates: false });
+    // Populate Telegram's "/" autocomplete with our command list. Best-effort:
+    // a transient failure shouldn't block bot startup.
+    await this.api
+      .call("setMyCommands", { commands: TELEGRAM_COMMAND_MENU })
+      .catch((error: unknown) => {
+        console.error("setMyCommands failed:", error instanceof Error ? error.message : error);
+      });
     await this.poll();
   }
 
@@ -100,10 +108,13 @@ export class TelegramBot {
     const command = (rawCommand ?? "").split("@")[0]?.toLowerCase();
     const isCommand = command?.startsWith("/") ?? false;
 
-    // Multi-turn /create state takes priority for plain text input. A user
-    // typing the next answer should not also trigger an unknown-command path.
+    // Multi-turn flows take priority for plain text input. A user typing
+    // the next answer should not also trigger an unknown-command path.
     if (!isCommand && create.isPending(chatId)) {
       return create.handleAnswer(this.api, this.config, chatId, text);
+    }
+    if (!isCommand && addPrize.isPending(chatId)) {
+      return addPrize.handleAnswer(this.api, this.config, this.handshakes, chatId, text);
     }
 
     switch (command) {
@@ -134,6 +145,12 @@ export class TelegramBot {
         const chain = await this.chatStates.getChain(chatId);
         return create.start(this.api, chatId, chain);
       }
+      case "/add_prize":
+      case "/add-prize":
+      case "/addprize": {
+        const chain = await this.chatStates.getChain(chatId);
+        return addPrize.start(this.api, this.config, chatId, chain, args);
+      }
       case "/chain":
         return this.chain(chatId, args);
       default:
@@ -142,7 +159,8 @@ export class TelegramBot {
   }
 
   private async cancel(chatId: string): Promise<void> {
-    if (create.cancel(chatId)) {
+    const cancelled = create.cancel(chatId) || addPrize.cancel(chatId);
+    if (cancelled) {
       await this.api.sendMessage(chatId, "Cancelled.");
     } else {
       await this.api.sendMessage(chatId, "Nothing to cancel.");
@@ -384,7 +402,8 @@ export class TelegramBot {
         "  /submit_score <tournamentId> <tokenId> <position>",
         "  /claim <tournamentId> <kind> [args]",
         "    kinds: prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
-        "  /cancel — abort an in-flight /create flow",
+        "  /add_prize <tournamentId> — sponsor an ERC-20 prize (signs in Mini App)",
+        "  /cancel — abort an in-flight multi-turn flow",
         "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
       ].join("\n"),
     );
@@ -498,6 +517,25 @@ export class TelegramBot {
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+// Telegram's setMyCommands payload — descriptions show in the "/" autocomplete
+// dropdown in chat. Keep this in sync with sendHelp() and the command switch
+// in handleMessage(). Order shown is the order Telegram displays.
+const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
+  { command: "start", description: "Show help" },
+  { command: "help", description: "Show command list" },
+  { command: "connect", description: "Authorize the bot via Cartridge" },
+  { command: "disconnect", description: "Clear your stored session" },
+  { command: "whoami", description: "Show the connected account" },
+  { command: "chain", description: "Show or switch your active chain" },
+  { command: "create", description: "Multi-turn flow to create a tournament" },
+  { command: "enter", description: "Enter a tournament" },
+  { command: "submit_score", description: "Submit a score" },
+  { command: "claim", description: "Claim a reward" },
+  { command: "add_prize", description: "Sponsor a prize for a tournament" },
+  { command: "back", description: "Go back / edit the current section in /create" },
+  { command: "cancel", description: "Abort the current multi-turn flow" },
+];
 
 function shortAddr(addr: string): string {
   if (!addr || addr.length <= 18) return addr;

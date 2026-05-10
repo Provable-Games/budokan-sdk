@@ -284,6 +284,79 @@ function encodeDistribution(d: DistributionSpec) {
   return { type, variant: { Uniform: {} } };
 }
 
+/**
+ * add_prize(tournament_id: u64, token_address: ContractAddress,
+ *           token_type: TokenTypeData, sponsor_address: ContractAddress,
+ *           sponsor_token_id: Option<felt252>)
+ *
+ * For chat use we only ship the ERC20 path. ERC721 prize sponsorship needs
+ * tokenId selection from a Voyager NFT call which is a substantial extra
+ * UX layer; defer to budokan.gg for that case.
+ *
+ * `distribution` is Option<Distribution> — None means "winner takes all"
+ * (single payout). Some(...) splits the prize across the top
+ * `distribution_count` placements.
+ */
+export interface AddPrizeArgs {
+  tournamentId: string;
+  tokenAddress: string;
+  amount: string;                    // raw u128 (decimal string)
+  /** When undefined, encoded as Option::None → single payout. */
+  distribution?: DistributionSpec;
+  /** Required when distribution is set; ignored otherwise. */
+  distributionCount?: number;
+  sponsorAddress: string;
+}
+
+export function buildAddPrizeCall(
+  budokanAddress: string,
+  args: AddPrizeArgs,
+): Call {
+  const calldata = CallData.compile({
+    tournament_id: args.tournamentId,
+    token_address: args.tokenAddress,
+    token_type: {
+      type: "game_components_interfaces::prize::TokenTypeData",
+      variant: {
+        ERC20: {
+          amount: args.amount,
+          // Option<Distribution>
+          distribution: args.distribution
+            ? {
+                type: "core::option::Option::<game_components_interfaces::distribution::Distribution>",
+                variant: { Some: encodeDistribution(args.distribution) },
+              }
+            : {
+                type: "core::option::Option::<game_components_interfaces::distribution::Distribution>",
+                variant: { None: {} },
+              },
+          // Option<u32> distribution_count
+          distribution_count: args.distribution && args.distributionCount !== undefined
+            ? {
+                type: "core::option::Option::<core::integer::u32>",
+                variant: { Some: args.distributionCount },
+              }
+            : {
+                type: "core::option::Option::<core::integer::u32>",
+                variant: { None: {} },
+              },
+        },
+      },
+    },
+    sponsor_address: args.sponsorAddress,
+    // sponsor_token_id: Option<felt252> — None for normal sponsorship.
+    sponsor_token_id: {
+      type: "core::option::Option::<core::felt252>",
+      variant: { None: {} },
+    },
+  });
+  return {
+    contractAddress: budokanAddress,
+    entrypoint: "add_prize",
+    calldata,
+  };
+}
+
 function encodeEntryFeeOption(fee: EntryFeeArgs | undefined) {
   const type = "core::option::Option::<budokan_interfaces::budokan::EntryFee>";
   if (!fee) return { type, variant: { None: {} } };
