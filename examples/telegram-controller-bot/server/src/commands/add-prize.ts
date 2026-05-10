@@ -25,7 +25,7 @@ import {
   type Call,
   type DistributionSpec,
 } from "../budokan-calls.ts";
-import { fetchVoyagerBalances, type VoyagerTokenBalance } from "../voyager.ts";
+import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
 import { gamesForChain } from "../catalog/games.ts";
 
 type Step =
@@ -198,9 +198,12 @@ async function resolveTournamentAndShowTokens(
     await api.sendMessage(chatId, `Couldn't fetch your balances: ${formatError(error)}`);
     return;
   }
-  const eligible = balances.filter((b) => BigInt(b.balance) > 0n);
+  const eligible = filterPrizeEligible(balances, chain);
   if (eligible.length === 0) {
-    await api.sendMessage(chatId, "No non-zero ERC-20 balances found in your wallet. Nothing to sponsor.");
+    const reason = chain === "mainnet"
+      ? "No priced ERC-20 balances in your wallet. (Unpriced tokens are hidden on mainnet — use budokan.gg if you want to sponsor one of those.)"
+      : "No non-zero ERC-20 balances in your wallet.";
+    await api.sendMessage(chatId, reason);
     return;
   }
 

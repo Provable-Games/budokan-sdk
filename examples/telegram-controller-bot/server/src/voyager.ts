@@ -81,6 +81,30 @@ export async function fetchVoyagerBalances(
   }));
 }
 
+/**
+ * Filter Voyager balances to the ones worth offering as a prize.
+ *
+ * - All chains: drop zero balances.
+ * - Mainnet only: drop tokens with no USD value (Voyager indexes a lot of
+ *   spam / unverified tokens with no price; users almost never want to
+ *   sponsor those, and showing them buries the real tokens). The user can
+ *   still sponsor them via budokan.gg if needed.
+ * - Sepolia (and any non-mainnet): keep zero-USD tokens, since testnet
+ *   tokens typically have no real-world price anyway.
+ */
+export function filterPrizeEligible(
+  balances: VoyagerTokenBalance[],
+  chain: "mainnet" | "sepolia",
+): VoyagerTokenBalance[] {
+  return balances.filter((b) => {
+    if (BigInt(b.balance) <= 0n) return false;
+    if (chain === "mainnet") {
+      return b.usdBalance !== undefined && b.usdBalance > 0;
+    }
+    return true;
+  });
+}
+
 function padAddress(address: string): string {
   if (!/^0x[0-9a-fA-F]+$/.test(address)) {
     throw new Error(`Invalid address: ${address}`);

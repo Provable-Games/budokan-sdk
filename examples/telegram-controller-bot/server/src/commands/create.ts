@@ -31,7 +31,7 @@ import { CHAINS } from "@provable-games/budokan-sdk";
 import { gamesForChain, gameMetadataFor, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, type GameSettingDetails } from "../catalog/settings.ts";
-import { fetchVoyagerBalances, type VoyagerTokenBalance } from "../voyager.ts";
+import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
 
 type Step =
   | "game"
@@ -797,9 +797,10 @@ async function handlePrizesChoice(api: TelegramApi, config: Config, state: State
     await api.sendMessage(chatId, `Couldn't fetch balances: ${formatError(error)}\nSkipping prize step.`);
     return moveToConfirm(api, state, chatId);
   }
-  // Filter to tokens with non-zero balance and skip the entry-fee token if any
-  // (it's the same token a sponsor would use; allowed but not displayed twice).
-  const eligible = balances.filter((b) => BigInt(b.balance) > 0n);
+  // Mainnet: only show tokens with a USD value (Voyager surfaces a lot of
+  // spam tokens with no price). Sepolia: show everything since testnet
+  // tokens typically have no USD value.
+  const eligible = filterPrizeEligible(balances, state.chain);
   state.voyagerBalances = eligible;
   if (eligible.length === 0) {
     await api.sendMessage(chatId, "No non-zero balances found in your wallet. Skipping prizes.");
