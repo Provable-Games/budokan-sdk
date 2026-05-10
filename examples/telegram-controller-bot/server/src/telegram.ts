@@ -118,6 +118,11 @@ export class TelegramBot {
         return this.whoami(chatId);
       case "/cancel":
         return this.cancel(chatId);
+      case "/back":
+        if (create.isPending(chatId)) {
+          return create.back(this.api, chatId);
+        }
+        return this.api.sendMessage(chatId, "Nothing to go back to.");
       case "/submit_score":
       case "/submitscore":
         return this.submitScore(chatId, args);
@@ -380,6 +385,7 @@ export class TelegramBot {
         "  /claim <tournamentId> <kind> [args]",
         "    kinds: prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
         "  /cancel — abort an in-flight /create flow",
+        "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
       ].join("\n"),
     );
   }

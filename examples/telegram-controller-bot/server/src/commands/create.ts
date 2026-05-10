@@ -118,9 +118,21 @@ interface PrizeSpec {
   amount: string;       // raw u256 amount (decimal string)
 }
 
+// Sections of the form. Used for edit-from-confirmation and /back-to-section.
+// Each section has a first-step the editor jumps to, and a list of state
+// fields cleared when the user starts editing that section (so re-walks
+// see fresh state and re-ask the right questions).
+type SectionId =
+  | "game" | "metadata" | "settings" | "schedule"
+  | "leaderboard" | "entryFee" | "prizes";
+
 interface State {
   step: Step;
   chain: Chain;
+  // True while re-editing a section from confirmation (or via /back). Each
+  // section's exit transition checks this and jumps back to "confirm"
+  // instead of the natural next section.
+  editing?: boolean;
   // Snapshot of the games list at /create-start time, so the numbering the
   // user sees matches the indices we resolve against. denshokan registry
   // updates between picker render and pick would otherwise shift indices.
@@ -251,6 +263,7 @@ async function handleGame(api: TelegramApi, state: State, chatId: string, input:
     return;
   }
   state.game = state.gamesList[idx];
+  if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "name";
   await api.sendMessage(
     chatId,
@@ -274,6 +287,7 @@ async function handleName(api: TelegramApi, state: State, chatId: string, input:
 
 async function handleDescription(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
   state.description = /^skip$/i.test(input) ? "" : input;
+  if (await maybeReturnToConfirm(api, state, chatId)) return;
   // Move into settings: fetch the first page.
   await renderSettingsPage(api, state, chatId, 0);
 }
@@ -346,6 +360,7 @@ async function handleSettings(api: TelegramApi, state: State, chatId: string, in
 }
 
 async function moveToSchedule(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "schedule";
   // Group presets by style so the user sees the structural choice
   // (fixed vs open registration) before picking durations.
@@ -367,6 +382,18 @@ async function moveToSchedule(api: TelegramApi, state: State, chatId: string): P
     "Reply with a number.",
   ];
   await api.sendMessage(chatId, lines.join("\n"));
+}
+
+/**
+ * If state.editing is set, end the section here and jump straight to the
+ * confirmation summary. Returns true if the caller should bail out of its
+ * normal "advance to next section" path.
+ */
+async function maybeReturnToConfirm(api: TelegramApi, state: State, chatId: string): Promise<boolean> {
+  if (!state.editing) return false;
+  state.editing = false;
+  await moveToConfirm(api, state, chatId);
+  return true;
 }
 
 async function handleSchedule(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
@@ -452,6 +479,7 @@ async function handleScheduleCustom(api: TelegramApi, state: State, chatId: stri
 }
 
 async function moveToLeaderboard(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "leaderboard";
   await api.sendMessage(chatId, [
     `Schedule set.`,
@@ -481,6 +509,7 @@ async function handleLeaderboard(api: TelegramApi, state: State, chatId: string,
 }
 
 async function moveToEntryFee(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "entryFeeChoice";
   await api.sendMessage(chatId, [
     "Add an entry fee?",
@@ -729,6 +758,7 @@ function calculateDistributionPercentages(
 }
 
 async function moveToPrizes(api: TelegramApi, config: Config, state: State, chatId: string): Promise<void> {
+  if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "prizesChoice";
   if (!config.voyagerProxyUrl) {
     // Without Voyager, skip prize sponsorship in chat.
@@ -833,16 +863,38 @@ async function handlePrizesAmount(api: TelegramApi, config: Config, state: State
 
 async function moveToConfirm(api: TelegramApi, state: State, chatId: string): Promise<void> {
   state.step = "confirm";
-  await api.sendMessage(chatId, formatSummary(state) + "\n\nReply 'create' to submit, or /cancel.");
+  state.editing = false;
+  const sectionList = SECTIONS.map((s, i) => `  ${i + 1}. ${s.title}`).join("\n");
+  await api.sendMessage(chatId, [
+    formatSummary(state),
+    "",
+    "Sections (use 'edit N' to change one):",
+    sectionList,
+    "",
+    "Reply 'create' to submit, 'edit N' to change a section, '/back' to revisit the last section, or /cancel.",
+  ].join("\n"));
 }
 
 async function handleConfirm(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
-  if (!/^create$/i.test(input)) {
-    await api.sendMessage(chatId, "Reply 'create' to submit, or /cancel.");
-    return;
+  const trimmed = input.trim().toLowerCase();
+  if (trimmed === "create") {
+    states.delete(chatId);
+    return execute(api, config, chatId, state);
   }
-  states.delete(chatId);
-  await execute(api, config, chatId, state);
+  // edit N — jump to that section's first prompt.
+  const editMatch = trimmed.match(/^edit\s+(\d+)$/);
+  if (editMatch) {
+    const n = Number(editMatch[1]);
+    if (!Number.isInteger(n) || n < 1 || n > SECTIONS.length) {
+      await api.sendMessage(chatId, `Section must be 1–${SECTIONS.length}.`);
+      return;
+    }
+    return editSection(api, state, chatId, SECTIONS[n - 1]!);
+  }
+  await api.sendMessage(
+    chatId,
+    `Reply 'create' to submit, 'edit N' (1–${SECTIONS.length}) to change a section, '/back' for the last section, or /cancel.`,
+  );
 }
 
 async function execute(api: TelegramApi, config: Config, chatId: string, state: State): Promise<void> {
@@ -964,6 +1016,207 @@ function formatSummary(s: State): string {
     }
   }
   return lines.join("\n");
+}
+
+// --- section editing (edit N + /back) ---
+
+interface SectionDef {
+  id: SectionId;
+  title: string;
+  firstStep: Step;
+  // Steps that fall under this section (used to determine "current section"
+  // for /back, and to clear-on-edit for edit N).
+  steps: readonly Step[];
+  // State fields the editor wipes when re-entering this section. Wiping
+  // forces the walk-forward path to re-ask. Downstream sections' fields are
+  // intentionally NOT wiped — user can edit those separately if they go
+  // stale (e.g. settings after a game change).
+  clear: (keyof State)[];
+}
+
+const SECTIONS: readonly SectionDef[] = [
+  {
+    id: "game",
+    title: "Game",
+    firstStep: "game",
+    steps: ["game"],
+    clear: ["game"],
+  },
+  {
+    id: "metadata",
+    title: "Name + description",
+    firstStep: "name",
+    steps: ["name", "description"],
+    clear: ["name", "description"],
+  },
+  {
+    id: "settings",
+    title: "Settings",
+    firstStep: "settings",
+    steps: ["settings"],
+    clear: ["settingsId", "settingsName", "settingsPage"],
+  },
+  {
+    id: "schedule",
+    title: "Schedule",
+    firstStep: "schedule",
+    steps: ["schedule", "scheduleCustom"],
+    clear: ["schedule", "customSchedule", "customScheduleStep", "customScheduleStyle"],
+  },
+  {
+    id: "leaderboard",
+    title: "Leaderboard rules",
+    firstStep: "leaderboard",
+    steps: ["leaderboard"],
+    clear: ["leaderboardAscending", "gameMustBeOver"],
+  },
+  {
+    id: "entryFee",
+    title: "Entry fee",
+    firstStep: "entryFeeChoice",
+    steps: [
+      "entryFeeChoice", "entryFeeToken", "entryFeeAmount",
+      "entryFeeGameShare", "entryFeeCreatorShare", "entryFeeRefundShare",
+      "entryFeeDistCount", "entryFeeDistType", "entryFeeDistWeight",
+    ],
+    clear: [
+      "entryFeeToken", "entryFeeAmount", "entryFeeCreatorBps",
+      "entryFeeGameBps", "entryFeeMinGameBps", "entryFeeRefundBps",
+      "entryFeeDistType", "entryFeeDistCount", "entryFeeDistWeight",
+    ],
+  },
+  {
+    id: "prizes",
+    title: "Sponsored prizes",
+    firstStep: "prizesChoice",
+    steps: ["prizesChoice", "prizesPick", "prizesAmount"],
+    clear: ["prizesSoFar", "voyagerBalances", "pendingPrizeToken"],
+  },
+] as const;
+
+function sectionForStep(step: Step): SectionDef | undefined {
+  return SECTIONS.find((s) => s.steps.includes(step));
+}
+
+function sectionById(id: SectionId): SectionDef | undefined {
+  return SECTIONS.find((s) => s.id === id);
+}
+
+/**
+ * Re-enter a section. Clears that section's fields, sets the step to its
+ * first prompt, marks editing=true so the section's exit handler will jump
+ * back to confirmation instead of advancing.
+ *
+ * Section-level prizesSoFar reset specifically rebuilds the empty array so
+ * the field type stays correct (it's mandatory, not optional).
+ */
+async function editSection(api: TelegramApi, state: State, chatId: string, section: SectionDef): Promise<void> {
+  for (const field of section.clear) {
+    if (field === "prizesSoFar") {
+      state.prizesSoFar = [];
+    } else {
+      delete (state as Record<keyof State, unknown>)[field];
+    }
+  }
+  state.editing = true;
+  state.step = section.firstStep;
+  await renderStepPrompt(api, state, chatId, section.firstStep);
+}
+
+/**
+ * /back command — handled by telegram.ts and routed here when a /create
+ * flow is pending. Edits the section the user is currently in (or the last
+ * section, if they're already at the confirmation screen).
+ */
+export async function back(api: TelegramApi, chatId: string): Promise<void> {
+  const state = states.get(chatId);
+  if (!state) return;
+  if (state.step === "confirm") {
+    const last = SECTIONS[SECTIONS.length - 1]!;
+    return editSection(api, state, chatId, last);
+  }
+  const section = sectionForStep(state.step);
+  if (!section) return;
+  await editSection(api, state, chatId, section);
+}
+
+/**
+ * Render the entry prompt for a step. Used after edit/back to re-emit
+ * the right question without going through a transition function.
+ */
+async function renderStepPrompt(api: TelegramApi, state: State, chatId: string, step: Step): Promise<void> {
+  switch (step) {
+    case "game":
+      await api.sendMessage(chatId, [
+        "Pick a game:",
+        ...state.gamesList.map((g, i) => `  ${i + 1}. ${g.name} — ${shortHex(g.contractAddress)}`),
+        "",
+        "Reply with a number.",
+      ].join("\n"));
+      return;
+    case "name":
+      await api.sendMessage(chatId, "Tournament name? (≤31 ASCII characters)");
+      return;
+    case "description":
+      await api.sendMessage(chatId, "Description? (free text, or send 'skip')");
+      return;
+    case "settings":
+      // Pulls a fresh first page; same prompt as the natural entry path.
+      return renderSettingsPage(api, state, chatId, 0);
+    case "schedule":
+      return moveToScheduleNoEditCheck(api, state, chatId);
+    case "leaderboard":
+      await api.sendMessage(chatId, "Lower scores win? (yes/no — 'yes' for golf-style, 'no' for points-style)");
+      return;
+    case "entryFeeChoice":
+      await api.sendMessage(chatId, [
+        "Add an entry fee?",
+        "  1. No (free entry)",
+        "  2. Yes",
+        "",
+        "Reply with a number.",
+      ].join("\n"));
+      return;
+    case "prizesChoice":
+      // moveToPrizes already handles "no Voyager → skip" semantics; reuse.
+      return moveToPrizesNoEditCheck(api, state, chatId);
+    default:
+      // Mid-section steps shouldn't be re-entered directly via edit/back —
+      // we always restart at the section's firstStep. Fall back to an
+      // informational message just in case.
+      await api.sendMessage(chatId, `Resuming at step '${step}'. Continue answering, or /cancel.`);
+  }
+}
+
+// Versions that skip the editing-check guard, used by renderStepPrompt's
+// re-entry into already-edit-aware transitions.
+async function moveToScheduleNoEditCheck(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "schedule";
+  const lines: string[] = [
+    "Pick a schedule preset.",
+    "",
+    "Fixed registration (registration window closes before play starts):",
+    ...FIXED_PRESETS.map((p, i) => `  ${i + 1}. ${p.name}`),
+    "",
+    "Open registration (players can join throughout play):",
+    ...OPEN_PRESETS.map((p, i) => `  ${FIXED_PRESETS.length + i + 1}. ${p.name}`),
+    "",
+    `  ${SCHEDULE_PRESETS.length + 1}. Custom (I'll ask for each window)`,
+    "",
+    "Reply with a number.",
+  ];
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function moveToPrizesNoEditCheck(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "prizesChoice";
+  await api.sendMessage(chatId, [
+    "Add sponsored prizes from your wallet?",
+    "  1. No",
+    "  2. Yes (I'll show your token balances)",
+    "",
+    "Reply with a number.",
+  ].join("\n"));
 }
 
 // --- helpers ---
