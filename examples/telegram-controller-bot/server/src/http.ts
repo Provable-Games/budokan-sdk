@@ -14,9 +14,10 @@ import cors from "@fastify/cors";
 import { CHAINS } from "@provable-games/budokan-sdk";
 
 import type { Config } from "./config.ts";
+import type { Chain } from "./chat-state.ts";
 import type { HandshakeStore } from "./handshake.ts";
 import type { SessionStore, StoredSession } from "./session-store.ts";
-import { buildSessionPolicies, parsedPoliciesFor } from "./policies.ts";
+import { parsedPoliciesFor } from "./policies.ts";
 import type { TelegramApi } from "./telegram-api.ts";
 import { decodeStartapp } from "./cartridge-link.ts";
 
@@ -69,15 +70,16 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
       reply.code(404);
       return { error: "Token invalid or expired." };
     }
-    const rpcUrl = config.rpcUrl ?? CHAINS[config.chain]?.rpcUrl;
+    const chain = handshake.chain;
+    const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
     if (!rpcUrl) {
       reply.code(500);
-      return { error: `No RPC URL configured for chain '${config.chain}'.` };
+      return { error: `No RPC URL configured for chain '${chain}'.` };
     }
     return {
-      chain: config.chain,
+      chain,
       rpcUrl,
-      policies: buildSessionPolicies(config.chain, config.budokanAddress),
+      policies: parsedPoliciesFor(chain, config.budokanAddress),
       status: "pending",
     };
   });
@@ -94,15 +96,14 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
 
     let stored: StoredSession;
     try {
-      stored = parseSessionBody(req.body, config.chain);
+      stored = parseSessionBody(req.body, handshake.chain);
       // Persist the policy bundle (in ParsedSessionPolicies shape)
       // alongside signer/session. SessionProvider.probe() uses it to
       // validate the session was created with a superset of the
-      // currently-required policies. Server-side derivation: we know
-      // exactly which bundle the Mini App was given (deterministic
-      // function of chain), so trust it from policies.ts rather than
-      // accepting it from the client.
-      stored.policies = parsedPoliciesFor(config.chain, config.budokanAddress);
+      // currently-required policies. Server-side derivation tied to the
+      // chain on the handshake — we know exactly which bundle the Mini
+      // App was given (deterministic function of chain).
+      stored.policies = parsedPoliciesFor(handshake.chain, config.budokanAddress);
     } catch (error) {
       reply.code(400);
       return { error: error instanceof Error ? error.message : "Invalid session body." };
@@ -182,8 +183,8 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
           sessionKeyGuid: decoded.sessionKeyGuid ?? handshake.signer.sessionKeyGuid,
           transactionHash: decoded.transactionHash,
         },
-        policies: parsedPoliciesFor(config.chain, config.budokanAddress),
-        chain: config.chain,
+        policies: parsedPoliciesFor(handshake.chain, config.budokanAddress),
+        chain: handshake.chain,
       };
 
       await sessions.set(handshake.chatId, stored);
@@ -222,13 +223,14 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
       reply.code(404);
       return { error: "Tx token invalid or expired." };
     }
-    const rpcUrl = config.rpcUrl ?? CHAINS[config.chain]?.rpcUrl;
+    const chain: Chain = handshake.chain;
+    const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
     if (!rpcUrl) {
       reply.code(500);
-      return { error: `No RPC URL configured for chain '${config.chain}'.` };
+      return { error: `No RPC URL configured for chain '${chain}'.` };
     }
     return {
-      chain: config.chain,
+      chain,
       rpcUrl,
       calls: handshake.payload.calls,
       summary: handshake.payload.summary,

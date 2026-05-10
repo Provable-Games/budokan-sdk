@@ -7,6 +7,8 @@
 import { CHAINS, createBudokanClient } from "@provable-games/budokan-sdk";
 
 import type { Config } from "./config.ts";
+import type { Chain, ChatStateStore } from "./chat-state.ts";
+import { isChain, SUPPORTED_CHAINS } from "./chat-state.ts";
 import type { HandshakeStore } from "./handshake.ts";
 import type { SessionStore } from "./session-store.ts";
 import { TelegramApi, urlButton, webAppButton } from "./telegram-api.ts";
@@ -41,6 +43,7 @@ export class TelegramBot {
     private readonly config: Config,
     private readonly handshakes: HandshakeStore,
     private readonly sessions: SessionStore,
+    private readonly chatStates: ChatStateStore,
   ) {
     this.api = new TelegramApi(config.telegramBotToken);
   }
@@ -122,8 +125,12 @@ export class TelegramBot {
         return this.claim(chatId, args);
       case "/enter":
         return this.enter(chatId, args);
-      case "/create":
-        return create.start(this.api, chatId);
+      case "/create": {
+        const chain = await this.chatStates.getChain(chatId);
+        return create.start(this.api, chatId, chain);
+      }
+      case "/chain":
+        return this.chain(chatId, args);
       default:
         return;
     }
@@ -159,15 +166,16 @@ export class TelegramBot {
       return;
     }
 
-    const result = await resolveAccount(chatId, this.config);
+    const chain = await this.chatStates.getChain(chatId);
+    const result = await resolveAccount(chatId, chain, this.config);
     if (!result.ok) {
-      await this.api.sendMessage(chatId, sessionErrorMessage(result.reason));
+      await this.api.sendMessage(chatId, sessionErrorMessage(result.reason, chain));
       return;
     }
 
-    const budokanAddress = this.config.budokanAddress ?? CHAINS[this.config.chain]?.budokanAddress;
+    const budokanAddress = this.config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
     if (!budokanAddress) {
-      await this.api.sendMessage(chatId, "Internal error: no Budokan address configured.");
+      await this.api.sendMessage(chatId, `Internal error: no Budokan address configured for ${chain}.`);
       return;
     }
 
@@ -209,15 +217,16 @@ export class TelegramBot {
       return;
     }
 
-    const result = await resolveAccount(chatId, this.config);
+    const chain = await this.chatStates.getChain(chatId);
+    const result = await resolveAccount(chatId, chain, this.config);
     if (!result.ok) {
-      await this.api.sendMessage(chatId, sessionErrorMessage(result.reason));
+      await this.api.sendMessage(chatId, sessionErrorMessage(result.reason, chain));
       return;
     }
 
-    const budokanAddress = this.config.budokanAddress ?? CHAINS[this.config.chain]?.budokanAddress;
+    const budokanAddress = this.config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
     if (!budokanAddress) {
-      await this.api.sendMessage(chatId, "Internal error: no Budokan address configured.");
+      await this.api.sendMessage(chatId, `Internal error: no Budokan address configured for ${chain}.`);
       return;
     }
 
@@ -249,15 +258,16 @@ export class TelegramBot {
     }
     const tournamentId = args[0];
 
-    const session = await resolveAccount(chatId, this.config);
+    const chain = await this.chatStates.getChain(chatId);
+    const session = await resolveAccount(chatId, chain, this.config);
     if (!session.ok) {
-      await this.api.sendMessage(chatId, sessionErrorMessage(session.reason));
+      await this.api.sendMessage(chatId, sessionErrorMessage(session.reason, chain));
       return;
     }
 
-    const budokanAddress = this.config.budokanAddress ?? CHAINS[this.config.chain]?.budokanAddress;
+    const budokanAddress = this.config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
     if (!budokanAddress) {
-      await this.api.sendMessage(chatId, "Internal error: no Budokan address configured.");
+      await this.api.sendMessage(chatId, `Internal error: no Budokan address configured for ${chain}.`);
       return;
     }
 
@@ -266,7 +276,7 @@ export class TelegramBot {
     // reads chain defaults when it's omitted — pass only the values we
     // actually have to override and let the SDK fill the rest.
     const sdkClient = createBudokanClient({
-      chain: this.config.chain,
+      chain,
       ...(this.config.apiUrl ? { apiBaseUrl: this.config.apiUrl } : {}),
       ...(this.config.rpcUrl ? { rpcUrl: this.config.rpcUrl } : {}),
       ...(this.config.budokanAddress ? { budokanAddress: this.config.budokanAddress } : {}),
@@ -335,7 +345,7 @@ export class TelegramBot {
       `  2. enter_tournament(${tournamentId}, ...)`,
     ].join("\n");
 
-    const handshake = this.handshakes.mint(chatId, "tx", { payload: { calls, summary } });
+    const handshake = this.handshakes.mint(chatId, "tx", chain, { payload: { calls, summary } });
     const url = `${this.config.miniAppUrl}/?token=${encodeURIComponent(handshake.token)}&mode=tx`;
 
     await this.api.sendMessage(
@@ -351,15 +361,17 @@ export class TelegramBot {
   }
 
   private async sendHelp(chatId: string): Promise<void> {
+    const chain = await this.chatStates.getChain(chatId);
     await this.api.sendMessage(
       chatId,
       [
-        `Budokan Telegram bot (chain: ${this.config.chain})`,
+        `Budokan Telegram bot (your chain: ${chain})`,
         "",
         "Auth:",
-        "  /connect — authorize the bot via Cartridge in a Telegram Mini App",
+        "  /connect — authorize the bot via Cartridge",
         "  /disconnect — clear your stored session",
         "  /whoami — show the connected account",
+        `  /chain [${SUPPORTED_CHAINS.join("|")}] — show or switch your active chain`,
         "",
         "Signed actions (require /connect first):",
         "  /create — multi-turn flow to create a tournament",
@@ -372,12 +384,42 @@ export class TelegramBot {
     );
   }
 
+  private async chain(chatId: string, args: string[]): Promise<void> {
+    const current = await this.chatStates.getChain(chatId);
+    if (args.length === 0) {
+      await this.api.sendMessage(
+        chatId,
+        `Your current chain: ${current}\nUsage: /chain ${SUPPORTED_CHAINS.join("|")}`,
+      );
+      return;
+    }
+    const target = (args[0] ?? "").toLowerCase();
+    if (!isChain(target)) {
+      await this.api.sendMessage(chatId, `Chain must be one of: ${SUPPORTED_CHAINS.join(", ")}`);
+      return;
+    }
+    if (target === current) {
+      await this.api.sendMessage(chatId, `Already on ${current}.`);
+      return;
+    }
+    await this.chatStates.setChain(chatId, target);
+    const session = await this.sessions.get(chatId, target);
+    const note = session
+      ? `You have an active session on ${target} as ${session.session.username}.`
+      : `No session on ${target} yet — run /connect to authorize.`;
+    await this.api.sendMessage(
+      chatId,
+      [`Switched to ${target}.`, note, "", `Your session on ${current} is preserved — switch back with /chain ${current}.`].join("\n"),
+    );
+  }
+
   private async connect(chatId: string): Promise<void> {
-    const existing = await this.sessions.get(chatId);
+    const chain = await this.chatStates.getChain(chatId);
+    const existing = await this.sessions.get(chatId, chain);
     if (existing) {
       await this.api.sendMessage(
         chatId,
-        `Already connected as ${existing.session.username}. Use /disconnect first to start over.`,
+        `Already connected on ${chain} as ${existing.session.username}. Use /disconnect first to start over, or /chain to switch.`,
       );
       return;
     }
@@ -387,11 +429,12 @@ export class TelegramBot {
     // URL on our server with the auth result encoded as ?startapp=<base64>.
     // Mirrors cartridge-gg/slot's CLI login flow — see cartridge-link.ts.
     const signer = generateSessionKeypair();
-    const handshake = this.handshakes.mint(chatId, "connect", { signer });
+    const handshake = this.handshakes.mint(chatId, "connect", chain, { signer });
 
     const callbackUrl = `${this.config.botPublicUrl}/api/connect/${handshake.token}/callback`;
     const url = buildAuthUrl({
       config: this.config,
+      chain,
       pubKey: signer.pubKey,
       callbackUrl,
     });
@@ -399,7 +442,7 @@ export class TelegramBot {
     await this.api.sendMessage(
       chatId,
       [
-        "Tap the button below to authorize the bot.",
+        `Tap the button below to authorize the bot on ${chain}.`,
         "",
         "Cartridge opens in your browser, you sign in (passkey / google / etc.) and approve the session policies. When done, return to this chat — I'll confirm the connection here.",
       ].join("\n"),
@@ -408,19 +451,24 @@ export class TelegramBot {
   }
 
   private async disconnect(chatId: string): Promise<void> {
-    const existing = await this.sessions.get(chatId);
+    const chain = await this.chatStates.getChain(chatId);
+    const existing = await this.sessions.get(chatId, chain);
     if (!existing) {
-      await this.api.sendMessage(chatId, "No session to disconnect.");
+      await this.api.sendMessage(chatId, `No session on ${chain} to disconnect.`);
       return;
     }
-    await this.sessions.delete(chatId);
-    await this.api.sendMessage(chatId, `Disconnected ${existing.session.username}. Run /connect to authorize again.`);
+    await this.sessions.delete(chatId, chain);
+    await this.api.sendMessage(
+      chatId,
+      `Disconnected ${existing.session.username} on ${chain}. Run /connect to authorize again.`,
+    );
   }
 
   private async whoami(chatId: string): Promise<void> {
-    const session = await this.sessions.get(chatId);
+    const chain = await this.chatStates.getChain(chatId);
+    const session = await this.sessions.get(chatId, chain);
     if (!session) {
-      await this.api.sendMessage(chatId, "Not connected. Run /connect to authorize.");
+      await this.api.sendMessage(chatId, `Not connected on ${chain}. Run /connect to authorize.`);
       return;
     }
     const expiresAt = new Date(Number(session.session.expiresAt) * 1000);
@@ -450,10 +498,10 @@ function shortAddr(addr: string): string {
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
 
-function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch"): string {
-  if (reason === "no_session") return "Not connected — run /connect first.";
-  if (reason === "expired") return "Your session expired. Run /connect to authorize again.";
-  return "Your session doesn't cover this action. Run /connect again to widen consent.";
+function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch", chain: Chain): string {
+  if (reason === "no_session") return `Not connected on ${chain} — run /connect first.`;
+  if (reason === "expired") return `Your session on ${chain} expired. Run /connect to authorize again.`;
+  return `Your session on ${chain} doesn't cover this action. Run /connect again to widen consent.`;
 }
 
 function claimUsage(): string {

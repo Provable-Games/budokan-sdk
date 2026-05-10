@@ -12,6 +12,7 @@ import { ec, encode, stark } from "starknet";
 import { signerToGuid } from "@cartridge/controller-wasm";
 
 import type { Config } from "./config.ts";
+import type { Chain } from "./chat-state.ts";
 import { CHAINS } from "@provable-games/budokan-sdk";
 import { parsedPoliciesFor } from "./policies.ts";
 
@@ -34,15 +35,16 @@ export function generateSessionKeypair(): SessionKeypair {
 
 export function buildAuthUrl(args: {
   config: Config;
+  chain: Chain;
   pubKey: string;
   callbackUrl: string;
 }): string {
-  const { config, pubKey, callbackUrl } = args;
-  const rpcUrl = config.rpcUrl ?? CHAINS[config.chain]?.rpcUrl;
+  const { config, chain, pubKey, callbackUrl } = args;
+  const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
   if (!rpcUrl) {
-    throw new Error(`No RPC URL for chain '${config.chain}'`);
+    throw new Error(`No RPC URL for chain '${chain}'`);
   }
-  const policies = parsedPoliciesFor(config.chain, config.budokanAddress);
+  const policies = parsedPoliciesFor(chain, config.budokanAddress);
 
   // Match the URL shape produced by SessionProvider's connect() in
   // controller/packages/controller/src/session/provider.ts. Cartridge expects

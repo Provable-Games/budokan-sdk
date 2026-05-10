@@ -6,12 +6,20 @@
 
 import { randomUUID } from "node:crypto";
 
+import type { Chain } from "./chat-state.ts";
+
 export type HandshakeMode = "connect" | "tx";
 
 export interface HandshakeToken {
   token: string;
   chatId: string;
   mode: HandshakeMode;
+  /**
+   * Chain at the moment the token was minted. Carried on the token so a
+   * /chain switch mid-flow doesn't redirect the auth into a different
+   * namespace than where the user thought they were connecting.
+   */
+  chain: Chain;
   /** Unix ms */
   expiresAt: number;
   /**
@@ -60,6 +68,7 @@ export class HandshakeStore {
   mint(
     chatId: string,
     mode: HandshakeMode,
+    chain: Chain,
     options: { signer?: HandshakeToken["signer"]; payload?: TxPayload } = {},
   ): HandshakeToken {
     const token = randomUUID();
@@ -67,6 +76,7 @@ export class HandshakeStore {
       token,
       chatId,
       mode,
+      chain,
       expiresAt: Date.now() + this.ttlMs,
       signer: options.signer,
       payload: options.payload,

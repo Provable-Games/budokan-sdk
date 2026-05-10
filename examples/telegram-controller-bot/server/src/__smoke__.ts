@@ -12,7 +12,8 @@ import { SessionStore } from "./session-store.ts";
 import { buildHttpServer } from "./http.ts";
 import type { TelegramApi } from "./telegram-api.ts";
 import type { Config } from "./config.ts";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -81,7 +82,7 @@ async function main() {
 
   let mintedToken: string;
   await check("Mint connect token + GET returns policies", async () => {
-    const handshake = handshakes.mint("123456", "connect");
+    const handshake = handshakes.mint("123456", "connect", "mainnet");
     mintedToken = handshake.token;
     const res = await fetch(`${baseUrl}/api/connect/${handshake.token}`);
     if (!res.ok) throw new Error(`status ${res.status}`);
@@ -93,7 +94,7 @@ async function main() {
   });
 
   await check("POST /api/connect/<token> with bad body returns 400", async () => {
-    const handshake = handshakes.mint("999999", "connect");
+    const handshake = handshakes.mint("999999", "connect", "mainnet");
     const res = await fetch(`${baseUrl}/api/connect/${handshake.token}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -122,7 +123,7 @@ async function main() {
     if (!body.ok) throw new Error("not ok");
 
     // Persisted to filesystem
-    const stored = await sessions.get("123456");
+    const stored = await sessions.get("123456", "mainnet");
     if (!stored) throw new Error("session not persisted");
     if (stored.session.username !== "smokeuser") throw new Error("wrong username persisted");
 
@@ -142,8 +143,8 @@ async function main() {
   });
 
   await check("Session deletion clears the file", async () => {
-    await sessions.delete("123456");
-    const after = await sessions.get("123456");
+    await sessions.delete("123456", "mainnet");
+    const after = await sessions.get("123456", "mainnet");
     if (after !== null) throw new Error("session still present");
   });
 
@@ -157,7 +158,7 @@ async function main() {
   });
 
   await check("Callback without startapp returns 400 HTML", async () => {
-    const handshake = handshakes.mint("777777", "connect", {
+    const handshake = handshakes.mint("777777", "connect", "mainnet", {
       signer: { privKey: "0xaa", pubKey: "0xbb", sessionKeyGuid: "0xcc" },
     });
     const res = await fetch(`${baseUrl}/api/connect/${handshake.token}/callback`);
@@ -167,7 +168,7 @@ async function main() {
   });
 
   await check("Callback with malformed startapp returns 400 HTML", async () => {
-    const handshake = handshakes.mint("888888", "connect", {
+    const handshake = handshakes.mint("888888", "connect", "mainnet", {
       signer: { privKey: "0xaa", pubKey: "0xbb", sessionKeyGuid: "0xcc" },
     });
     const res = await fetch(`${baseUrl}/api/connect/${handshake.token}/callback?startapp=not-base64-json`);
@@ -177,7 +178,7 @@ async function main() {
   });
 
   await check("Callback with valid startapp persists session, fires chat notify", async () => {
-    const handshake = handshakes.mint("555555", "connect", {
+    const handshake = handshakes.mint("555555", "connect", "mainnet", {
       signer: { privKey: "0xaaaa", pubKey: "0xbbbb", sessionKeyGuid: "0xcccc" },
     });
     const sessionPayload = {
@@ -194,7 +195,7 @@ async function main() {
     const text = await res.text();
     if (!text.includes("Connected as slotuser")) throw new Error("missing success html");
 
-    const stored = await sessions.get("555555");
+    const stored = await sessions.get("555555", "mainnet");
     if (!stored) throw new Error("session not persisted");
     if (stored.session.username !== "slotuser") throw new Error("wrong username");
     if (stored.signer.privKey !== "0xaaaa") throw new Error("privKey not preserved from handshake");
@@ -203,6 +204,84 @@ async function main() {
     await new Promise((r) => setTimeout(r, 20));
     if (fakeTelegram.sent.length === 0) throw new Error("no chat notify");
     if (fakeTelegram.sent[0]?.chatId !== "555555") throw new Error("notify went to wrong chat");
+  });
+
+  // --- Per-chat chain + storage namespacing ---
+
+  await check("Legacy session layout migrates into <chain>/", async () => {
+    // Set up a fresh tmpdir + SessionStore so the migration is observable
+    // without colliding with what the smoke already created.
+    const legacyDir = await mkdtemp(join(tmpdir(), "telegram-bot-legacy-"));
+    try {
+      const legacySessionFile = join(legacyDir, "sessions", "111111", "session.json");
+      await mkdir(join(legacyDir, "sessions", "111111"), { recursive: true });
+      await writeFile(legacySessionFile, JSON.stringify({
+        signer: { privKey: "0x1", pubKey: "0x2" },
+        session: {
+          username: "legacy",
+          address: "0x" + "a".repeat(64),
+          ownerGuid: "0x" + "b".repeat(40),
+          expiresAt: String(Math.floor(Date.now() / 1000) + 3600),
+          guardianKeyGuid: "0x0",
+          metadataHash: "0x0",
+          sessionKeyGuid: "0xc",
+        },
+        policies: { verified: false, contracts: {} },
+        chain: "mainnet",
+      }));
+
+      const store = new SessionStore(legacyDir);
+      const result = await store.migrateLegacyLayout("mainnet");
+      if (result.migrated !== 1) throw new Error(`expected 1 migrated, got ${result.migrated}`);
+
+      // Old path is gone, new path has the file.
+      if (existsSync(legacySessionFile)) throw new Error("legacy file not removed");
+      const newFile = join(legacyDir, "sessions", "mainnet", "111111", "session.json");
+      if (!existsSync(newFile)) throw new Error("new file not present");
+
+      // Re-running is idempotent (no double-migrate).
+      const second = await store.migrateLegacyLayout("mainnet");
+      if (second.migrated !== 0) throw new Error(`re-run migrated again: ${second.migrated}`);
+
+      // SessionStore.get reads from the new path now.
+      const after = await store.get("111111", "mainnet");
+      if (!after || after.session.username !== "legacy") throw new Error("post-migration get failed");
+    } finally {
+      await rm(legacyDir, { recursive: true, force: true });
+    }
+  });
+
+  await check("Sessions are isolated per chain for the same chat", async () => {
+    const expiresAt = String(Math.floor(Date.now() / 1000) + 3600);
+    const baseSession = {
+      address: "0x" + "f".repeat(64),
+      ownerGuid: "0x" + "e".repeat(40),
+      expiresAt,
+      sessionKeyGuid: "0xdead",
+      signer: { privKey: "0x9", pubKey: "0x10" },
+    };
+
+    const mainnetHs = handshakes.mint("424242", "connect", "mainnet", {
+      signer: { privKey: "0x9", pubKey: "0x10", sessionKeyGuid: "0xdead" },
+    });
+    const sepoliaHs = handshakes.mint("424242", "connect", "sepolia", {
+      signer: { privKey: "0x9", pubKey: "0x10", sessionKeyGuid: "0xdead" },
+    });
+
+    // Use the callback path for both — that's the production path.
+    const mainnetPayload = Buffer.from(JSON.stringify({ ...baseSession, username: "main_user" })).toString("base64");
+    const sepoliaPayload = Buffer.from(JSON.stringify({ ...baseSession, username: "sepolia_user" })).toString("base64");
+
+    const r1 = await fetch(`${baseUrl}/api/connect/${mainnetHs.token}/callback?startapp=${encodeURIComponent(mainnetPayload)}`);
+    if (!r1.ok) throw new Error(`mainnet callback ${r1.status}`);
+    const r2 = await fetch(`${baseUrl}/api/connect/${sepoliaHs.token}/callback?startapp=${encodeURIComponent(sepoliaPayload)}`);
+    if (!r2.ok) throw new Error(`sepolia callback ${r2.status}`);
+
+    const main = await sessions.get("424242", "mainnet");
+    const sep = await sessions.get("424242", "sepolia");
+    if (!main || main.session.username !== "main_user") throw new Error("mainnet session missing or wrong");
+    if (!sep || sep.session.username !== "sepolia_user") throw new Error("sepolia session missing or wrong");
+    if (main.chain !== "mainnet" || sep.chain !== "sepolia") throw new Error("chain field mis-set");
   });
 
   await app.close();

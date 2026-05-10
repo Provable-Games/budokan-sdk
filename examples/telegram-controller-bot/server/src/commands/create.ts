@@ -14,6 +14,7 @@
 // telegram.ts checks isPending(chatId) before falling through to commands.
 
 import type { Config } from "../config.ts";
+import type { Chain } from "../chat-state.ts";
 import type { TelegramApi } from "../telegram-api.ts";
 import { buildCreateTournamentCall, type CreateTournamentArgs } from "../budokan-calls.ts";
 import { resolveAccount } from "../controller-account.ts";
@@ -35,6 +36,9 @@ type Step =
 
 interface State {
   step: Step;
+  // Chain is locked at /create start so a /chain switch mid-flow doesn't
+  // route the create call to a different network than the user thought.
+  chain: Chain;
   // Filled in as the user answers; types are normalized at parse time.
   name?: string;
   description?: string;
@@ -60,12 +64,12 @@ export function cancel(chatId: string): boolean {
 }
 
 /** Kick off a fresh /create flow. Replies via api. */
-export async function start(api: TelegramApi, chatId: string): Promise<void> {
-  states.set(chatId, { step: "name" });
+export async function start(api: TelegramApi, chatId: string, chain: Chain): Promise<void> {
+  states.set(chatId, { step: "name", chain });
   await api.sendMessage(
     chatId,
     [
-      "Let's create a tournament. I'll ask one thing at a time. /cancel to abort.",
+      `Let's create a tournament on ${chain}. I'll ask one thing at a time. /cancel to abort.`,
       "",
       "Tournament name? (≤31 characters, ASCII)",
     ].join("\n"),
@@ -234,21 +238,22 @@ export async function handleAnswer(
 }
 
 async function execute(api: TelegramApi, config: Config, chatId: string, state: State): Promise<void> {
-  // The session must still be valid + cover create_tournament.
-  const result = await resolveAccount(chatId, config);
+  // The session must still be valid + cover create_tournament on the chain
+  // the user started this flow on.
+  const result = await resolveAccount(chatId, state.chain, config);
   if (!result.ok) {
     await api.sendMessage(
       chatId,
       result.reason === "no_session"
-        ? "Not connected — run /connect first."
-        : "Your session has expired or doesn't cover this action. Run /connect again.",
+        ? `Not connected on ${state.chain} — run /connect first.`
+        : `Your session on ${state.chain} has expired or doesn't cover this action. Run /connect again.`,
     );
     return;
   }
 
-  const budokanAddress = config.budokanAddress ?? CHAINS[config.chain]?.budokanAddress;
+  const budokanAddress = config.budokanAddress ?? CHAINS[state.chain]?.budokanAddress;
   if (!budokanAddress) {
-    await api.sendMessage(chatId, "Internal error: no Budokan address configured for this chain.");
+    await api.sendMessage(chatId, `Internal error: no Budokan address configured for ${state.chain}.`);
     return;
   }
 

@@ -20,6 +20,7 @@ import SessionProvider from "@cartridge/controller/session/node";
 import { CHAINS } from "@provable-games/budokan-sdk";
 
 import type { Config } from "./config.ts";
+import type { Chain } from "./chat-state.ts";
 import { buildSessionPolicies } from "./policies.ts";
 
 // Minimal structural interface for the bits of the account we use.
@@ -61,17 +62,19 @@ export type AccountResult =
  *   policy bundle has grown since the session was authorized (the user
  *   would need to re-/connect to widen consent).
  */
-export async function resolveAccount(chatId: string, config: Config): Promise<AccountResult> {
-  const basePath = join(config.dataDir, "sessions", chatId);
-  const rpcUrl = config.rpcUrl ?? CHAINS[config.chain]?.rpcUrl;
+export async function resolveAccount(chatId: string, chain: Chain, config: Config): Promise<AccountResult> {
+  // Sessions are namespaced by chain on disk:
+  //   <dataDir>/sessions/<chain>/<chatId>/session.json
+  const basePath = join(config.dataDir, "sessions", chain, chatId);
+  const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
   if (!rpcUrl) {
-    throw new Error(`No RPC URL configured for chain '${config.chain}'.`);
+    throw new Error(`No RPC URL configured for chain '${chain}'.`);
   }
 
   const provider = new SessionProvider({
     rpc: rpcUrl,
-    chainId: chainIdFor(config.chain),
-    policies: buildSessionPolicies(config.chain, config.budokanAddress),
+    chainId: chainIdFor(chain),
+    policies: buildSessionPolicies(chain, config.budokanAddress),
     basePath,
   });
 
@@ -99,7 +102,7 @@ export async function resolveAccount(chatId: string, config: Config): Promise<Ac
   };
 }
 
-export function chainIdFor(chain: "mainnet" | "sepolia"): constants.StarknetChainId {
+export function chainIdFor(chain: Chain): constants.StarknetChainId {
   return chain === "mainnet"
     ? constants.StarknetChainId.SN_MAIN
     : constants.StarknetChainId.SN_SEPOLIA;

@@ -4,6 +4,7 @@
 // header comment with a pointer to the relevant section.
 
 import { loadConfig } from "./config.ts";
+import { ChatStateStore } from "./chat-state.ts";
 import { HandshakeStore } from "./handshake.ts";
 import { SessionStore } from "./session-store.ts";
 import { buildHttpServer } from "./http.ts";
@@ -13,8 +14,18 @@ async function main() {
   const config = loadConfig();
   const handshakes = new HandshakeStore();
   const sessions = new SessionStore(config.dataDir);
+  const chatStates = new ChatStateStore(config.dataDir, config.chain);
 
-  const bot = new TelegramBot(config, handshakes, sessions);
+  // One-shot migration from the pre-chain-namespaced session layout.
+  // Idempotent on subsequent boots.
+  const migration = await sessions.migrateLegacyLayout(config.chain);
+  if (migration.migrated > 0 || migration.skipped > 0) {
+    console.log(
+      `Session migration: ${migration.migrated} moved into <chain>/, ${migration.skipped} skipped (already present or unreadable).`,
+    );
+  }
+
+  const bot = new TelegramBot(config, handshakes, sessions, chatStates);
   const http = await buildHttpServer({
     config,
     handshakes,
@@ -45,7 +56,7 @@ async function main() {
   console.log(`HTTP listening on :${config.httpPort}`);
   console.log(`BOT_PUBLIC_URL=${config.botPublicUrl}`);
   console.log(`MINIAPP_URL=${config.miniAppUrl}`);
-  console.log(`Chain: ${config.chain}`);
+  console.log(`Default chain: ${config.chain} (per-chat overrides via /chain)`);
 
   // Telegram long-poll runs until shutdown(); main() resolves only on exit.
   await bot.start();
