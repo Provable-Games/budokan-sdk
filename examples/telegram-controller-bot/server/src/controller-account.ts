@@ -17,11 +17,11 @@
 import { join } from "node:path";
 import { constants } from "starknet";
 import SessionProvider from "@cartridge/controller/session/node";
-import { CHAINS } from "@provable-games/budokan-sdk";
 
 import type { Config } from "./config.ts";
 import type { Chain } from "./chat-state.ts";
 import { buildSessionPolicies } from "./policies.ts";
+import { keychainSafeRpcUrl } from "./cartridge-link.ts";
 
 // Minimal structural interface for the bits of the account we use.
 // @cartridge/controller bundles its own starknet@8, while we import
@@ -66,10 +66,12 @@ export async function resolveAccount(chatId: string, chain: Chain, config: Confi
   // Sessions are namespaced by chain on disk:
   //   <dataDir>/sessions/<chain>/<chatId>/session.json
   const basePath = join(config.dataDir, "sessions", chain, chatId);
-  const rpcUrl = config.rpcUrl ?? CHAINS[chain]?.rpcUrl;
-  if (!rpcUrl) {
-    throw new Error(`No RPC URL configured for chain '${chain}'.`);
-  }
+  // Use the same RPC the auth flow uses — Cartridge's own endpoint. The
+  // budokan-sdk default for sepolia was Blast in v0.1.23, which starknet.js
+  // can't always parse responses from ("code 131: data did not match any
+  // variant of untagged enum JsonRpcResponse" at execute time). BUDOKAN_RPC_URL
+  // override still wins.
+  const rpcUrl = keychainSafeRpcUrl(chain, config.rpcUrl);
 
   const provider = new SessionProvider({
     rpc: rpcUrl,
