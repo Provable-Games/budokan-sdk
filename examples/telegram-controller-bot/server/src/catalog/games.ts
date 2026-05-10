@@ -91,10 +91,13 @@ function getClient(chain: Chain): DenshokanClient {
 }
 
 /**
- * List games registered with denshokan on the given chain. Returns an
- * empty array on indexer failure (caller should treat as "no games").
+ * List games for a chain. Same intersection the budokan client applies:
+ * denshokan registry ∩ whitelist. A game must be both:
+ *   1. Registered with denshokan (so settings are queryable), AND
+ *   2. On our whitelist (so we have UX metadata + know we support it)
  *
- * Sorted by name for stable numbering across reloads.
+ * Returns an empty array on indexer failure (caller should treat as
+ * "no games"). Sorted by name for stable numbering across reloads.
  */
 export async function gamesForChain(chain: Chain): Promise<Game[]> {
   let result;
@@ -103,18 +106,19 @@ export async function gamesForChain(chain: Chain): Promise<Game[]> {
   } catch {
     return [];
   }
-  return result.data
-    .map((g): Game => {
-      const meta = METADATA[g.contractAddress.toLowerCase()] ?? {};
-      return {
-        contractAddress: g.contractAddress,
-        name: g.name,
-        description: g.description,
-        imageUrl: g.imageUrl,
-        ...meta,
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const games: Game[] = [];
+  for (const g of result.data) {
+    const meta = METADATA[g.contractAddress.toLowerCase()];
+    if (!meta) continue; // Not whitelisted → hide from the picker.
+    games.push({
+      contractAddress: g.contractAddress,
+      name: g.name,
+      description: g.description,
+      imageUrl: g.imageUrl,
+      ...meta,
+    });
+  }
+  return games.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Look up a game by contract address. Used by /enter and /tournament displays. */
