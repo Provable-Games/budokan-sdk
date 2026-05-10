@@ -127,3 +127,14 @@ export async function findGame(chain: Chain, contractAddress: string): Promise<G
   const list = await gamesForChain(chain);
   return list.find((g) => g.contractAddress.toLowerCase() === target);
 }
+
+/**
+ * Synchronous metadata-only lookup. Returns the static metadata block from
+ * the whitelist (defaultEntryFeeToken, defaultGameFeePercentage,
+ * controllerOnly). Doesn't hit the indexer — for callers that already have
+ * a Game from the picker but need metadata fields outside the registry
+ * shape (e.g. game creator fee % at /create execute time).
+ */
+export function gameMetadataFor(contractAddress: string): GameMetadata | undefined {
+  return METADATA[contractAddress.toLowerCase()];
+}

@@ -22,11 +22,13 @@ import {
   buildErc20ApproveCall,
   type Call,
   type CreateTournamentArgs,
+  type DistributionSpec,
+  type EntryFeeArgs,
 } from "../budokan-calls.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { CHAINS } from "@provable-games/budokan-sdk";
 
-import { gamesForChain, type Game } from "../catalog/games.ts";
+import { gamesForChain, gameMetadataFor, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, type GameSettingDetails } from "../catalog/settings.ts";
 import { fetchVoyagerBalances, type VoyagerTokenBalance } from "../voyager.ts";
@@ -42,6 +44,10 @@ type Step =
   | "entryFeeChoice"
   | "entryFeeToken"
   | "entryFeeAmount"
+  | "entryFeeCreatorShare"
+  | "entryFeeRefundShare"
+  | "entryFeeDistCount"
+  | "entryFeeDistType"
   | "prizesChoice"
   | "prizesPick"
   | "prizesAmount"
@@ -130,9 +136,14 @@ interface State {
   customScheduleStyle?: "fixed" | "open";
   leaderboardAscending?: boolean;
   gameMustBeOver?: boolean;
-  // Entry fee
+  // Entry fee — collected progressively when user opts in.
   entryFeeToken?: Erc20Token;
-  entryFeeAmount?: string;     // raw u256 (decimal string)
+  entryFeeAmount?: string;          // raw u128 (decimal string)
+  entryFeeCreatorBps?: number;      // tournament creator cut in basis points
+  entryFeeGameBps?: number;         // game creator cut, locked from registry minimum
+  entryFeeRefundBps?: number;       // refund share for non-placers
+  entryFeeDistType?: "linear" | "exponential" | "uniform";
+  entryFeeDistCount?: number;       // # placements that share the leaderboard pool
   // Prizes — picked from the user's wallet balances.
   voyagerBalances?: VoyagerTokenBalance[];
   prizesSoFar: PrizeSpec[];
@@ -206,6 +217,14 @@ export async function handleAnswer(
       return handleEntryFeeToken(api, config, state, chatId, trimmed);
     case "entryFeeAmount":
       return handleEntryFeeAmount(api, config, state, chatId, trimmed);
+    case "entryFeeCreatorShare":
+      return handleEntryFeeCreatorShare(api, config, state, chatId, trimmed);
+    case "entryFeeRefundShare":
+      return handleEntryFeeRefundShare(api, config, state, chatId, trimmed);
+    case "entryFeeDistCount":
+      return handleEntryFeeDistCount(api, config, state, chatId, trimmed);
+    case "entryFeeDistType":
+      return handleEntryFeeDistType(api, config, state, chatId, trimmed);
     case "prizesChoice":
       return handlePrizesChoice(api, config, state, chatId, trimmed);
     case "prizesPick":
@@ -489,13 +508,93 @@ async function handleEntryFeeToken(api: TelegramApi, _config: Config, state: Sta
   await api.sendMessage(chatId, `Entry fee per player in ${state.entryFeeToken!.symbol}? (decimal, e.g. '0.5' or '10')`);
 }
 
-async function handleEntryFeeAmount(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+async function handleEntryFeeAmount(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
   const raw = parseTokenAmount(input, state.entryFeeToken!.decimals);
   if (raw === null) {
     await api.sendMessage(chatId, "Couldn't parse that. Try '0.5' or '10'.");
     return;
   }
   state.entryFeeAmount = raw;
+
+  // Lock the game creator cut from the static whitelist. Matches the client
+  // pattern (Math.max(minGameFee, value)) — the registry-side minimum is
+  // checked in _assert_game_fee_met on chain, so we use the whitelist
+  // default as our floor and don't ask the user (they can't go lower).
+  const meta = gameMetadataFor(state.game!.contractAddress);
+  const gamePct = meta?.defaultGameFeePercentage ?? 1;
+  state.entryFeeGameBps = Math.round(gamePct * 100);
+
+  state.step = "entryFeeCreatorShare";
+  await api.sendMessage(
+    chatId,
+    [
+      `Game creator cut: ${gamePct}% (locked from the registry minimum).`,
+      "",
+      "Tournament creator cut? (% of each entry that goes to you, default 0)",
+    ].join("\n"),
+  );
+}
+
+async function handleEntryFeeCreatorShare(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const pct = parsePercent(input);
+  if (pct === null) {
+    await api.sendMessage(chatId, "Must be a number 0–100. Try again.");
+    return;
+  }
+  state.entryFeeCreatorBps = Math.round(pct * 100);
+  state.step = "entryFeeRefundShare";
+  await api.sendMessage(
+    chatId,
+    "Player refund cut? (% refunded to non-placers, default 0)",
+  );
+}
+
+async function handleEntryFeeRefundShare(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const pct = parsePercent(input);
+  if (pct === null) {
+    await api.sendMessage(chatId, "Must be a number 0–100. Try again.");
+    return;
+  }
+  // Validate the cumulative shares leave room for the leaderboard pool.
+  const sum = (state.entryFeeCreatorBps ?? 0) + (state.entryFeeGameBps ?? 0) + Math.round(pct * 100);
+  if (sum >= 10000) {
+    await api.sendMessage(
+      chatId,
+      `Cuts add up to ${(sum / 100).toFixed(2)}% — that leaves nothing for the leaderboard pool. Lower one of them.`,
+    );
+    return;
+  }
+  state.entryFeeRefundBps = Math.round(pct * 100);
+  state.step = "entryFeeDistCount";
+  await api.sendMessage(chatId, "How many top placements share the prize pool? (e.g. 10)");
+}
+
+async function handleEntryFeeDistCount(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
+  if (!/^\d+$/.test(input)) { await api.sendMessage(chatId, "Send a positive integer."); return; }
+  const n = Number(input);
+  if (n <= 0 || n > 1000) {
+    await api.sendMessage(chatId, "Must be 1–1000.");
+    return;
+  }
+  state.entryFeeDistCount = n;
+  state.step = "entryFeeDistType";
+  await api.sendMessage(
+    chatId,
+    [
+      "Distribution shape:",
+      "  1. Linear (1st gets a bit more, decreases steadily)",
+      "  2. Exponential (1st gets way more, drops off fast)",
+      "  3. Uniform (equal split across all paid placements)",
+      "",
+      "Reply with a number.",
+    ].join("\n"),
+  );
+}
+
+async function handleEntryFeeDistType(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const idx = parsePickIndex(input, 3);
+  if (idx === null) { await api.sendMessage(chatId, "Reply 1, 2, or 3."); return; }
+  state.entryFeeDistType = idx === 0 ? "linear" : idx === 1 ? "exponential" : "uniform";
   await moveToPrizes(api, config, state, chatId);
 }
 
@@ -628,6 +727,7 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
     return;
   }
   const sched = state.schedule!;
+  const entryFee = buildEntryFeeArgs(state);
   const args: CreateTournamentArgs = {
     creatorRewardsAddress: result.data.address,
     name: state.name!,
@@ -642,13 +742,13 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
       submissionDuration: sched.submission,
     },
     leaderboard: { ascending: state.leaderboardAscending!, gameMustBeOver: state.gameMustBeOver! },
+    entryFee,
   };
-  // Note: this PR ships the create-without-fee/prizes path via session.
-  // Entry fee + sponsored prizes still need add_prize follow-ups (separate
-  // tx because tournament_id isn't known until create_tournament confirms)
-  // — those land in the next PR alongside the per-tx Mini App route for
-  // approve calls. For now the chat creates the tournament; we tell the
-  // user to set fees/prizes via budokan.gg afterward if they picked them.
+  // Defining an entry fee in create_tournament doesn't move funds (the fee
+  // gets paid by entrants, not the creator), so this stays a single
+  // sessioned call. Sponsored prizes still need a separate add_prize
+  // round-trip via the Mini App tx flow because they DO move user funds —
+  // gathered above but not submitted here yet.
   const call = buildCreateTournamentCall(budokanAddress, args);
   await api.sendMessage(chatId, "Submitting tournament…");
   try {
@@ -657,10 +757,10 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
       `Tournament submitted ✓`,
       `tx: ${tx.transaction_hash}`,
     ];
-    if (state.entryFeeAmount || state.prizesSoFar.length > 0) {
+    if (state.prizesSoFar.length > 0) {
       lines.push(
         "",
-        "Note: entry-fee + sponsored-prize setup at create time isn't shipped yet — open the tournament on budokan.gg once it appears in the indexer to add those.",
+        "Note: sponsored prizes you picked aren't sent yet — that's a separate signed tx (per-token approve + add_prize). Open the tournament on budokan.gg once it appears in the indexer to add them.",
       );
     }
     lines.push("", "It will appear in /tournaments shortly.");
@@ -668,6 +768,25 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   } catch (error) {
     await api.sendMessage(chatId, `Tournament creation failed: ${formatError(error)}`);
   }
+}
+
+/** Assemble EntryFeeArgs from state, or undefined if the user opted out. */
+function buildEntryFeeArgs(state: State): EntryFeeArgs | undefined {
+  if (!state.entryFeeToken || !state.entryFeeAmount) return undefined;
+  const distType = state.entryFeeDistType ?? "exponential";
+  const distribution: DistributionSpec =
+    distType === "uniform"
+      ? { kind: "uniform" }
+      : { kind: distType, weight: 1 }; // client-units weight; encoder scales ×10
+  return {
+    tokenAddress: state.entryFeeToken.address,
+    amount: state.entryFeeAmount,
+    tournamentCreatorShare: state.entryFeeCreatorBps ?? 0,
+    gameCreatorShare: state.entryFeeGameBps ?? 0,
+    refundShare: state.entryFeeRefundBps ?? 0,
+    distribution,
+    distributionCount: state.entryFeeDistCount ?? 10,
+  };
 }
 
 // --- formatters ---
@@ -693,7 +812,15 @@ function formatSummary(s: State): string {
     `  Require game over: ${s.gameMustBeOver ? "yes" : "no"}`,
   );
   if (s.entryFeeToken && s.entryFeeAmount) {
+    const creator = (s.entryFeeCreatorBps ?? 0) / 100;
+    const game = (s.entryFeeGameBps ?? 0) / 100;
+    const refund = (s.entryFeeRefundBps ?? 0) / 100;
+    const pool = 100 - creator - game - refund;
     lines.push(`  Entry fee: ${formatTokenAmount(s.entryFeeAmount, s.entryFeeToken.decimals)} ${s.entryFeeToken.symbol}`);
+    lines.push(`    Tournament creator: ${creator}%`);
+    lines.push(`    Game creator: ${game}% (locked)`);
+    lines.push(`    Refund (non-placers): ${refund}%`);
+    lines.push(`    Leaderboard pool: ${pool.toFixed(2)}% to top ${s.entryFeeDistCount} via ${s.entryFeeDistType}`);
   } else {
     lines.push(`  Entry fee: none`);
   }
@@ -735,6 +862,16 @@ function formatDuration(seconds: number): string {
   if (seconds % 3600 === 0) return `${seconds / 3600}h`;
   if (seconds % 60 === 0) return `${seconds / 60}m`;
   return `${seconds}s`;
+}
+
+// Parse a percentage between 0 and 100 (inclusive). Accepts "5", "0.5",
+// "10.25". Returns null for negatives, non-numerics, or > 100.
+function parsePercent(s: string): number | null {
+  const t = s.trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+  return n;
 }
 
 function parseYesNo(s: string): boolean | null {

@@ -180,6 +180,30 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
  *   salt: u16
  *   metadata_value: u16
  */
+/**
+ * Distribution shape for splitting the entry-fee leaderboard pool (and
+ * sponsored prize pools later) across the top N placements. Mirrors the
+ * Cairo `Distribution` enum from game-components, with the same scaling
+ * convention as the budokan client: client passes `weight` ∈ {0..N} and
+ * the boundary scales to `weight * 10` for on-chain storage.
+ */
+export type DistributionSpec =
+  | { kind: "linear"; weight: number }      // weight in client units (1 → on-chain 10)
+  | { kind: "exponential"; weight: number } // same scaling
+  | { kind: "uniform" };
+
+export interface EntryFeeArgs {
+  tokenAddress: string;
+  amount: string;                    // raw u128 (decimal string)
+  /** All shares are basis points (0–10000). Sum + leaderboard pool = 10000. */
+  tournamentCreatorShare: number;
+  gameCreatorShare: number;
+  refundShare: number;
+  distribution: DistributionSpec;
+  /** Number of top placements that share the leaderboard pool. */
+  distributionCount: number;
+}
+
 export interface CreateTournamentArgs {
   creatorRewardsAddress: string;
   name: string;          // ≤ 31 ASCII bytes (felt252 short string)
@@ -194,6 +218,8 @@ export interface CreateTournamentArgs {
     submissionDuration: number;
   };
   leaderboard: { ascending: boolean; gameMustBeOver: boolean };
+  /** Optional. When set, encoded as Option::Some(EntryFee) on chain. */
+  entryFee?: EntryFeeArgs;
   salt?: number;
   metadataValue?: number;
 }
@@ -224,7 +250,7 @@ export function buildCreateTournamentCall(
       client_url: { type: "core::option::Option::<core::byte_array::ByteArray>", variant: { None: {} } },
       renderer: { type: "core::option::Option::<core::starknet::contract_address::ContractAddress>", variant: { None: {} } },
     },
-    entry_fee: { type: "core::option::Option::<budokan_interfaces::budokan::EntryFee>", variant: { None: {} } },
+    entry_fee: encodeEntryFeeOption(args.entryFee),
     entry_requirement: { type: "core::option::Option::<game_components_interfaces::entry_requirement::EntryRequirement>", variant: { None: {} } },
     leaderboard_config: {
       ascending: args.leaderboard.ascending,
@@ -237,5 +263,42 @@ export function buildCreateTournamentCall(
     contractAddress: budokanAddress,
     entrypoint: "create_tournament",
     calldata,
+  };
+}
+
+// On-chain weight is `client weight * 10` (matches client's
+// formatting.ts convention so percentages match between bot-created and
+// client-created tournaments).
+function scaleWeight(client: number): number {
+  return Math.round(client * 10);
+}
+
+function encodeDistribution(d: DistributionSpec) {
+  const type = "game_components_interfaces::distribution::Distribution";
+  if (d.kind === "linear") {
+    return { type, variant: { Linear: scaleWeight(d.weight) } };
+  }
+  if (d.kind === "exponential") {
+    return { type, variant: { Exponential: scaleWeight(d.weight) } };
+  }
+  return { type, variant: { Uniform: {} } };
+}
+
+function encodeEntryFeeOption(fee: EntryFeeArgs | undefined) {
+  const type = "core::option::Option::<budokan_interfaces::budokan::EntryFee>";
+  if (!fee) return { type, variant: { None: {} } };
+  return {
+    type,
+    variant: {
+      Some: {
+        token_address: fee.tokenAddress,
+        amount: fee.amount,
+        tournament_creator_share: fee.tournamentCreatorShare,
+        game_creator_share: fee.gameCreatorShare,
+        refund_share: fee.refundShare,
+        distribution: encodeDistribution(fee.distribution),
+        distribution_count: fee.distributionCount,
+      },
+    },
   };
 }
