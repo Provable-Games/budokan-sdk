@@ -44,6 +44,7 @@ type Step =
   | "entryFeeChoice"
   | "entryFeeToken"
   | "entryFeeAmount"
+  | "entryFeeGameShare"
   | "entryFeeCreatorShare"
   | "entryFeeRefundShare"
   | "entryFeeDistCount"
@@ -140,7 +141,8 @@ interface State {
   entryFeeToken?: Erc20Token;
   entryFeeAmount?: string;          // raw u128 (decimal string)
   entryFeeCreatorBps?: number;      // tournament creator cut in basis points
-  entryFeeGameBps?: number;         // game creator cut, locked from registry minimum
+  entryFeeGameBps?: number;         // game creator cut (must be ≥ registry minimum)
+  entryFeeMinGameBps?: number;      // floor — registry-side minimum from whitelist
   entryFeeRefundBps?: number;       // refund share for non-placers
   entryFeeDistType?: "linear" | "exponential" | "uniform";
   entryFeeDistCount?: number;       // # placements that share the leaderboard pool
@@ -217,6 +219,8 @@ export async function handleAnswer(
       return handleEntryFeeToken(api, config, state, chatId, trimmed);
     case "entryFeeAmount":
       return handleEntryFeeAmount(api, config, state, chatId, trimmed);
+    case "entryFeeGameShare":
+      return handleEntryFeeGameShare(api, config, state, chatId, trimmed);
     case "entryFeeCreatorShare":
       return handleEntryFeeCreatorShare(api, config, state, chatId, trimmed);
     case "entryFeeRefundShare":
@@ -516,22 +520,49 @@ async function handleEntryFeeAmount(api: TelegramApi, _config: Config, state: St
   }
   state.entryFeeAmount = raw;
 
-  // Lock the game creator cut from the static whitelist. Matches the client
-  // pattern (Math.max(minGameFee, value)) — the registry-side minimum is
-  // checked in _assert_game_fee_met on chain, so we use the whitelist
-  // default as our floor and don't ask the user (they can't go lower).
+  // Game creator cut: pull the registry-side minimum from the whitelist
+  // and use it as a floor. The contract's _assert_game_fee_met rejects
+  // anything below this; the client matches with Math.max(minGameFee,
+  // value). User can set it higher (revenue share with the game).
   const meta = gameMetadataFor(state.game!.contractAddress);
-  const gamePct = meta?.defaultGameFeePercentage ?? 1;
-  state.entryFeeGameBps = Math.round(gamePct * 100);
+  const minPct = meta?.defaultGameFeePercentage ?? 1;
+  state.entryFeeMinGameBps = Math.round(minPct * 100);
 
-  state.step = "entryFeeCreatorShare";
+  state.step = "entryFeeGameShare";
   await api.sendMessage(
     chatId,
     [
-      `Game creator cut: ${gamePct}% (locked from the registry minimum).`,
-      "",
-      "Tournament creator cut? (% of each entry that goes to you, default 0)",
+      `Game creator cut? (% of each entry that goes to the game; minimum ${minPct}%, default ${minPct}%)`,
+      "Send a number, or 'skip' to use the minimum.",
     ].join("\n"),
+  );
+}
+
+async function handleEntryFeeGameShare(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const minBps = state.entryFeeMinGameBps ?? 0;
+  let bps: number;
+  if (/^skip$/i.test(input.trim())) {
+    bps = minBps;
+  } else {
+    const pct = parsePercent(input);
+    if (pct === null) {
+      await api.sendMessage(chatId, "Must be a number 0–100, or 'skip'.");
+      return;
+    }
+    bps = Math.round(pct * 100);
+    if (bps < minBps) {
+      await api.sendMessage(
+        chatId,
+        `Below the registry minimum (${(minBps / 100).toFixed(2)}%). Send a higher number, or 'skip' for the minimum.`,
+      );
+      return;
+    }
+  }
+  state.entryFeeGameBps = bps;
+  state.step = "entryFeeCreatorShare";
+  await api.sendMessage(
+    chatId,
+    `Tournament creator cut? (% of each entry that goes to you, default 0)`,
   );
 }
 
@@ -818,7 +849,7 @@ function formatSummary(s: State): string {
     const pool = 100 - creator - game - refund;
     lines.push(`  Entry fee: ${formatTokenAmount(s.entryFeeAmount, s.entryFeeToken.decimals)} ${s.entryFeeToken.symbol}`);
     lines.push(`    Tournament creator: ${creator}%`);
-    lines.push(`    Game creator: ${game}% (locked)`);
+    lines.push(`    Game creator: ${game}%`);
     lines.push(`    Refund (non-placers): ${refund}%`);
     lines.push(`    Leaderboard pool: ${pool.toFixed(2)}% to top ${s.entryFeeDistCount} via ${s.entryFeeDistType}`);
   } else {
