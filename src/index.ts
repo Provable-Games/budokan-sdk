@@ -88,3 +88,48 @@ export type {
   WhitelistChain,
   GameDefaults,
 } from "./games/whitelist.js";
+
+// Calldata builders for Budokan's on-chain entrypoints. Use these from
+// any integration (Discord bot, CLI, agent code, …) that needs to drive
+// the same contract — they encode Cairo enums and Options correctly and
+// keep encoding gotchas in one place. See src/calldata/index.ts.
+export {
+  buildCreateTournamentCall,
+  buildEnterTournamentCall,
+  buildSubmitScoreCall,
+  buildClaimRewardCall,
+  buildAddPrizeCall,
+  buildErc20ApproveCall,
+} from "./calldata/index.js";
+export type {
+  Call,
+  CreateTournamentArgs,
+  EnterTournamentArgs,
+  AddPrizeArgs,
+  EntryFeeArgs,
+  EntryRequirementArgs,
+  EntryRequirementSpec,
+  DistributionSpec,
+  RewardType,
+} from "./calldata/index.js";
+
+// Entry-requirement validator extension presets — address lookup +
+// `Span<felt252>` config builders for the four common validators
+// (merkle, erc20Balance, opusTroves, tournament). See
+// src/extensions/index.ts.
+export {
+  extensionAddressFor,
+  u256ToLowHigh,
+  buildErc20BalanceConfig,
+  buildOpusTrovesConfig,
+  buildMerkleConfig,
+  buildTournamentValidatorConfig,
+} from "./extensions/index.js";
+export type {
+  ExtensionPresetKind,
+  Erc20BalanceConfig,
+  OpusTrovesConfig,
+  MerkleConfig,
+  TournamentValidatorConfig,
+  TournamentRequirementType,
+} from "./extensions/index.js";
