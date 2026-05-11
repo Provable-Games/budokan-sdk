@@ -21,7 +21,9 @@
 // fallback covers the post-restart case.
 
 import {
+  CHAINS,
   createBudokanClient,
+  normalizeAddress,
   type Tournament,
 } from "@provable-games/budokan-sdk";
 import { createDenshokanClient, type Token } from "@provable-games/denshokan-sdk";
@@ -209,17 +211,22 @@ async function renderLeaderboard(
   // post-filter for score===0 means we might skip a few rows. Cap at 500
   // — plenty for chat-shaped paging.
   //
-  // We *must* filter by gameAddress in addition to contextId. denshokan's
-  // contextId namespace is per-(game, context_address), not global, so
-  // asking for contextId=6 without scoping to this tournament's game
-  // returned tokens from other games' "context 6" entries (a different
-  // platform's tournament 6 on a different game contract). Pinning the
-  // game address narrows to the right set.
+  // The right scope is (minterAddress, contextId). denshokan's contextId
+  // namespace is per-minter, so asking for contextId=6 alone returns
+  // tokens from any minter that uses context 6 — including unrelated
+  // tournaments on other platforms. Budokan is the minter for tournament
+  // entries, so pinning minterAddress to the budokan contract narrows to
+  // this tournament's actual entrants regardless of which game it uses.
+  const budokanAddress = config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
+  if (!budokanAddress) {
+    await api.sendMessage(chatId, `Internal error: no Budokan address for ${chain}.`);
+    return;
+  }
   const denshokan = createDenshokanClient({ chain });
   let tokens: Token[];
   try {
     const res = await denshokan.getTokens({
-      gameAddress: tournament.gameAddress,
+      minterAddress: normalizeAddress(budokanAddress),
       contextId: Number(tournamentId),
       sort: { field: "score", direction: ascending ? "asc" : "desc" },
       limit: 500,
