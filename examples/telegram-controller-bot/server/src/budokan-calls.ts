@@ -7,7 +7,15 @@
 //   contracts/packages/interfaces/src/budokan.cairo (RewardType, EntryFeeRewardType)
 //   game-components/.../prize.cairo (PrizeType)
 
-import { byteArray, CallData, num, uint256 } from "starknet";
+import {
+  byteArray,
+  CairoCustomEnum,
+  CairoOption,
+  CairoOptionVariant,
+  CallData,
+  num,
+  uint256,
+} from "starknet";
 
 export interface Call {
   contractAddress: string;
@@ -278,9 +286,13 @@ export function buildCreateTournamentCall(
       settings_id: args.settingsId,
       soulbound: false,
       paymaster: false,
-      // Option<ByteArray> — None is tag 1, Some is tag 0.
-      client_url: { type: "core::option::Option::<core::byte_array::ByteArray>", variant: { None: {} } },
-      renderer: { type: "core::option::Option::<core::starknet::contract_address::ContractAddress>", variant: { None: {} } },
+      // Both Options are encoded via CairoOption so CallData.compile picks
+      // them up as typed wrappers (it detects isSome/isNone on the
+      // prototype). A plain {type, variant} object would not be recognized
+      // and the type-name string would be serialized as a ByteArray —
+      // i.e. garbage calldata.
+      client_url: new CairoOption<string>(CairoOptionVariant.None),
+      renderer: new CairoOption<string>(CairoOptionVariant.None),
     },
     entry_fee: encodeEntryFeeOption(args.entryFee),
     entry_requirement: encodeEntryRequirementOption(args.entryRequirement),
@@ -305,15 +317,39 @@ function scaleWeight(client: number): number {
   return Math.round(client * 10);
 }
 
-function encodeDistribution(d: DistributionSpec) {
-  const type = "game_components_interfaces::distribution::Distribution";
+/**
+ * Build a CairoCustomEnum for the Distribution enum. Variant order in
+ * Cairo: Linear, Exponential, Uniform, Custom — must match
+ * declaration order so CallData.compile resolves the right tag. We
+ * intentionally include every variant (with `undefined` for inactive
+ * ones) so CairoCustomEnum's "exactly one active variant" invariant
+ * holds and the index lookup is correct.
+ */
+function encodeDistribution(d: DistributionSpec): CairoCustomEnum {
   if (d.kind === "linear") {
-    return { type, variant: { Linear: scaleWeight(d.weight) } };
+    return new CairoCustomEnum({
+      Linear: scaleWeight(d.weight),
+      Exponential: undefined,
+      Uniform: undefined,
+      Custom: undefined,
+    });
   }
   if (d.kind === "exponential") {
-    return { type, variant: { Exponential: scaleWeight(d.weight) } };
+    return new CairoCustomEnum({
+      Linear: undefined,
+      Exponential: scaleWeight(d.weight),
+      Uniform: undefined,
+      Custom: undefined,
+    });
   }
-  return { type, variant: { Uniform: {} } };
+  // Uniform has no payload. CallData.compile emits just the variant tag
+  // when unwrap() returns an empty object.
+  return new CairoCustomEnum({
+    Linear: undefined,
+    Exponential: undefined,
+    Uniform: {},
+    Custom: undefined,
+  });
 }
 
 /**
@@ -344,43 +380,38 @@ export function buildAddPrizeCall(
   budokanAddress: string,
   args: AddPrizeArgs,
 ): Call {
+  // Inner ERC20Data: { amount: u128, distribution: Option<Distribution>,
+  // distribution_count: Option<u32> }. Both Options use CairoOption so
+  // CallData.compile recognizes them as typed wrappers.
+  const erc20Distribution = args.distribution
+    ? new CairoOption<CairoCustomEnum>(
+        CairoOptionVariant.Some,
+        encodeDistribution(args.distribution),
+      )
+    : new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
+  const erc20DistributionCount =
+    args.distribution && args.distributionCount !== undefined
+      ? new CairoOption<number>(CairoOptionVariant.Some, args.distributionCount)
+      : new CairoOption<number>(CairoOptionVariant.None);
+
+  // TokenTypeData is a Cairo enum: variants ERC20: ERC20Data, ERC721: ERC721Data.
+  // Encode as CairoCustomEnum so the variant index resolves correctly.
+  const tokenType = new CairoCustomEnum({
+    ERC20: {
+      amount: args.amount,
+      distribution: erc20Distribution,
+      distribution_count: erc20DistributionCount,
+    },
+    ERC721: undefined,
+  });
+
   const calldata = CallData.compile({
     tournament_id: args.tournamentId,
     token_address: args.tokenAddress,
-    token_type: {
-      type: "game_components_interfaces::prize::TokenTypeData",
-      variant: {
-        ERC20: {
-          amount: args.amount,
-          // Option<Distribution>
-          distribution: args.distribution
-            ? {
-                type: "core::option::Option::<game_components_interfaces::distribution::Distribution>",
-                variant: { Some: encodeDistribution(args.distribution) },
-              }
-            : {
-                type: "core::option::Option::<game_components_interfaces::distribution::Distribution>",
-                variant: { None: {} },
-              },
-          // Option<u32> distribution_count
-          distribution_count: args.distribution && args.distributionCount !== undefined
-            ? {
-                type: "core::option::Option::<core::integer::u32>",
-                variant: { Some: args.distributionCount },
-              }
-            : {
-                type: "core::option::Option::<core::integer::u32>",
-                variant: { None: {} },
-              },
-        },
-      },
-    },
+    token_type: tokenType,
     sponsor_address: args.sponsorAddress,
-    // sponsor_token_id: Option<felt252> — None for normal sponsorship.
-    sponsor_token_id: {
-      type: "core::option::Option::<core::felt252>",
-      variant: { None: {} },
-    },
+    // Option<felt252> — None for normal sponsorship.
+    sponsor_token_id: new CairoOption<string>(CairoOptionVariant.None),
   });
   return {
     contractAddress: budokanAddress,
@@ -389,58 +420,69 @@ export function buildAddPrizeCall(
   };
 }
 
-function encodeEntryRequirementOption(req: EntryRequirementArgs | undefined) {
-  const type = "core::option::Option::<game_components_interfaces::entry_requirement::EntryRequirement>";
-  if (!req) return { type, variant: { None: {} } };
-  return {
-    type,
-    variant: {
-      Some: {
-        entry_limit: req.entryLimit,
-        entry_requirement_type: encodeEntryRequirementType(req.type),
-      },
-    },
-  };
+// Cairo struct payload accepted by CallData.compile via recursive
+// flattening. The CairoCustomEnum it contains is detected by activeVariant.
+interface EntryRequirementPayload {
+  entry_limit: number;
+  entry_requirement_type: CairoCustomEnum;
 }
 
-function encodeEntryRequirementType(spec: EntryRequirementSpec) {
-  const type = "game_components_interfaces::entry_requirement::EntryRequirementType";
-  // The chain enum has lowercase variant names. starknet.js's CairoCustomEnum
-  // matches by exact key.
+function encodeEntryRequirementOption(
+  req: EntryRequirementArgs | undefined,
+): CairoOption<EntryRequirementPayload> {
+  if (!req) return new CairoOption<EntryRequirementPayload>(CairoOptionVariant.None);
+  return new CairoOption<EntryRequirementPayload>(CairoOptionVariant.Some, {
+    entry_limit: req.entryLimit,
+    entry_requirement_type: encodeEntryRequirementType(req.type),
+  });
+}
+
+function encodeEntryRequirementType(spec: EntryRequirementSpec): CairoCustomEnum {
+  // Variant order on chain (from interfaces::entry_requirement::EntryRequirementType):
+  //   token: ContractAddress, extension: ExtensionConfig
+  // The lowercase names match the Cairo declaration — starknet.js looks
+  // up the variant index by exact key.
   if (spec.kind === "token") {
-    return { type, variant: { token: spec.tokenAddress } };
+    return new CairoCustomEnum({
+      token: spec.tokenAddress,
+      extension: undefined,
+    });
   }
   if (spec.kind === "extension") {
     // ExtensionConfig { address: ContractAddress, config: Span<felt252> }.
-    // CallData.compile serializes string[] as a Span by emitting len + felts.
-    return {
-      type,
-      variant: {
-        extension: {
-          address: spec.address,
-          config: spec.config,
-        },
+    // CallData.compile serializes a string[] as a Span (len + items).
+    return new CairoCustomEnum({
+      token: undefined,
+      extension: {
+        address: spec.address,
+        config: spec.config,
       },
-    };
+    });
   }
   throw new Error(`Unsupported entry requirement kind: ${(spec as { kind: string }).kind}`);
 }
 
-function encodeEntryFeeOption(fee: EntryFeeArgs | undefined) {
-  const type = "core::option::Option::<budokan_interfaces::budokan::EntryFee>";
-  if (!fee) return { type, variant: { None: {} } };
-  return {
-    type,
-    variant: {
-      Some: {
-        token_address: fee.tokenAddress,
-        amount: fee.amount,
-        tournament_creator_share: fee.tournamentCreatorShare,
-        game_creator_share: fee.gameCreatorShare,
-        refund_share: fee.refundShare,
-        distribution: encodeDistribution(fee.distribution),
-        distribution_count: fee.distributionCount,
-      },
-    },
-  };
+interface EntryFeePayload {
+  token_address: string;
+  amount: string;
+  tournament_creator_share: number;
+  game_creator_share: number;
+  refund_share: number;
+  distribution: CairoCustomEnum;
+  distribution_count: number;
+}
+
+function encodeEntryFeeOption(
+  fee: EntryFeeArgs | undefined,
+): CairoOption<EntryFeePayload> {
+  if (!fee) return new CairoOption<EntryFeePayload>(CairoOptionVariant.None);
+  return new CairoOption<EntryFeePayload>(CairoOptionVariant.Some, {
+    token_address: fee.tokenAddress,
+    amount: fee.amount,
+    tournament_creator_share: fee.tournamentCreatorShare,
+    game_creator_share: fee.gameCreatorShare,
+    refund_share: fee.refundShare,
+    distribution: encodeDistribution(fee.distribution),
+    distribution_count: fee.distributionCount,
+  });
 }
