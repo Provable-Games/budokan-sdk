@@ -15,6 +15,7 @@
     "@fastify/cors": "^10.0.0",
     "@provable-games/budokan-sdk": "^0.1.23",
     "@provable-games/denshokan-sdk": "^0.1.33",
+    "@provable-games/metagame-sdk": "^0.1.12",
     "fastify": "^5.0.0",
     "starknet": "^9.2.1",
     "tsx": "^4.19.0"

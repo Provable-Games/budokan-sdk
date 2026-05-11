@@ -1,9 +1,7 @@
 // Entry-requirement validator extensions.
 //
-// Mirrors the deployed-addresses table in
-// `metagame-sdk/src/utils/extensions.ts` (source of truth) and adds chat-
-// shaped preset definitions for the four validators we let chat users pick
-// in /create:
+// Thin wrappers on top of @provable-games/metagame-sdk for the four
+// validator presets we let chat users pick in /create:
 //
 //   - merkle           — Allowlist of addresses via a pre-built merkle tree
 //   - erc20Balance     — Player must hold ≥ X of some ERC-20
@@ -15,10 +13,16 @@
 // metagame-extensions/packages/presets/src/entry_requirement/* for the
 // authoritative layouts). u256 values are split into low/high felt pairs.
 //
-// Addresses kept in sync by hand. If we add a metagame-sdk dependency to
-// the bot we should swap this out for `getExtensionAddresses()`.
+// Validator addresses come from metagame-sdk's getExtensionAddresses so
+// we stay in sync with the rest of the ecosystem without duplicating the
+// table.
+
+import { getExtensionAddresses } from "@provable-games/metagame-sdk";
+import { getOpusYangAddresses } from "@provable-games/metagame-sdk/rpc";
+import { RpcProvider } from "starknet";
 
 import type { Chain } from "./chat-state.ts";
+import { keychainSafeRpcUrl } from "./cartridge-link.ts";
 
 export type ExtensionPresetKind =
   | "merkle"
@@ -26,52 +30,42 @@ export type ExtensionPresetKind =
   | "opusTroves"
   | "tournament";
 
-export interface ExtensionAddresses {
-  tournamentValidator: string;
-  erc20BalanceValidator: string;
-  opusTrovesValidator: string;
-  merkleValidator: string;
+/** Map our short chain names to the chain IDs metagame-sdk uses. */
+function sdkChainId(chain: Chain): string {
+  return chain === "mainnet" ? "SN_MAIN" : "SN_SEPOLIA";
 }
-
-// Mainnet + sepolia from metagame-sdk/src/utils/extensions.ts.
-const ADDRESSES: Record<Chain, ExtensionAddresses> = {
-  mainnet: {
-    tournamentValidator:
-      "0x03b8a0c224dc393b8ea8dd51fe691b298977b27bf9926e01dc37ccbb7e25bd40",
-    erc20BalanceValidator:
-      "0x05b46bedc2134e6e5bb4b28301fd03bb6c8ccc33bd63cd831230ed8f16f460a9",
-    opusTrovesValidator:
-      "0x0391111c6c51a83e8ab3bf3c632377424c76e42cff571ac2f2c424e6077f49a3",
-    merkleValidator:
-      "0x0570d41b66f0eea3c342d570e456e51194817b8eb563dc580c63c2f3d6e505ec",
-  },
-  sepolia: {
-    tournamentValidator:
-      "0x062b54188ee532026d3151e564db8668b3587266c8c73ad2fef68c19bfd3e57e",
-    erc20BalanceValidator:
-      "0x0717524e75b53bfa3ebfb0a16014d4e6b873a22d0e979d1bcd0a3f41bd0e3523",
-    opusTrovesValidator:
-      "0x05c75a4a48f1fe37cdd49766a2b4317f4ae57e87504ac8879f150c0686490e59",
-    merkleValidator:
-      "0x0094393c9516f3a0cb16fd56aaa558d94c2da20a2f5074fd15e6f2624b5daf43",
-  },
-};
 
 export function extensionAddressFor(
   chain: Chain,
   kind: ExtensionPresetKind,
 ): string {
-  const table = ADDRESSES[chain];
+  const table = getExtensionAddresses(sdkChainId(chain));
   switch (kind) {
     case "merkle":
+      if (!table.merkleValidator) throw new Error(`No merkleValidator address for ${chain}`);
       return table.merkleValidator;
     case "erc20Balance":
+      if (!table.erc20BalanceValidator) throw new Error(`No erc20BalanceValidator address for ${chain}`);
       return table.erc20BalanceValidator;
     case "opusTroves":
+      if (!table.opusTrovesValidator) throw new Error(`No opusTrovesValidator address for ${chain}`);
       return table.opusTrovesValidator;
     case "tournament":
+      if (!table.tournamentValidator) throw new Error(`No tournamentValidator address for ${chain}`);
       return table.tournamentValidator;
   }
+}
+
+/**
+ * Live list of Opus collateral (yang) addresses from the Sentinel contract.
+ *
+ * Mainnet-only (Opus doesn't run on sepolia). Caller decides what to do
+ * with an empty list — typically: don't offer the asset-filter step.
+ */
+export async function fetchOpusYangAddresses(chain: Chain): Promise<string[]> {
+  if (chain !== "mainnet") return [];
+  const provider = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain) });
+  return getOpusYangAddresses(provider);
 }
 
 /** Split a u256 (as bigint) into [low_128, high_128] felt strings. */
@@ -79,13 +73,6 @@ export function u256ToLowHigh(value: bigint): [string, string] {
   if (value < 0n) throw new Error("u256 cannot be negative");
   const MASK = (1n << 128n) - 1n;
   return [(value & MASK).toString(), (value >> 128n).toString()];
-}
-
-/** Parse a decimal string to bigint. Throws on invalid input. */
-export function parseDecimalToBigint(input: string): bigint {
-  const t = input.trim();
-  if (!/^\d+$/.test(t)) throw new Error(`Not a non-negative integer: ${input}`);
-  return BigInt(t);
 }
 
 // ---------------------------------------------------------------------------

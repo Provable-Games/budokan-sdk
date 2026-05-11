@@ -43,6 +43,7 @@ import {
   buildOpusTrovesConfig,
   buildTournamentValidatorConfig,
   extensionAddressFor,
+  fetchOpusYangAddresses,
 } from "../extensions.ts";
 
 type Step =
@@ -70,7 +71,11 @@ type Step =
   | "entryReqExtErc20MaxEntries"
   | "entryReqExtMerkleTreeId"
   | "entryReqExtOpusThreshold"
+  | "entryReqExtOpusAssets"
+  | "entryReqExtOpusMode"
+  | "entryReqExtOpusValuePerEntry"
   | "entryReqExtOpusMaxEntries"
+  | "entryReqExtOpusBannable"
   | "entryReqExtTourReq"
   | "entryReqExtTourIds"
   | "entryReqExtTourTopN"
@@ -202,7 +207,12 @@ interface State {
   entryReqExtMerkleTreeId?: number;
   // Opus Troves preset state.
   entryReqExtOpusThresholdUsd?: number; // human USD; threshold = usd * 1e18
+  entryReqExtOpusYangs?: string[];      // available yang addresses fetched from Sentinel
+  entryReqExtOpusAssets?: string[];     // user-selected subset; empty = wildcard
+  entryReqExtOpusMode?: "fixed" | "proportional";
+  entryReqExtOpusValuePerEntryUsd?: number; // proportional mode only
   entryReqExtOpusMaxEntries?: number;
+  entryReqExtOpusBannable?: boolean;
   // Tournament preset state.
   entryReqExtTourRequirement?: TournamentRequirementType;
   entryReqExtTourIds?: string[];
@@ -308,8 +318,16 @@ export async function handleAnswer(
       return handleEntryReqExtMerkleTreeId(api, config, state, chatId, trimmed);
     case "entryReqExtOpusThreshold":
       return handleEntryReqExtOpusThreshold(api, state, chatId, trimmed);
+    case "entryReqExtOpusAssets":
+      return handleEntryReqExtOpusAssets(api, state, chatId, trimmed);
+    case "entryReqExtOpusMode":
+      return handleEntryReqExtOpusMode(api, state, chatId, trimmed);
+    case "entryReqExtOpusValuePerEntry":
+      return handleEntryReqExtOpusValuePerEntry(api, state, chatId, trimmed);
     case "entryReqExtOpusMaxEntries":
-      return handleEntryReqExtOpusMaxEntries(api, config, state, chatId, trimmed);
+      return handleEntryReqExtOpusMaxEntries(api, state, chatId, trimmed);
+    case "entryReqExtOpusBannable":
+      return handleEntryReqExtOpusBannable(api, config, state, chatId, trimmed);
     case "entryReqExtTourReq":
       return handleEntryReqExtTourReq(api, state, chatId, trimmed);
     case "entryReqExtTourIds":
@@ -834,25 +852,157 @@ async function handleEntryReqExtOpusThreshold(api: TelegramApi, state: State, ch
     return;
   }
   state.entryReqExtOpusThresholdUsd = usd;
+  return promptEntryReqExtOpusAssets(api, state, chatId);
+}
+
+/**
+ * Asset filter. On mainnet we pull the live yang list from the Sentinel
+ * contract via metagame-sdk's RPC helper, intersect with the bot's token
+ * catalog to render readable symbols, and let the user pick a subset (or
+ * "all" for wildcard). On sepolia (no Opus) we skip this step entirely.
+ */
+async function promptEntryReqExtOpusAssets(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "entryReqExtOpusAssets";
+  if (state.chain !== "mainnet") {
+    // Opus is mainnet-only; the validator on sepolia still accepts addresses
+    // but they wouldn't be enforceable. Default to wildcard and move on.
+    state.entryReqExtOpusAssets = [];
+    return promptEntryReqExtOpusMode(api, state, chatId);
+  }
+  let yangs: string[] = [];
+  try {
+    yangs = await fetchOpusYangAddresses(state.chain);
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't fetch Opus collateral list: ${formatError(error)}\nDefaulting to wildcard (any trove qualifies).`);
+    state.entryReqExtOpusAssets = [];
+    return promptEntryReqExtOpusMode(api, state, chatId);
+  }
+  if (yangs.length === 0) {
+    await api.sendMessage(chatId, "Sentinel returned no collateral assets. Defaulting to wildcard.");
+    state.entryReqExtOpusAssets = [];
+    return promptEntryReqExtOpusMode(api, state, chatId);
+  }
+  state.entryReqExtOpusYangs = yangs;
+  const lines = [
+    "Which Opus collateral types qualify?",
+    "",
+    ...yangs.map((addr, i) => {
+      const known = findKnownToken(state.chain, addr);
+      const label = known ? known.symbol : shortHex(addr);
+      return `  ${i + 1}. ${label}`;
+    }),
+    "",
+    "Reply with comma-separated numbers (e.g. '1,3') for specific assets, or 'all' to qualify any trove.",
+  ];
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function handleEntryReqExtOpusAssets(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const yangs = state.entryReqExtOpusYangs ?? [];
+  const t = input.trim().toLowerCase();
+  if (t === "all" || t === "") {
+    state.entryReqExtOpusAssets = [];
+    return promptEntryReqExtOpusMode(api, state, chatId);
+  }
+  const parts = t.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const indices: number[] = [];
+  for (const p of parts) {
+    if (!/^\d+$/.test(p)) { await api.sendMessage(chatId, `Bad pick '${p}'. Reply '1,3' or 'all'.`); return; }
+    const idx = Number(p);
+    if (idx < 1 || idx > yangs.length) { await api.sendMessage(chatId, `Out of range: ${idx}. Pick 1–${yangs.length}.`); return; }
+    if (indices.includes(idx - 1)) continue; // dedupe
+    indices.push(idx - 1);
+  }
+  if (indices.length === 0) {
+    await api.sendMessage(chatId, "Pick at least one asset, or reply 'all'.");
+    return;
+  }
+  state.entryReqExtOpusAssets = indices.map((i) => yangs[i]!);
+  return promptEntryReqExtOpusMode(api, state, chatId);
+}
+
+async function promptEntryReqExtOpusMode(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "entryReqExtOpusMode";
+  await api.sendMessage(chatId, [
+    "How are entries granted?",
+    "  1. Fixed (every qualifying trove gets the same number of entries)",
+    "  2. Proportional (more borrowed = more entries, capped at a max)",
+    "",
+    "Reply with a number.",
+  ].join("\n"));
+}
+
+async function handleEntryReqExtOpusMode(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const idx = parsePickIndex(input, 2);
+  if (idx === null) { await api.sendMessage(chatId, "Reply 1 or 2."); return; }
+  state.entryReqExtOpusMode = idx === 0 ? "fixed" : "proportional";
+  if (state.entryReqExtOpusMode === "proportional") {
+    state.step = "entryReqExtOpusValuePerEntry";
+    await api.sendMessage(
+      chatId,
+      "CASH per entry (USD)? (e.g. '10' = 1 entry per $10 borrowed)",
+    );
+    return;
+  }
+  // Fixed mode: skip valuePerEntry, ask max entries directly.
   state.step = "entryReqExtOpusMaxEntries";
   await api.sendMessage(
     chatId,
-    "Entries per qualifying trove? (default 1 — a borrower can enter up to N times)",
+    "Entries per qualifying trove? (default 1)",
   );
 }
 
-async function handleEntryReqExtOpusMaxEntries(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+async function handleEntryReqExtOpusValuePerEntry(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
   const t = input.trim();
-  let n = 1;
+  if (!/^\d+(\.\d+)?$/.test(t)) {
+    await api.sendMessage(chatId, "Must be a positive number like '10' or '5.5'.");
+    return;
+  }
+  const usd = Number(t);
+  if (!Number.isFinite(usd) || usd <= 0 || usd > 1_000_000_000) {
+    await api.sendMessage(chatId, "Must be > 0 and ≤ 1,000,000,000.");
+    return;
+  }
+  state.entryReqExtOpusValuePerEntryUsd = usd;
+  state.step = "entryReqExtOpusMaxEntries";
+  await api.sendMessage(
+    chatId,
+    "Max entries cap? ('0' = no cap, based purely on amount borrowed)",
+  );
+}
+
+async function handleEntryReqExtOpusMaxEntries(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const t = input.trim();
+  const proportional = state.entryReqExtOpusMode === "proportional";
+  // Proportional allows 0 (= no cap); fixed must be ≥ 1.
+  let n = proportional ? 0 : 1;
   if (t.length > 0 && !/^skip$/i.test(t)) {
     if (!/^\d+$/.test(t)) {
-      await api.sendMessage(chatId, "Must be a positive integer, or 'skip' for default 1.");
+      await api.sendMessage(chatId, "Must be a non-negative integer, or 'skip' for default.");
       return;
     }
     n = Number(t);
-    if (n < 1 || n > 1_000_000) { await api.sendMessage(chatId, "Must be 1–1,000,000."); return; }
+    const min = proportional ? 0 : 1;
+    if (n < min || n > 1_000_000) {
+      await api.sendMessage(chatId, `Must be ${min}–1,000,000.`);
+      return;
+    }
   }
   state.entryReqExtOpusMaxEntries = n;
+  state.step = "entryReqExtOpusBannable";
+  await api.sendMessage(chatId, [
+    "Allow removing invalid entries during registration?",
+    "  1. No (entries lock in once registered)",
+    "  2. Yes (entries can be removed if debt drops below threshold or quota is exceeded)",
+    "",
+    "Reply with a number.",
+  ].join("\n"));
+}
+
+async function handleEntryReqExtOpusBannable(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const idx = parsePickIndex(input, 2);
+  if (idx === null) { await api.sendMessage(chatId, "Reply 1 or 2."); return; }
+  state.entryReqExtOpusBannable = idx === 1;
   return moveToPrizes(api, config, state, chatId);
 }
 
@@ -1378,17 +1528,24 @@ function buildEntryRequirementArgs(state: State): EntryRequirementArgs | undefin
     }
     case "opusTroves": {
       if (state.entryReqExtOpusThresholdUsd === undefined) return undefined;
-      // CASH is 18 decimals, 1:1 USD. Use Math.round on (usd * 1e18) via
-      // string scaling to avoid floating-point precision loss for inputs
-      // like 0.1 USD.
+      // CASH is 18 decimals, 1:1 USD. Use string-scaled parsing instead of
+      // Number * 1e18 to keep precision on inputs like 0.1 USD.
       const thresholdRaw = parseTokenAmount(String(state.entryReqExtOpusThresholdUsd), 18);
       if (thresholdRaw === null) return undefined;
+      const proportional = state.entryReqExtOpusMode === "proportional";
+      let valuePerEntry = 0n;
+      if (proportional) {
+        if (state.entryReqExtOpusValuePerEntryUsd === undefined) return undefined;
+        const vpeRaw = parseTokenAmount(String(state.entryReqExtOpusValuePerEntryUsd), 18);
+        if (vpeRaw === null) return undefined;
+        valuePerEntry = BigInt(vpeRaw);
+      }
       const config = buildOpusTrovesConfig({
-        assetAddresses: [],
+        assetAddresses: state.entryReqExtOpusAssets ?? [],
         threshold: BigInt(thresholdRaw),
-        valuePerEntry: 0n,
-        maxEntries: state.entryReqExtOpusMaxEntries ?? 1,
-        bannable: false,
+        valuePerEntry,
+        maxEntries: state.entryReqExtOpusMaxEntries ?? (proportional ? 0 : 1),
+        bannable: state.entryReqExtOpusBannable ?? false,
       });
       return {
         entryLimit: 0,
@@ -1510,8 +1667,23 @@ function formatEntryReqSummary(s: State): string {
     }
     case "opusTroves": {
       if (s.entryReqExtOpusThresholdUsd === undefined) return "Opus Troves (incomplete)";
-      const max = s.entryReqExtOpusMaxEntries ?? 1;
-      return `Opus: ≥ $${s.entryReqExtOpusThresholdUsd} CASH borrowed, up to ${max} ${max === 1 ? "entry" : "entries"} per trove`;
+      const assets = s.entryReqExtOpusAssets ?? [];
+      const yangs = s.entryReqExtOpusYangs ?? [];
+      let assetsClause = "any Opus collateral";
+      if (assets.length > 0) {
+        const labels = assets.map((addr) => findKnownToken(s.chain, addr)?.symbol ?? shortHex(addr));
+        assetsClause = `Opus troves backed by ${labels.join(" or ")}`;
+      } else if (yangs.length === 0 && s.chain === "mainnet") {
+        assetsClause = "any Opus collateral";
+      }
+      const proportional = s.entryReqExtOpusMode === "proportional";
+      const max = s.entryReqExtOpusMaxEntries ?? (proportional ? 0 : 1);
+      const cap = max === 0 ? "no cap" : `up to ${max} ${max === 1 ? "entry" : "entries"}`;
+      const modeClause = proportional
+        ? `1 entry per $${s.entryReqExtOpusValuePerEntryUsd ?? 0} borrowed, ${cap}`
+        : `${cap} per trove`;
+      const ban = s.entryReqExtOpusBannable ? " (entries removable during registration)" : "";
+      return `Opus: ≥ $${s.entryReqExtOpusThresholdUsd} CASH from ${assetsClause}, ${modeClause}${ban}`;
     }
     case "tournament": {
       if (!s.entryReqExtTourRequirement || !s.entryReqExtTourIds?.length) {
@@ -1605,14 +1777,17 @@ const SECTIONS: readonly SectionDef[] = [
       "entryReqChoice", "entryReqTokenAddress", "entryReqLimit",
       "entryReqExtErc20Token", "entryReqExtErc20MinBalance", "entryReqExtErc20MaxEntries",
       "entryReqExtMerkleTreeId",
-      "entryReqExtOpusThreshold", "entryReqExtOpusMaxEntries",
+      "entryReqExtOpusThreshold", "entryReqExtOpusAssets", "entryReqExtOpusMode",
+      "entryReqExtOpusValuePerEntry", "entryReqExtOpusMaxEntries", "entryReqExtOpusBannable",
       "entryReqExtTourReq", "entryReqExtTourIds", "entryReqExtTourTopN",
     ],
     clear: [
       "entryReqEnabled", "entryReqKind", "entryReqTokenAddress", "entryReqEntryLimit",
       "entryReqExtErc20Token", "entryReqExtErc20MinBalance", "entryReqExtErc20MaxEntries",
       "entryReqExtMerkleTreeId",
-      "entryReqExtOpusThresholdUsd", "entryReqExtOpusMaxEntries",
+      "entryReqExtOpusThresholdUsd", "entryReqExtOpusYangs", "entryReqExtOpusAssets",
+      "entryReqExtOpusMode", "entryReqExtOpusValuePerEntryUsd", "entryReqExtOpusMaxEntries",
+      "entryReqExtOpusBannable",
       "entryReqExtTourRequirement", "entryReqExtTourIds", "entryReqExtTourTopN",
     ],
   },
