@@ -26,6 +26,7 @@ import {
   type Call,
 } from "../budokan-calls.ts";
 import { gamesForChain } from "../catalog/games.ts";
+import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
 import { tournamentPageUrl } from "../links.ts";
 
@@ -214,12 +215,22 @@ async function execute(
     buildErc20ApproveCall(fee.token, budokanAddress, fee.amount),
     enterCall,
   ];
+  // Resolve the fee token to a symbol/decimals so the user sees
+  // "1 STRK" instead of a raw u128 + truncated hex address. Unknown
+  // tokens fall back to a short address + raw amount.
+  const token = findKnownToken(chain, fee.token);
+  const feeDisplay = token
+    ? `${formatTokenAmount(fee.amount, token.decimals)} ${token.symbol}`
+    : `${fee.amount} of ${shortAddr(fee.token)}`;
+  const tokenLabel = token
+    ? `${token.symbol} (${shortAddr(fee.token)})`
+    : shortAddr(fee.token);
   const summary = [
     `Tournament ${tournamentId} — ${tournament.name || "(unnamed)"}`,
-    `Entry fee: ${fee.amount} of ${shortAddr(fee.token)}`,
+    `Entry fee: ${feeDisplay}`,
     "",
     `Calls (${calls.length}):`,
-    `  1. approve(${shortAddr(budokanAddress)}, ${fee.amount}) on token ${shortAddr(fee.token)}`,
+    `  1. approve(${shortAddr(budokanAddress)}, ${feeDisplay}) on ${tokenLabel}`,
     `  2. enter_tournament(${tournamentId}, ...)`,
   ].join("\n");
 
@@ -232,6 +243,12 @@ async function execute(
       "Tap the button below — the Mini App will open and Cartridge will ask you to approve and submit the payment.",
       "",
       summary,
+      "",
+      // The Mini App tx flow can sometimes fail to connect Cartridge inside
+      // Telegram's webview ("did not return a connected account"). Always
+      // offer the budokan.gg link as a working fallback — same tournament,
+      // same fee, the keychain just runs in a normal browser.
+      `Or open on budokan.gg: ${tournamentPageUrl(chain, tournamentId)}`,
     ].join("\n"),
     { replyMarkup: webAppButton("Open to confirm payment", url) },
   );
@@ -289,5 +306,27 @@ function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch
 function shortAddr(addr: string): string {
   if (!addr || addr.length <= 18) return addr;
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
+}
+
+/**
+ * Format a raw u128/u256 amount string into a human-readable decimal
+ * string with no trailing zeros. Duplicated from create.ts — should
+ * move to a shared formatters module if a third caller appears.
+ */
+function formatTokenAmount(rawAmount: string, decimals: number): string {
+  let bi: bigint;
+  try {
+    bi = BigInt(rawAmount);
+  } catch {
+    return rawAmount;
+  }
+  if (decimals === 0) return bi.toString();
+  const divisor = 10n ** BigInt(decimals);
+  const whole = (bi / divisor).toString();
+  const frac = (bi % divisor)
+    .toString()
+    .padStart(decimals, "0")
+    .replace(/0+$/, "");
+  return frac.length === 0 ? whole : `${whole}.${frac}`;
 }
 
