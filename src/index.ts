@@ -71,7 +71,14 @@ export { snakeToCamel, camelToSnake } from "./utils/mappers.js";
 export { withRetry } from "./utils/retry.js";
 
 // Chains
-export { CHAINS, getChainConfig } from "./chains/constants.js";
+export {
+  CHAINS,
+  getChainConfig,
+  explorerBaseUrl,
+  explorerTxUrl,
+  explorerAddressUrl,
+  tournamentPageUrl,
+} from "./chains/constants.js";
 export type { ChainConfig } from "./chains/constants.js";
 
 // Game whitelist + per-game UX metadata. The denshokan registry is the
@@ -100,6 +107,7 @@ export {
   buildClaimRewardCall,
   buildAddPrizeCall,
   buildErc20ApproveCall,
+  parseTournamentIdFromReceipt,
 } from "./calldata/index.js";
 export type {
   Call,
@@ -111,6 +119,7 @@ export type {
   EntryRequirementSpec,
   DistributionSpec,
   RewardType,
+  ReceiptWithEvents,
 } from "./calldata/index.js";
 
 // Entry-requirement validator extension presets — address lookup +

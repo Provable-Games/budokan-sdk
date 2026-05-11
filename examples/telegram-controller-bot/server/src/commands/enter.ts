@@ -27,6 +27,7 @@ import {
 } from "../budokan-calls.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { formatError } from "../format-error.ts";
+import { tournamentPageUrl } from "../links.ts";
 
 type Step = "picker";
 
@@ -176,7 +177,7 @@ async function execute(
         "This tournament has an entry requirement (NFT-gated or extension-gated).",
         "Building a qualification proof from chat input isn't supported here.",
         "",
-        `Open: https://budokan.gg/tournament/${tournamentId}`,
+        `Open: ${tournamentPageUrl(chain, tournamentId)}`,
       ].join("\n"),
     );
     return;

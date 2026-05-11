@@ -14,6 +14,7 @@ import type { SessionStore } from "../session-store.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { formatError } from "../format-error.ts";
+import { tournamentPageUrl } from "../links.ts";
 
 const PAGE_SIZE = 5;
 
@@ -90,7 +91,7 @@ export async function tournaments(
     `(page ${page}/${totalPages}, ${total} total):`,
   ].filter(Boolean).join(" ");
 
-  const lines = [header, "", ...result.data.map((t) => formatTournamentLine(t, gameNames))];
+  const lines = [header, "", ...result.data.map((t) => formatTournamentLine(t, gameNames, chain))];
 
   if (totalPages > 1) {
     const args = [phase, page + 1].filter(Boolean).join(" ");
@@ -191,7 +192,7 @@ export async function myTournaments(
   const lines = [
     `Tournaments for ${session.session.username} on ${chain} (page ${page}/${totalPages}, ${total} total):`,
     "",
-    ...pageData.map((t) => formatTournamentLine(t, gameNames)),
+    ...pageData.map((t) => formatTournamentLine(t, gameNames, chain)),
   ];
   if (totalPages > 1 && page < totalPages) {
     lines.push("", `Reply '/my_tournaments ${page + 1}' for the next page.`);
@@ -224,12 +225,16 @@ async function fetchOwnedTournamentIds(chain: Chain, address: string): Promise<s
  * Single-line summary used by both listings. Resolves game name via the
  * whitelist when known; otherwise falls back to a short address.
  */
-function formatTournamentLine(t: Tournament, gameNames: Map<string, string>): string {
+function formatTournamentLine(
+  t: Tournament,
+  gameNames: Map<string, string>,
+  chain: Chain,
+): string {
   const gameLabel = gameNames.get(t.gameAddress.toLowerCase()) ?? shortHex(t.gameAddress);
   const entries = `${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
   return [
     `  #${t.id} ${t.name || "(unnamed)"} — ${gameLabel} · ${entries}`,
-    `     https://budokan.gg/tournament/${t.id}`,
+    `     ${tournamentPageUrl(chain, t.id)}`,
   ].join("\n");
 }
 

@@ -31,6 +31,13 @@ import {
 } from "../budokan-calls.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { CHAINS } from "@provable-games/budokan-sdk";
+import { RpcProvider } from "starknet";
+import { keychainSafeRpcUrl } from "../cartridge-link.ts";
+import {
+  explorerTxUrl,
+  parseTournamentIdFromReceipt,
+  tournamentPageUrl,
+} from "../links.ts";
 
 import { gamesForChain, gameMetadataFor, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
@@ -1431,23 +1438,71 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   // gathered above but not submitted here yet.
   const call = buildCreateTournamentCall(budokanAddress, args);
   await api.sendMessage(chatId, "Submitting tournament…");
+  let txHash: string;
   try {
     const tx = await result.data.account.execute([call]);
-    const lines = [
-      `Tournament submitted ✓`,
-      `tx: ${tx.transaction_hash}`,
-    ];
-    if (state.prizesSoFar.length > 0) {
-      lines.push(
-        "",
-        "Note: sponsored prizes you picked aren't sent yet — that's a separate signed tx (per-token approve + add_prize). Open the tournament on budokan.gg once it appears in the indexer to add them.",
-      );
-    }
-    lines.push("", "It will appear in /tournaments shortly.");
-    await api.sendMessage(chatId, lines.join("\n"));
+    txHash = tx.transaction_hash;
   } catch (error) {
     await api.sendMessage(chatId, `Tournament creation failed: ${formatError(error)}`);
+    return;
   }
+
+  // Acknowledge the submission immediately with the Voyager link; the
+  // receipt-fetch below can take a few seconds and we'd rather show the
+  // user something useful while they wait. The tournament id and page
+  // link come in a follow-up message once the receipt lands.
+  const initialLines = [
+    `Tournament submitted ✓`,
+    `tx: ${explorerTxUrl(state.chain, txHash)}`,
+  ];
+  if (state.prizesSoFar.length > 0) {
+    initialLines.push(
+      "",
+      "Note: sponsored prizes you picked aren't sent yet — that's a separate signed tx (per-token approve + add_prize). Open the tournament on budokan.gg once it appears in the indexer to add them.",
+    );
+  }
+  initialLines.push("", "Waiting for confirmation to fetch the tournament id…");
+  await api.sendMessage(chatId, initialLines.join("\n"));
+
+  // Wait for the receipt so we can pull the id off the TournamentCreated
+  // event and hand the user a direct link to the tournament page. We use
+  // a fresh RpcProvider against the same Cartridge RPC the auth flow
+  // uses — `ExecutingAccount` deliberately doesn't expose waitForTransaction.
+  let tournamentId: number | undefined;
+  try {
+    const rpcUrl = keychainSafeRpcUrl(state.chain, config.rpcUrl);
+    const provider = new RpcProvider({ nodeUrl: rpcUrl });
+    // starknet.js types waitForTransaction's return as a union of receipt
+    // shapes; cast through ReceiptWithEvents to keep the parser narrow.
+    const receipt = (await provider.waitForTransaction(txHash)) as {
+      events?: Array<{ from_address?: string; keys?: string[] }>;
+    };
+    tournamentId = parseTournamentIdFromReceipt(receipt, budokanAddress);
+  } catch (error) {
+    // Receipt fetch failed (timeout / RPC blip). Don't fail the create —
+    // the tx is already submitted; the user can find it via /tournaments
+    // once the indexer catches up.
+    await api.sendMessage(
+      chatId,
+      `Couldn't fetch the receipt: ${formatError(error)}\nIt will appear in /tournaments shortly.`,
+    );
+    return;
+  }
+
+  if (tournamentId === undefined) {
+    await api.sendMessage(
+      chatId,
+      "Confirmed, but couldn't read the tournament id from the receipt. It will appear in /tournaments shortly.",
+    );
+    return;
+  }
+  await api.sendMessage(
+    chatId,
+    [
+      `Tournament #${tournamentId} created ✓`,
+      tournamentPageUrl(state.chain, tournamentId),
+    ].join("\n"),
+  );
 }
 
 /**
