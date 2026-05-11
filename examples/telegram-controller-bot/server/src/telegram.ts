@@ -120,6 +120,9 @@ export class TelegramBot {
     if (!isCommand && enterCmd.isPending(chatId)) {
       return enterCmd.handleAnswer(this.api, this.config, this.handshakes, chatId, text);
     }
+    if (!isCommand && leaderboardCmd.isPending(chatId)) {
+      return leaderboardCmd.handleAnswer(this.api, this.config, this.chatStates, chatId, text);
+    }
     // Plain text with no pending flow — most often happens when the
     // bot was restarted (Railway redeploy) mid-picker. State is in
     // memory so it gets wiped, and the user is left typing answers
@@ -185,7 +188,11 @@ export class TelegramBot {
   }
 
   private async cancel(chatId: string): Promise<void> {
-    const cancelled = create.cancel(chatId) || addPrize.cancel(chatId) || enterCmd.cancel(chatId);
+    const cancelled =
+      create.cancel(chatId) ||
+      addPrize.cancel(chatId) ||
+      enterCmd.cancel(chatId) ||
+      leaderboardCmd.cancel(chatId);
     if (cancelled) {
       await this.api.sendMessage(chatId, "Cancelled.");
     } else {
@@ -309,7 +316,7 @@ export class TelegramBot {
         "Browse:",
         "  /tournaments [phase] [page] — list tournaments on this chain",
         "  /my_tournaments [page] — list tournaments you've entered",
-        "  /leaderboard <tournamentId> [page] — show the scores ranking for a tournament",
+        "  /leaderboard [tournamentId] [page] — show a tournament's scores ranking (no id → picker)",
         "",
         "Signed actions (require /connect first):",
         "  /create — multi-turn flow to create a tournament",
