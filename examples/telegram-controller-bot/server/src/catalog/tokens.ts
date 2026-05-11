@@ -6,6 +6,8 @@
 // For prize sponsorship (the "what's in your wallet" picker) we use
 // Voyager balances at runtime (see voyager.ts), not this list.
 
+import { normalizeAddress } from "@provable-games/budokan-sdk";
+
 import type { Chain } from "../chat-state.ts";
 
 export interface Erc20Token {
@@ -68,6 +70,13 @@ export function tokensForChain(chain: Chain): readonly Erc20Token[] {
 }
 
 export function findKnownToken(chain: Chain, address: string): Erc20Token | undefined {
-  const target = address.toLowerCase();
-  return tokensForChain(chain).find((t) => t.address.toLowerCase() === target);
+  // Normalize both sides — the indexer drops leading zeros from
+  // ContractAddress fields (e.g. STRK comes back as 0x4718…7c938d, not
+  // 0x04718…7c938d) so a plain lowercase compare misses our canonical
+  // table entries. normalizeAddress strips leading zeros then pads to 64
+  // hex chars, giving a stable key.
+  const target = normalizeAddress(address);
+  return tokensForChain(chain).find(
+    (t) => normalizeAddress(t.address) === target,
+  );
 }
