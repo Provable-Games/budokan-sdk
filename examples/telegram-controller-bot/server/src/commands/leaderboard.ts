@@ -208,10 +208,18 @@ async function renderLeaderboard(
   // Pull a wide window: we want totals to compute pagination, and the
   // post-filter for score===0 means we might skip a few rows. Cap at 500
   // — plenty for chat-shaped paging.
+  //
+  // We *must* filter by gameAddress in addition to contextId. denshokan's
+  // contextId namespace is per-(game, context_address), not global, so
+  // asking for contextId=6 without scoping to this tournament's game
+  // returned tokens from other games' "context 6" entries (a different
+  // platform's tournament 6 on a different game contract). Pinning the
+  // game address narrows to the right set.
   const denshokan = createDenshokanClient({ chain });
   let tokens: Token[];
   try {
     const res = await denshokan.getTokens({
+      gameAddress: tournament.gameAddress,
       contextId: Number(tournamentId),
       sort: { field: "score", direction: ascending ? "asc" : "desc" },
       limit: 500,
@@ -282,7 +290,15 @@ async function renderLeaderboard(
 function formatRow(rank: number, t: Token): string {
   const name = t.playerName?.trim() || `(anon ${shortAddr(t.owner)})`;
   const finished = t.gameOver ? " ✓" : "";
-  return `  ${rank}. ${t.score} · ${name} (token #${t.tokenId})${finished}`;
+  // Token IDs on this chain are packed felts ~66 chars long. Show a
+  // short head/tail so rows fit one line; the full id is on budokan.gg
+  // for anyone who needs it.
+  return `  ${rank}. ${t.score} · ${name} (token ${shortTokenId(t.tokenId)})${finished}`;
+}
+
+function shortTokenId(tokenId: string): string {
+  if (!tokenId || tokenId.length <= 14) return `#${tokenId}`;
+  return `#${tokenId.slice(0, 8)}…${tokenId.slice(-4)}`;
 }
 
 function sdkClient(config: Config, chain: Chain) {
