@@ -188,9 +188,15 @@ async function execute(
     playerAddress: session.data.address,
   });
 
-  const fee = tournament.entryFeeAmount && tournament.entryFeeToken
-    ? { token: tournament.entryFeeToken, amount: tournament.entryFeeAmount }
-    : null;
+  // Two fields can describe the entry fee: the flat summary
+  // (entryFeeAmount + entryFeeToken) and the structured entryFee JSONB
+  // blob. For freshly-created tournaments the indexer often populates
+  // the structured one first, with the flat summary catching up later.
+  // Reading only the flat summary made the bot send a bare enter call
+  // for a paid tournament — the contract's transferFrom then reverted
+  // with "ERC20: insufficient allowance". Prefer structured; fall back
+  // to the summary.
+  const fee = extractFee(tournament);
 
   if (!fee) {
     await api.sendMessage(chatId, `Entering tournament ${tournamentId}…`);
@@ -253,8 +259,25 @@ async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
 function formatPickerLine(t: Tournament, gameNames: Map<string, string>): string {
   const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
   const entries = `${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
-  const fee = t.entryFeeAmount && Number(t.entryFeeAmount) > 0 ? " · paid" : " · free";
+  const fee = extractFee(t) ? " · paid" : " · free";
   return `#${t.id} ${t.name || "(unnamed)"} — ${game}${fee} · ${entries}`;
+}
+
+/**
+ * Pull (token, amount) out of either the structured `entryFee` JSONB
+ * blob or the flat `entryFeeAmount` / `entryFeeToken` summary fields.
+ * Either can be populated alone for just-created tournaments — read
+ * both and treat as paid if any source agrees on a positive amount.
+ */
+function extractFee(t: Tournament): { token: string; amount: string } | null {
+  const structured = t.entryFee;
+  if (structured?.tokenAddress && structured.amount && Number(structured.amount) > 0) {
+    return { token: structured.tokenAddress, amount: structured.amount };
+  }
+  if (t.entryFeeToken && t.entryFeeAmount && Number(t.entryFeeAmount) > 0) {
+    return { token: t.entryFeeToken, amount: t.entryFeeAmount };
+  }
+  return null;
 }
 
 function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch", chain: Chain): string {
