@@ -15,6 +15,7 @@ import { gamesForChain } from "../catalog/games.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { formatError } from "../format-error.ts";
 import { tournamentPageUrl } from "../links.ts";
+import { formatTimeUntil, formatTopPrizes } from "../format.ts";
 
 const PAGE_SIZE = 5;
 
@@ -65,6 +66,9 @@ export async function tournaments(
       limit: PAGE_SIZE,
       offset,
       sort: "created_at",
+      // Populate prizeAggregation per tournament so we can show the top
+      // tokens inline without N+1 fetches.
+      includePrizeSummary: true,
     });
   } catch (error) {
     await api.sendMessage(chatId, `Lookup failed: ${formatError(error)}`);
@@ -76,8 +80,8 @@ export async function tournaments(
     await api.sendMessage(
       chatId,
       phase
-        ? `No ${phase} tournaments on ${chain}.${hint}`
-        : `No tournaments on ${chain}.${hint}`,
+        ? `🎯 No ${phase} tournaments on ${chain}.${hint}`
+        : `🎯 No tournaments on ${chain}.${hint}`,
     );
     return;
   }
@@ -86,12 +90,12 @@ export async function tournaments(
   const total = result.total ?? result.data.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const header = [
-    `Tournaments on ${chain}`,
+    `🏟️ Tournaments on ${chain}`,
     phase ? `· ${phase}` : "",
-    `(page ${page}/${totalPages}, ${total} total):`,
+    `· page ${page}/${totalPages} · ${total} total`,
   ].filter(Boolean).join(" ");
 
-  const lines = [header, "", ...result.data.map((t) => formatTournamentLine(t, gameNames, chain))];
+  const lines = [header, "", ...result.data.flatMap((t) => formatTournamentBlock(t, gameNames, chain))];
 
   if (totalPages > 1) {
     const args = [phase, page + 1].filter(Boolean).join(" ");
@@ -149,7 +153,7 @@ export async function myTournaments(
   if (tournamentIds.length === 0) {
     await api.sendMessage(
       chatId,
-      `No tournaments for ${session.session.username} on ${chain}.  Run /enter <id> to join one.`,
+      `🎯 No tournaments for ${session.session.username} on ${chain}.\nRun /enter to join one.`,
     );
     return;
   }
@@ -166,6 +170,7 @@ export async function myTournaments(
       limit: tournamentIds.length, // ask for all matches up front
       offset: 0,
       sort: "created_at",
+      includePrizeSummary: true,
     });
   } catch (error) {
     await api.sendMessage(chatId, `Lookup failed: ${formatError(error)}`);
@@ -177,7 +182,7 @@ export async function myTournaments(
   if (total === 0) {
     await api.sendMessage(
       chatId,
-      `No tournaments for ${session.session.username} on ${chain}. (You have ${tournamentIds.length} game tokens but none of their tournaments are indexed.)`,
+      `🎯 No tournaments for ${session.session.username} on ${chain}.\n(You have ${tournamentIds.length} game tokens but none of their tournaments are indexed.)`,
     );
     return;
   }
@@ -190,9 +195,9 @@ export async function myTournaments(
 
   const gameNames = await buildGameNameMap(chain);
   const lines = [
-    `Tournaments for ${session.session.username} on ${chain} (page ${page}/${totalPages}, ${total} total):`,
+    `🏟️ Your tournaments — ${session.session.username} on ${chain} · page ${page}/${totalPages} · ${total} total`,
     "",
-    ...pageData.map((t) => formatTournamentLine(t, gameNames, chain)),
+    ...pageData.flatMap((t) => formatTournamentBlock(t, gameNames, chain)),
   ];
   if (totalPages > 1 && page < totalPages) {
     lines.push("", `Reply '/my_tournaments ${page + 1}' for the next page.`);
@@ -222,20 +227,35 @@ async function fetchOwnedTournamentIds(chain: Chain, address: string): Promise<s
 }
 
 /**
- * Single-line summary used by both listings. Resolves game name via the
- * whitelist when known; otherwise falls back to a short address.
+ * Multi-line block summary used by both listings. Shows game, entry
+ * count, time-to-end (when known), the top 3 sponsored prizes, and a
+ * direct link. Returns an array of lines plus a blank line separator so
+ * callers can flatMap them straight into the output.
  */
-function formatTournamentLine(
+function formatTournamentBlock(
   t: Tournament,
   gameNames: Map<string, string>,
   chain: Chain,
-): string {
+): string[] {
   const gameLabel = gameNames.get(t.gameAddress.toLowerCase()) ?? shortHex(t.gameAddress);
-  const entries = `${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
-  return [
-    `  #${t.id} ${t.name || "(unnamed)"} — ${gameLabel} · ${entries}`,
-    `     ${tournamentPageUrl(chain, t.id)}`,
-  ].join("\n");
+  const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
+  // Prefer gameEndTime — when the tournament's competitive window
+  // closes. Tournaments past that point are in their submission window
+  // or finalized; the relative formatter handles past timestamps.
+  const ends = formatTimeUntil(t.gameEndTime);
+  const meta = [entries, ends].filter(Boolean).join(" · ");
+  const prizes = formatTopPrizes(t, chain);
+
+  const lines = [
+    `🎯 #${t.id} ${t.name || "(unnamed)"} — 🎮 ${gameLabel}`,
+    `   ${meta}`,
+  ];
+  if (prizes) {
+    lines.push(`   🏆 ${prizes}`);
+  }
+  lines.push(`   ${tournamentPageUrl(chain, t.id)}`);
+  lines.push("");
+  return lines;
 }
 
 /**

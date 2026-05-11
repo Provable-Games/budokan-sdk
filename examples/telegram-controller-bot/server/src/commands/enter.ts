@@ -29,7 +29,8 @@ import { buildEnterTournamentCall } from "../budokan-calls.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
-import { tournamentPageUrl } from "../links.ts";
+import { explorerTxUrl, tournamentPageUrl } from "../links.ts";
+import { formatTimeUntil, formatTopPrizes } from "../format.ts";
 
 type Step = "picker";
 
@@ -76,7 +77,9 @@ export async function start(
     // Fetch each phase, dedupe, sort by id desc (newest first).
     const results = await Promise.all(
       phasesToShow.map((phase) =>
-        sdk.getTournaments({ phase, limit: 25, sort: "created_at" }).then((r) => r.data),
+        sdk
+          .getTournaments({ phase, limit: 25, sort: "created_at", includePrizeSummary: true })
+          .then((r) => r.data),
       ),
     );
     const byId = new Map<string, Tournament>();
@@ -92,7 +95,7 @@ export async function start(
   if (tournaments.length === 0) {
     await api.sendMessage(
       chatId,
-      `No tournaments currently open on ${chain}. Try /tournaments to browse, or /create to make one.`,
+      `🎯 No tournaments currently open on ${chain}.\nTry /tournaments to browse, or /create to make one.`,
     );
     return;
   }
@@ -100,13 +103,24 @@ export async function start(
   const gameNames = await buildGameNameMap(chain);
   states.set(chatId, { step: "picker", chain, tournaments, gameNames });
 
-  const lines = [
-    `Pick a tournament to enter on ${chain}:`,
+  const lines: string[] = [
+    `🎮 Pick a tournament to enter on ${chain}:`,
     "",
-    ...tournaments.map((t, i) => `  ${i + 1}. ${formatPickerLine(t, gameNames)}`),
-    "",
-    "Reply with a number, or send '/enter <id>' to enter a specific one. /cancel to abort.",
   ];
+  tournaments.forEach((t, i) => {
+    const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
+    const feeIcon = extractFee(t) ? "💰" : "🆓";
+    const feeLabel = extractFee(t) ? "paid" : "free";
+    const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
+    const ends = formatTimeUntil(t.gameEndTime);
+    const meta = [`${feeIcon} ${feeLabel}`, entries, ends].filter(Boolean).join(" · ");
+    lines.push(`  ${i + 1}. 🎯 #${t.id} ${t.name || "(unnamed)"} — 🎮 ${game}`);
+    lines.push(`     ${meta}`);
+    const prizes = formatTopPrizes(t, chain);
+    if (prizes) lines.push(`     🏆 ${prizes}`);
+  });
+  lines.push("");
+  lines.push("Reply with a number, or send '/enter <id>' to enter a specific one. /cancel to abort.");
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
@@ -201,12 +215,20 @@ async function execute(
   const fee = extractFee(tournament);
 
   if (!fee) {
-    await api.sendMessage(chatId, `Entering tournament ${tournamentId}…`);
+    await api.sendMessage(chatId, `⏳ Entering tournament #${tournamentId}…`);
     try {
       const tx = await session.data.account.execute([enterCall]);
-      await api.sendMessage(chatId, `Entered ✓\ntx: ${tx.transaction_hash}`);
+      await api.sendMessage(
+        chatId,
+        [
+          `✅ Entered tournament #${tournamentId}`,
+          `🔗 ${explorerTxUrl(chain, tx.transaction_hash)}`,
+          "",
+          `📊 /leaderboard ${tournamentId}`,
+        ].join("\n"),
+      );
     } catch (error) {
-      await api.sendMessage(chatId, `Entry failed: ${formatError(error)}`);
+      await api.sendMessage(chatId, `❌ Entry failed: ${formatError(error)}`);
     }
     return;
   }
@@ -231,14 +253,14 @@ async function execute(
   await api.sendMessage(
     chatId,
     [
-      `Tournament ${tournamentId} — ${tournament.name || "(unnamed)"}`,
-      `Entry fee: ${feeDisplay}`,
+      `🎯 Tournament #${tournamentId} — ${tournament.name || "(unnamed)"}`,
+      `💰 Entry fee: ${feeDisplay}`,
       "",
       "Paid entries are signed on budokan.gg — Cartridge's keychain doesn't",
       "run reliably inside Telegram's in-app browser. Open the link below in",
       "your normal browser to approve and enter:",
       "",
-      tournamentPageUrl(chain, tournamentId),
+      `🔗 ${tournamentPageUrl(chain, tournamentId)}`,
     ].join("\n"),
   );
 }
@@ -260,13 +282,6 @@ async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   for (const g of games) map.set(g.contractAddress.toLowerCase(), g.name);
   return map;
-}
-
-function formatPickerLine(t: Tournament, gameNames: Map<string, string>): string {
-  const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
-  const entries = `${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
-  const fee = extractFee(t) ? " · paid" : " · free";
-  return `#${t.id} ${t.name || "(unnamed)"} — ${game}${fee} · ${entries}`;
 }
 
 /**

@@ -34,6 +34,7 @@ import { TelegramApi } from "../telegram-api.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { formatError } from "../format-error.ts";
 import { tournamentPageUrl } from "../links.ts";
+import { formatTimeUntil, formatTopPrizes, rankMedal } from "../format.ts";
 
 const PAGE_SIZE = 10;
 // Picker fetches a window of the most-recently-created tournaments
@@ -104,6 +105,8 @@ export async function leaderboard(
     const res = await sdkClient(config, chain).getTournaments({
       limit: PICKER_LIMIT,
       sort: "created_at",
+      // Same as /tournaments — surface top prizes per row.
+      includePrizeSummary: true,
     });
     tournaments = res.data;
   } catch (error) {
@@ -111,7 +114,7 @@ export async function leaderboard(
     return;
   }
   if (tournaments.length === 0) {
-    await api.sendMessage(chatId, `No tournaments on ${chain} yet.`);
+    await api.sendMessage(chatId, `🎯 No tournaments on ${chain} yet.`);
     return;
   }
   const gameNames = await buildGameNameMap(chain);
@@ -123,17 +126,22 @@ export async function leaderboard(
   }));
   pickerStates.set(chatId, { chain, tournaments: snapshot, gameNames });
 
-  const lines = [
-    `Pick a tournament to show the leaderboard for on ${chain}:`,
+  const lines: string[] = [
+    `📊 Pick a tournament to show the leaderboard for on ${chain}:`,
     "",
-    ...snapshot.map((t, i) => {
-      const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
-      const entries = `${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
-      return `  ${i + 1}. #${t.id} ${t.name} — ${game} · ${entries}`;
-    }),
-    "",
-    "Reply with a number, or send '/leaderboard <id>' to look up a specific one. /cancel to abort.",
   ];
+  tournaments.forEach((t, i) => {
+    const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
+    const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
+    const ends = formatTimeUntil(t.gameEndTime);
+    const meta = [entries, ends].filter(Boolean).join(" · ");
+    lines.push(`  ${i + 1}. 🎯 #${t.id} ${t.name || "(unnamed)"} — 🎮 ${game}`);
+    lines.push(`     ${meta}`);
+    const prizes = formatTopPrizes(t, chain);
+    if (prizes) lines.push(`     🏆 ${prizes}`);
+  });
+  lines.push("");
+  lines.push("Reply with a number, or send '/leaderboard <id>' to look up a specific one. /cancel to abort.");
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
@@ -189,9 +197,13 @@ async function renderLeaderboard(
   page: number,
 ): Promise<void> {
   // Look up the tournament for its name and leaderboard direction.
+  // Prize aggregation comes from a sibling endpoint — getTournament
+  // itself doesn't accept includePrizeSummary, so we merge in the
+  // aggregation result ourselves before formatting.
+  const sdk = sdkClient(config, chain);
   let tournament;
   try {
-    tournament = await sdkClient(config, chain).getTournament(tournamentId);
+    tournament = await sdk.getTournament(tournamentId);
   } catch (error) {
     await api.sendMessage(chatId, `Couldn't fetch tournament: ${formatError(error)}`);
     return;
@@ -199,6 +211,13 @@ async function renderLeaderboard(
   if (!tournament) {
     await api.sendMessage(chatId, `Tournament ${tournamentId} not found on ${chain}.`);
     return;
+  }
+  // Best-effort prize aggregation — failure shouldn't break the
+  // leaderboard render, just the prize line.
+  try {
+    tournament.prizeAggregation = await sdk.getTournamentPrizeAggregation(tournamentId);
+  } catch {
+    tournament.prizeAggregation = undefined;
   }
   // Default to descending (points-style). leaderboardConfig is the
   // structured source; fall back to the flat summary the indexer also
@@ -270,21 +289,27 @@ async function renderLeaderboard(
   const slice = competitors.slice(start, start + PAGE_SIZE);
   const rankFor = (i: number) => start + i + 1;
 
-  const lines = [
-    `Leaderboard — Tournament #${tournamentId}${tournament.name ? ` (${tournament.name})` : ""} on ${chain}`,
-    `Sort: ${ascending ? "lower scores win" : "higher scores win"}`,
-    "",
-    ...slice.map((t, i) => formatRow(rankFor(i), t)),
-  ];
+  const header = `📊 Leaderboard — 🎯 #${tournamentId}${tournament.name ? ` (${tournament.name})` : ""} on ${chain}`;
+  const sortLine = ascending ? "🔻 Lower scores win" : "🔺 Higher scores win";
+  const ends = formatTimeUntil(tournament.gameEndTime);
+  const prizes = formatTopPrizes(tournament, chain);
+
+  const lines: string[] = [header];
+  const meta = [sortLine, ends].filter(Boolean).join(" · ");
+  if (meta) lines.push(meta);
+  if (prizes) lines.push(`🏆 ${prizes}`);
+  lines.push("");
+  slice.forEach((t, i) => lines.push(formatRow(rankFor(i), t)));
+
   if (totalPages > 1) {
-    lines.push("", `Page ${page}/${totalPages} · ${total} competitors`);
+    lines.push("", `📄 Page ${page}/${totalPages} · 👥 ${total} competitors`);
     if (page < totalPages) {
       lines.push(`Reply '/leaderboard ${tournamentId} ${page + 1}' for the next page.`);
     }
   } else {
-    lines.push("", `${total} ${total === 1 ? "competitor" : "competitors"}`);
+    lines.push("", `👥 ${total} ${total === 1 ? "competitor" : "competitors"}`);
   }
-  lines.push("", `View on budokan.gg: ${tournamentPageUrl(chain, tournamentId)}`);
+  lines.push("", `🔗 ${tournamentPageUrl(chain, tournamentId)}`);
 
   await api.sendMessage(chatId, lines.join("\n"));
 }
@@ -296,16 +321,18 @@ async function renderLeaderboard(
  */
 function formatRow(rank: number, t: Token): string {
   const name = t.playerName?.trim() || `(anon ${shortAddr(t.owner)})`;
-  const finished = t.gameOver ? " ✓" : "";
-  // Token IDs on this chain are packed felts ~66 chars long. Show a
-  // short head/tail so rows fit one line; the full id is on budokan.gg
-  // for anyone who needs it.
-  return `  ${rank}. ${t.score} · ${name} (token ${shortTokenId(t.tokenId)})${finished}`;
+  const finished = t.gameOver ? " ✅" : "";
+  const medal = rankMedal(rank);
+  // Medal takes the rank's place for top 3; for the rest fall back to
+  // a numeric prefix. Token IDs on this chain are packed felts ~66
+  // chars long — show a short head/tail so rows fit on one line.
+  const prefix = medal ? `${medal} ` : `${rank}. `;
+  return `  ${prefix}${t.score} · ${name} (${shortTokenId(t.tokenId)})${finished}`;
 }
 
 function shortTokenId(tokenId: string): string {
-  if (!tokenId || tokenId.length <= 14) return `#${tokenId}`;
-  return `#${tokenId.slice(0, 8)}…${tokenId.slice(-4)}`;
+  if (!tokenId || tokenId.length <= 14) return `token #${tokenId}`;
+  return `token #${tokenId.slice(0, 8)}…${tokenId.slice(-4)}`;
 }
 
 function sdkClient(config: Config, chain: Chain) {

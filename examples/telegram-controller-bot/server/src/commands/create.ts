@@ -1437,13 +1437,13 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   // round-trip via the Mini App tx flow because they DO move user funds —
   // gathered above but not submitted here yet.
   const call = buildCreateTournamentCall(budokanAddress, args);
-  await api.sendMessage(chatId, "Submitting tournament…");
+  await api.sendMessage(chatId, "⏳ Submitting tournament…");
   let txHash: string;
   try {
     const tx = await result.data.account.execute([call]);
     txHash = tx.transaction_hash;
   } catch (error) {
-    await api.sendMessage(chatId, `Tournament creation failed: ${formatError(error)}`);
+    await api.sendMessage(chatId, `❌ Tournament creation failed: ${formatError(error)}`);
     return;
   }
 
@@ -1452,16 +1452,16 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   // user something useful while they wait. The tournament id and page
   // link come in a follow-up message once the receipt lands.
   const initialLines = [
-    `Tournament submitted ✓`,
-    `tx: ${explorerTxUrl(state.chain, txHash)}`,
+    `✅ Tournament submitted`,
+    `🔗 ${explorerTxUrl(state.chain, txHash)}`,
   ];
   if (state.prizesSoFar.length > 0) {
     initialLines.push(
       "",
-      "Note: sponsored prizes you picked aren't sent yet — that's a separate signed tx (per-token approve + add_prize). Open the tournament on budokan.gg once it appears in the indexer to add them.",
+      "🏆 Heads up: sponsored prizes you picked aren't sent yet — that's a separate signed tx (per-token approve + add_prize). Open the tournament on budokan.gg once it appears in the indexer to add them.",
     );
   }
-  initialLines.push("", "Waiting for confirmation to fetch the tournament id…");
+  initialLines.push("", "⏳ Waiting for confirmation to fetch the tournament id…");
   await api.sendMessage(chatId, initialLines.join("\n"));
 
   // Wait for the receipt so we can pull the id off the TournamentCreated
@@ -1499,8 +1499,10 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   await api.sendMessage(
     chatId,
     [
-      `Tournament #${tournamentId} created ✓`,
-      tournamentPageUrl(state.chain, tournamentId),
+      `🎉 Tournament #${tournamentId} created`,
+      `🔗 ${tournamentPageUrl(state.chain, tournamentId)}`,
+      "",
+      `📊 /leaderboard ${tournamentId}`,
     ].join("\n"),
   );
 }
