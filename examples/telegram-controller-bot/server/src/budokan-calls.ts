@@ -7,7 +7,7 @@
 //   contracts/packages/interfaces/src/budokan.cairo (RewardType, EntryFeeRewardType)
 //   game-components/.../prize.cairo (PrizeType)
 
-import { CallData, num, uint256 } from "starknet";
+import { byteArray, CallData, num, uint256 } from "starknet";
 
 export interface Call {
   contractAddress: string;
@@ -254,8 +254,17 @@ export function buildCreateTournamentCall(
   const calldata = CallData.compile({
     creator_rewards_address: args.creatorRewardsAddress,
     metadata: {
-      name: args.name,                  // CallData encodes short strings as felt252
-      description: args.description,    // CallData encodes ByteArray
+      // name is a felt252 (≤31 ASCII bytes). starknet.js CallData.compile
+      // packs ASCII strings into a single felt without an ABI hint, so a
+      // plain string works here.
+      name: args.name,
+      // description is a Cairo ByteArray (multi-felt: data words, pending
+      // word, pending word length). CallData.compile doesn't infer that
+      // from a plain string — encode explicitly via byteArrayFromString,
+      // same as the budokan client does. Without this the on-chain
+      // deserializer sees one felt where it expects 3+ and reverts with
+      // "Failed to deserialize param".
+      description: byteArray.byteArrayFromString(args.description),
     },
     schedule: {
       registration_start_delay: args.schedule.registrationStartDelay,
