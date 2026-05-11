@@ -258,9 +258,9 @@ export async function start(api: TelegramApi, chatId: string, chain: Chain): Pro
   }
   states.set(chatId, { step: "game", chain, prizesSoFar: [], gamesList: games });
   await api.sendMessage(chatId, [
-    `Let's create a tournament on ${chain}. /cancel to abort.`,
+    `🏟️ Let's create a tournament on ${chain}. /cancel to abort.`,
     "",
-    "Pick a game:",
+    "🎮 Pick a game:",
     ...games.map((g, i) => `  ${i + 1}. ${g.name} — ${shortHex(g.contractAddress)}`),
     "",
     "Reply with a number.",
@@ -368,7 +368,7 @@ async function handleGame(api: TelegramApi, state: State, chatId: string, input:
   state.step = "name";
   await api.sendMessage(
     chatId,
-    `Selected: ${state.game!.name} (${shortHex(state.game!.contractAddress)})\n\nTournament name? (≤31 ASCII characters)`,
+    `✅ Selected: ${state.game!.name} (${shortHex(state.game!.contractAddress)})\n\n🏷️ Tournament name? (≤31 ASCII characters)`,
   );
 }
 
@@ -383,7 +383,7 @@ async function handleName(api: TelegramApi, state: State, chatId: string, input:
   }
   state.name = input;
   state.step = "description";
-  await api.sendMessage(chatId, "Description? (free text, or send 'skip')");
+  await api.sendMessage(chatId, "📝 Description? (free text, or send 'skip')");
 }
 
 async function handleDescription(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
@@ -411,7 +411,7 @@ async function renderSettingsPage(api: TelegramApi, state: State, chatId: string
     return moveToSchedule(api, state, chatId);
   }
   const lines = [
-    `Settings for ${state.game!.name} (page ${Math.floor(offset / page.limit) + 1} of ${Math.max(1, Math.ceil(page.total / page.limit))}):`,
+    `⚙️ Settings for ${state.game!.name} (page ${Math.floor(offset / page.limit) + 1} of ${Math.max(1, Math.ceil(page.total / page.limit))}):`,
     "",
     ...page.data.map((s, i) => `  ${i + 1}. ID ${s.id}${s.name ? ` — ${s.name}` : ""}${s.description ? `\n     ${truncate(s.description, 80)}` : ""}`),
     "",
@@ -466,19 +466,19 @@ async function moveToSchedule(api: TelegramApi, state: State, chatId: string): P
   // Group presets by style so the user sees the structural choice
   // (fixed vs open registration) before picking durations.
   const lines: string[] = [
-    `Settings: ${state.settingsName}`,
+    `✅ Settings: ${state.settingsName}`,
     "",
-    "Pick a schedule preset.",
+    "🗓️ Pick a schedule preset.",
     "",
-    "Fixed registration (registration window closes before play starts):",
+    "🔒 Fixed registration (window closes before play starts):",
     ...FIXED_PRESETS.map((p, i) => `  ${i + 1}. ${p.name}`),
     "",
-    "Open registration (players can join throughout play):",
+    "🔓 Open registration (players can join throughout play):",
     ...OPEN_PRESETS.map(
       (p, i) => `  ${FIXED_PRESETS.length + i + 1}. ${p.name}`,
     ),
     "",
-    `  ${SCHEDULE_PRESETS.length + 1}. Custom (I'll ask for each window)`,
+    `  ${SCHEDULE_PRESETS.length + 1}. ⚙️ Custom (I'll ask for each window)`,
     "",
     "Reply with a number.",
   ];
@@ -583,9 +583,9 @@ async function moveToEntryFee(api: TelegramApi, state: State, chatId: string): P
   if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "entryFeeChoice";
   await api.sendMessage(chatId, [
-    "Add an entry fee?",
-    "  1. No (free entry)",
-    "  2. Yes",
+    "💰 Add an entry fee?",
+    "  1. 🆓 No (free entry)",
+    "  2. 💵 Yes",
     "",
     "Reply with a number.",
   ].join("\n"));
@@ -600,7 +600,7 @@ async function handleEntryFeeChoice(api: TelegramApi, config: Config, state: Sta
   state.step = "entryFeeToken";
   const tokens = tokensForChain(state.chain);
   await api.sendMessage(chatId, [
-    "Pick the entry-fee token:",
+    "🪙 Pick the entry-fee token:",
     ...tokens.map((t, i) => `  ${i + 1}. ${t.symbol} (${t.name})`),
     "",
     "Reply with a number.",
@@ -613,7 +613,7 @@ async function handleEntryFeeToken(api: TelegramApi, _config: Config, state: Sta
   if (idx === null) { await api.sendMessage(chatId, `Reply 1-${tokens.length}.`); return; }
   state.entryFeeToken = tokens[idx];
   state.step = "entryFeeAmount";
-  await api.sendMessage(chatId, `Entry fee per player in ${state.entryFeeToken!.symbol}? (decimal, e.g. '0.5' or '10')`);
+  await api.sendMessage(chatId, `💵 Entry fee per player in ${state.entryFeeToken!.symbol}? (decimal, e.g. '0.5' or '10')`);
 }
 
 /**
@@ -645,8 +645,8 @@ async function moveToEntryRequirement(api: TelegramApi, _config: Config, state: 
   if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "entryReqChoice";
   const lines = [
-    "Gate who can enter?",
-    "  1. No (anyone can enter)",
+    "🔐 Gate who can enter?",
+    "  1. 🌐 No (anyone can enter)",
     ...ENTRY_REQ_PRESETS.map((p, i) => `  ${i + 2}. ${p.label}`),
     "",
     "Reply with a number.",
@@ -1265,17 +1265,17 @@ async function moveToPrizes(api: TelegramApi, config: Config, state: State, chat
   if (!config.voyagerProxyUrl) {
     // Without Voyager, skip prize sponsorship in chat.
     await api.sendMessage(chatId, [
-      "Sponsored prizes from chat aren't enabled (BUDOKAN_VOYAGER_PROXY_URL not set).",
+      "🏆 Sponsored prizes from chat aren't enabled (BUDOKAN_VOYAGER_PROXY_URL not set).",
       "You can add prizes after creation via budokan.gg.",
       "",
-      "Continuing to confirmation…",
+      "⏭️ Continuing to confirmation…",
     ].join("\n"));
     return moveToConfirm(api, state, chatId);
   }
   await api.sendMessage(chatId, [
-    "Add sponsored prizes from your wallet?",
-    "  1. No",
-    "  2. Yes (I'll show your token balances)",
+    "🏆 Add sponsored prizes from your wallet?",
+    "  1. ⏭️ No",
+    "  2. ✨ Yes (I'll show your token balances)",
     "",
     "Reply with a number.",
   ].join("\n"));
@@ -1310,7 +1310,7 @@ async function handlePrizesChoice(api: TelegramApi, config: Config, state: State
   }
   state.step = "prizesPick";
   await api.sendMessage(chatId, [
-    "Pick a token to sponsor (or 'done' to finish prizes):",
+    "🪙 Pick a token to sponsor (or 'done' to finish prizes):",
     ...eligible.map((b, i) => {
       const formatted = formatTokenAmount(b.balance, b.decimals);
       const usd = b.usdBalance !== undefined ? ` ($${b.usdBalance.toFixed(2)})` : "";
@@ -1318,7 +1318,7 @@ async function handlePrizesChoice(api: TelegramApi, config: Config, state: State
     }),
     "",
     state.prizesSoFar.length > 0
-      ? `(Already sponsoring: ${state.prizesSoFar.map((p) => `${formatTokenAmount(p.amount, p.token.decimals)} ${p.token.symbol}`).join(", ")})`
+      ? `🏆 Already sponsoring: ${state.prizesSoFar.map((p) => `${formatTokenAmount(p.amount, p.token.decimals)} ${p.token.symbol}`).join(", ")}`
       : "Reply with a number, or 'done'.",
   ].join("\n"));
 }
@@ -1334,7 +1334,7 @@ async function handlePrizesPick(api: TelegramApi, config: Config, state: State, 
   state.step = "prizesAmount";
   await api.sendMessage(
     chatId,
-    `Amount of ${state.pendingPrizeToken!.symbol} to sponsor? (decimal; you have ${formatTokenAmount(state.pendingPrizeToken!.balance, state.pendingPrizeToken!.decimals)} ${state.pendingPrizeToken!.symbol})`,
+    `💵 Amount of ${state.pendingPrizeToken!.symbol} to sponsor? (decimal; you have ${formatTokenAmount(state.pendingPrizeToken!.balance, state.pendingPrizeToken!.decimals)} ${state.pendingPrizeToken!.symbol})`,
   );
 }
 
@@ -1354,9 +1354,9 @@ async function handlePrizesAmount(api: TelegramApi, config: Config, state: State
   // Loop back to the picker for another prize, or done.
   state.step = "prizesPick";
   await api.sendMessage(chatId, [
-    `Added ${formatTokenAmount(raw, token.decimals)} ${token.symbol}.`,
+    `✅ Added ${formatTokenAmount(raw, token.decimals)} ${token.symbol}.`,
     "",
-    "Pick another token, or send 'done':",
+    "🪙 Pick another token, or send 'done':",
     ...(state.voyagerBalances ?? []).map((b, i) => {
       const formatted = formatTokenAmount(b.balance, b.decimals);
       return `  ${i + 1}. ${formatted} ${b.symbol}`;
@@ -1371,10 +1371,10 @@ async function moveToConfirm(api: TelegramApi, state: State, chatId: string): Pr
   await api.sendMessage(chatId, [
     formatSummary(state),
     "",
-    "Sections (use 'edit N' to change one):",
+    "✏️ Sections (use 'edit N' to change one):",
     sectionList,
     "",
-    "Reply 'create' to submit, 'edit N' to change a section, '/back' to revisit the last section, or /cancel.",
+    "🚀 Reply 'create' to submit, 'edit N' to change a section, '/back' to revisit the last section, or /cancel.",
   ].join("\n"));
 }
 
@@ -1641,45 +1641,45 @@ function formatSummary(s: State): string {
   if (s.gameMustBeOver) scoringClauses.push("game must be over to submit");
   const scoringSuffix = scoringClauses.length > 0 ? ` (${scoringClauses.join(", ")})` : "";
   const lines = [
-    "Ready to create:",
-    `  Game: ${s.game!.name}${scoringSuffix}`,
-    `  Name: ${s.name}`,
-    `  Description: ${s.description || "(none)"}`,
-    `  Settings: ${s.settingsName}`,
-    `  Registration: ${isOpen ? "open (players can join during play)" : `fixed (opens in ${formatDuration(sched.regStart)}, lasts ${formatDuration(sched.regDuration)})`}`,
+    "🏟️ Ready to create:",
+    `  🎮 Game: ${s.game!.name}${scoringSuffix}`,
+    `  🏷️ Name: ${s.name}`,
+    `  📝 Description: ${s.description || "(none)"}`,
+    `  ⚙️ Settings: ${s.settingsName}`,
+    `  📋 Registration: ${isOpen ? "open (players can join during play)" : `fixed (opens in ${formatDuration(sched.regStart)}, lasts ${formatDuration(sched.regDuration)})`}`,
   ];
   if (sched.staging > 0) {
-    lines.push(`  Staging delay: ${formatDuration(sched.staging)}`);
+    lines.push(`  ⏸️ Staging delay: ${formatDuration(sched.staging)}`);
   }
   lines.push(
-    `  Live game: ${formatDuration(sched.gameDuration)}`,
-    `  Submission window: ${formatDuration(sched.submission)}`,
+    `  ⏰ Live game: ${formatDuration(sched.gameDuration)}`,
+    `  📮 Submission window: ${formatDuration(sched.submission)}`,
   );
   if (s.entryReqEnabled && s.entryReqKind) {
-    lines.push(`  Entry requirement: ${formatEntryReqSummary(s)}`);
+    lines.push(`  🔐 Entry requirement: ${formatEntryReqSummary(s)}`);
   } else {
-    lines.push("  Entry requirement: none");
+    lines.push("  🌐 Entry requirement: none");
   }
   if (s.entryFeeToken && s.entryFeeAmount) {
     const creator = (s.entryFeeCreatorBps ?? 0) / 100;
     const game = (s.entryFeeGameBps ?? 0) / 100;
     const refund = (s.entryFeeRefundBps ?? 0) / 100;
     const pool = 100 - creator - game - refund;
-    lines.push(`  Entry fee: ${formatTokenAmount(s.entryFeeAmount, s.entryFeeToken.decimals)} ${s.entryFeeToken.symbol}`);
-    lines.push(`    Tournament creator: ${creator}%`);
-    lines.push(`    Game creator: ${game}%`);
-    lines.push(`    Refund per entrant: ${refund}%`);
+    lines.push(`  💰 Entry fee: ${formatTokenAmount(s.entryFeeAmount, s.entryFeeToken.decimals)} ${s.entryFeeToken.symbol}`);
+    lines.push(`     • Tournament creator: ${creator}%`);
+    lines.push(`     • Game creator: ${game}%`);
+    lines.push(`     • Refund per entrant: ${refund}%`);
     const distSuffix = s.entryFeeDistType === "uniform"
       ? ""
       : `, weight ${s.entryFeeDistWeight ?? 1}`;
-    lines.push(`    Leaderboard pool: ${pool.toFixed(2)}% to top ${s.entryFeeDistCount} via ${s.entryFeeDistType}${distSuffix}`);
+    lines.push(`     • Leaderboard pool: ${pool.toFixed(2)}% to top ${s.entryFeeDistCount} via ${s.entryFeeDistType}${distSuffix}`);
   } else {
-    lines.push(`  Entry fee: none`);
+    lines.push(`  🆓 Entry fee: none`);
   }
   if (s.prizesSoFar.length > 0) {
-    lines.push("  Prizes:");
+    lines.push("  🏆 Prizes:");
     for (const p of s.prizesSoFar) {
-      lines.push(`    - ${formatTokenAmount(p.amount, p.token.decimals)} ${p.token.symbol}`);
+      lines.push(`     • ${formatTokenAmount(p.amount, p.token.decimals)} ${p.token.symbol}`);
     }
   }
   return lines.join("\n");
