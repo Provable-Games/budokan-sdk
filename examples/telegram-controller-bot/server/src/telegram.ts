@@ -119,6 +119,18 @@ export class TelegramBot {
     if (!isCommand && enterCmd.isPending(chatId)) {
       return enterCmd.handleAnswer(this.api, this.config, this.handshakes, chatId, text);
     }
+    // Plain text with no pending flow — most often happens when the
+    // bot was restarted (Railway redeploy) mid-picker. State is in
+    // memory so it gets wiped, and the user is left typing answers
+    // into the void. Tell them what happened instead of silently
+    // dropping the message.
+    if (!isCommand) {
+      await this.api.sendMessage(
+        chatId,
+        "I'm not waiting on a reply right now. (If you were mid-picker, the bot likely restarted — re-run the command.)\nSend /help to see what's available.",
+      );
+      return;
+    }
 
     switch (command) {
       case "/start":
