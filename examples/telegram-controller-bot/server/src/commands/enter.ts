@@ -1,8 +1,8 @@
 // /enter [tournamentId]
 //
 // Two entry points:
-//   - With an id: jump straight to the existing branching logic (free →
-//     sessioned execute; paid → Mini App tx flow; gated → deeplink).
+//   - With an id: free → sessioned execute; paid → budokan.gg deeplink;
+//     gated → budokan.gg deeplink.
 //   - Without an id: show a numbered picker of currently-enterable
 //     tournaments on the user's active chain, let them pick, then run the
 //     same logic with the resolved id.
@@ -12,19 +12,20 @@
 // or Live (`has_registration` is false → those skip the Registration
 // phase entirely). We don't filter out tournaments the user is already
 // in — the contract handles the "already entered" case if relevant.
+//
+// Paid entries used to go through a Mini App that wrapped Cartridge's
+// ControllerProvider, but the keychain doesn't reliably authenticate
+// inside Telegram's in-app webview. Route paid txes to budokan.gg
+// instead — same tournament, same fee, Cartridge runs in a real browser.
 
 import { CHAINS, createBudokanClient, type Tournament } from "@provable-games/budokan-sdk";
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
 import type { HandshakeStore } from "../handshake.ts";
-import { TelegramApi, webAppButton } from "../telegram-api.ts";
+import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
-import {
-  buildEnterTournamentCall,
-  buildErc20ApproveCall,
-  type Call,
-} from "../budokan-calls.ts";
+import { buildEnterTournamentCall } from "../budokan-calls.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
@@ -210,47 +211,35 @@ async function execute(
     return;
   }
 
-  // Paid entry — route through Mini App tx flow.
-  const calls: Call[] = [
-    buildErc20ApproveCall(fee.token, budokanAddress, fee.amount),
-    enterCall,
-  ];
-  // Resolve the fee token to a symbol/decimals so the user sees
-  // "1 STRK" instead of a raw u128 + truncated hex address. Unknown
-  // tokens fall back to a short address + raw amount.
+  // Paid entry — route to budokan.gg in the user's external browser.
+  //
+  // We used to push approve + enter_tournament through a Mini App that
+  // wrapped Cartridge's ControllerProvider, but Telegram's in-app webview
+  // doesn't reliably yield a connected Cartridge account (the keychain
+  // iframe trips on third-party storage / popup restrictions). Cartridge
+  // ships a TelegramProvider designed for this case but, as of
+  // @cartridge/controller@0.10.7, only its .d.ts is bundled — no JS — so
+  // we can't import it.
+  //
+  // budokan.gg handles the entry flow correctly in a real browser and is
+  // the canonical place to do this anyway. Keep the call summary in chat
+  // so the user can verify what they'll be asked to sign.
   const token = findKnownToken(chain, fee.token);
   const feeDisplay = token
     ? `${formatTokenAmount(fee.amount, token.decimals)} ${token.symbol}`
     : `${fee.amount} of ${shortAddr(fee.token)}`;
-  const tokenLabel = token
-    ? `${token.symbol} (${shortAddr(fee.token)})`
-    : shortAddr(fee.token);
-  const summary = [
-    `Tournament ${tournamentId} — ${tournament.name || "(unnamed)"}`,
-    `Entry fee: ${feeDisplay}`,
-    "",
-    `Calls (${calls.length}):`,
-    `  1. approve(${shortAddr(budokanAddress)}, ${feeDisplay}) on ${tokenLabel}`,
-    `  2. enter_tournament(${tournamentId}, ...)`,
-  ].join("\n");
-
-  const handshake = handshakes.mint(chatId, "tx", chain, { payload: { calls, summary } });
-  const url = `${config.miniAppUrl}/?token=${encodeURIComponent(handshake.token)}&mode=tx`;
   await api.sendMessage(
     chatId,
     [
-      "This tournament has an entry fee.",
-      "Tap the button below — the Mini App will open and Cartridge will ask you to approve and submit the payment.",
+      `Tournament ${tournamentId} — ${tournament.name || "(unnamed)"}`,
+      `Entry fee: ${feeDisplay}`,
       "",
-      summary,
+      "Paid entries are signed on budokan.gg — Cartridge's keychain doesn't",
+      "run reliably inside Telegram's in-app browser. Open the link below in",
+      "your normal browser to approve and enter:",
       "",
-      // The Mini App tx flow can sometimes fail to connect Cartridge inside
-      // Telegram's webview ("did not return a connected account"). Always
-      // offer the budokan.gg link as a working fallback — same tournament,
-      // same fee, the keychain just runs in a normal browser.
-      `Or open on budokan.gg: ${tournamentPageUrl(chain, tournamentId)}`,
+      tournamentPageUrl(chain, tournamentId),
     ].join("\n"),
-    { replyMarkup: webAppButton("Open to confirm payment", url) },
   );
 }
 
