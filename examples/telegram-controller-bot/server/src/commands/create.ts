@@ -11,8 +11,9 @@
 //   - Entry fee: optional numbered token pick + amount + leaderboard size
 //   - Sponsored prizes: optional, picked from the user's Voyager balances
 //
-// The form remains "minimal" — entry_requirement is unsupported, salt and
-// metadata_value default to 0, fee distribution is exponential.
+// entry_requirement supports the same presets as the budokan client
+// (token-gated NFT, ERC20 balance, Merkle allowlist, Opus Troves,
+// prior tournament). salt and metadata_value default to 0.
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
@@ -34,6 +35,15 @@ import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/toke
 import { fetchSettings, type GameSettingDetails } from "../catalog/settings.ts";
 import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
 import { formatError } from "../format-error.ts";
+import {
+  type ExtensionPresetKind,
+  type TournamentRequirementType,
+  buildErc20BalanceConfig,
+  buildMerkleConfig,
+  buildOpusTrovesConfig,
+  buildTournamentValidatorConfig,
+  extensionAddressFor,
+} from "../extensions.ts";
 
 type Step =
   | "game"
@@ -55,6 +65,15 @@ type Step =
   | "entryReqChoice"
   | "entryReqTokenAddress"
   | "entryReqLimit"
+  | "entryReqExtErc20Token"
+  | "entryReqExtErc20MinBalance"
+  | "entryReqExtErc20MaxEntries"
+  | "entryReqExtMerkleTreeId"
+  | "entryReqExtOpusThreshold"
+  | "entryReqExtOpusMaxEntries"
+  | "entryReqExtTourReq"
+  | "entryReqExtTourIds"
+  | "entryReqExtTourTopN"
   | "prizesChoice"
   | "prizesPick"
   | "prizesAmount"
@@ -165,11 +184,29 @@ interface State {
   entryFeeDistType?: "linear" | "exponential" | "uniform";
   entryFeeDistCount?: number;       // # placements that share the leaderboard pool
   entryFeeDistWeight?: number;      // client-units weight (×10 on chain). 1 = default.
-  // Entry requirement (gating) — token-only path. Extension validators
-  // are out of scope for chat; users wanting those go via budokan.gg.
+  // Entry requirement (gating). The contract supports two variants:
+  //   - "token": must own a token from a given ERC-721/ERC-20 contract
+  //   - "extension": validator contract + opaque config Span
+  // Chat exposes the four common presets (merkle / erc20Balance /
+  // opusTroves / tournament). Each preset has its own config sub-state
+  // captured below.
   entryReqEnabled?: boolean;
+  entryReqKind?: "token" | ExtensionPresetKind;
   entryReqTokenAddress?: string;    // ERC-721/ERC-20 contract — token-gated.
-  entryReqEntryLimit?: number;      // u32; max entries per qualifying token.
+  entryReqEntryLimit?: number;      // u32; max entries per qualifying token (token-gated only).
+  // ERC20 Balance preset state.
+  entryReqExtErc20Token?: Erc20Token;
+  entryReqExtErc20MinBalance?: bigint;  // raw, in smallest units
+  entryReqExtErc20MaxEntries?: number;
+  // Merkle preset state.
+  entryReqExtMerkleTreeId?: number;
+  // Opus Troves preset state.
+  entryReqExtOpusThresholdUsd?: number; // human USD; threshold = usd * 1e18
+  entryReqExtOpusMaxEntries?: number;
+  // Tournament preset state.
+  entryReqExtTourRequirement?: TournamentRequirementType;
+  entryReqExtTourIds?: string[];
+  entryReqExtTourTopN?: number;       // only used when requirement === "won"
   // Prizes — picked from the user's wallet balances.
   voyagerBalances?: VoyagerTokenBalance[];
   prizesSoFar: PrizeSpec[];
@@ -261,6 +298,24 @@ export async function handleAnswer(
       return handleEntryReqTokenAddress(api, state, chatId, trimmed);
     case "entryReqLimit":
       return handleEntryReqLimit(api, config, state, chatId, trimmed);
+    case "entryReqExtErc20Token":
+      return handleEntryReqExtErc20Token(api, state, chatId, trimmed);
+    case "entryReqExtErc20MinBalance":
+      return handleEntryReqExtErc20MinBalance(api, state, chatId, trimmed);
+    case "entryReqExtErc20MaxEntries":
+      return handleEntryReqExtErc20MaxEntries(api, config, state, chatId, trimmed);
+    case "entryReqExtMerkleTreeId":
+      return handleEntryReqExtMerkleTreeId(api, config, state, chatId, trimmed);
+    case "entryReqExtOpusThreshold":
+      return handleEntryReqExtOpusThreshold(api, state, chatId, trimmed);
+    case "entryReqExtOpusMaxEntries":
+      return handleEntryReqExtOpusMaxEntries(api, config, state, chatId, trimmed);
+    case "entryReqExtTourReq":
+      return handleEntryReqExtTourReq(api, state, chatId, trimmed);
+    case "entryReqExtTourIds":
+      return handleEntryReqExtTourIds(api, config, state, chatId, trimmed);
+    case "entryReqExtTourTopN":
+      return handleEntryReqExtTourTopN(api, config, state, chatId, trimmed);
     case "prizesChoice":
       return handlePrizesChoice(api, config, state, chatId, trimmed);
     case "prizesPick":
@@ -562,41 +617,72 @@ async function handleEntryFeeToken(api: TelegramApi, _config: Config, state: Sta
 }
 
 /**
- * Entry-requirement section. Two choices:
- *   1. No gating (anyone can enter)
- *   2. Token-gated (must own a token from the given contract)
+ * Entry-requirement section. The chain's two enum variants are surfaced
+ * as a flat list of presets so the user doesn't need to understand the
+ * token / extension split:
  *
- * Token-gated is the only contract-supported requirement we can collect
- * via chat. Extension-validator gating (ERC-20 balance thresholds, Opus
- * Troves, Merkle proofs, custom) needs domain-specific config formats
- * the chat can't reasonably ask for — those tournaments are made via
- * budokan.gg.
+ *   1. No gating
+ *   2. Token-gated (own an NFT/token from a specific contract)
+ *   3. ERC20 Balance (validator extension)
+ *   4. Allowlist / Merkle (validator extension)
+ *   5. Opus Troves (validator extension)
+ *   6. Prior tournament (validator extension)
+ *
+ * Each preset has its own follow-up sub-flow that collects the minimal
+ * config required to build the Span<felt252> the on-chain validator's
+ * add_config expects. Validator addresses are pinned per-chain in
+ * extensions.ts; the same table is in metagame-sdk.
  */
+const ENTRY_REQ_PRESETS: { label: string; kind: "token" | ExtensionPresetKind }[] = [
+  { label: "Token-gated (own an NFT / ERC-20 from a specific contract)", kind: "token" },
+  { label: "ERC-20 balance threshold", kind: "erc20Balance" },
+  { label: "Allowlist (Merkle tree)", kind: "merkle" },
+  { label: "Opus Troves (min CASH borrowed)", kind: "opusTroves" },
+  { label: "Prior tournament participation / win", kind: "tournament" },
+];
+
 async function moveToEntryRequirement(api: TelegramApi, _config: Config, state: State, chatId: string): Promise<void> {
   if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "entryReqChoice";
-  await api.sendMessage(chatId, [
+  const lines = [
     "Gate who can enter?",
     "  1. No (anyone can enter)",
-    "  2. Token-gated (must own a token from a specific contract)",
+    ...ENTRY_REQ_PRESETS.map((p, i) => `  ${i + 2}. ${p.label}`),
     "",
     "Reply with a number.",
-  ].join("\n"));
+  ];
+  await api.sendMessage(chatId, lines.join("\n"));
 }
 
 async function handleEntryReqChoice(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
-  const idx = parsePickIndex(input, 2);
-  if (idx === null) { await api.sendMessage(chatId, "Reply 1 or 2."); return; }
+  const total = 1 + ENTRY_REQ_PRESETS.length;
+  const idx = parsePickIndex(input, total);
+  if (idx === null) { await api.sendMessage(chatId, `Reply 1–${total}.`); return; }
   if (idx === 0) {
     state.entryReqEnabled = false;
+    state.entryReqKind = undefined;
     return moveToPrizes(api, config, state, chatId);
   }
   state.entryReqEnabled = true;
-  state.step = "entryReqTokenAddress";
-  await api.sendMessage(
-    chatId,
-    "Token contract address? (0x-prefixed — entrants must own at least one token from this contract)",
-  );
+  const preset = ENTRY_REQ_PRESETS[idx - 1]!;
+  state.entryReqKind = preset.kind;
+  switch (preset.kind) {
+    case "token":
+      state.step = "entryReqTokenAddress";
+      await api.sendMessage(
+        chatId,
+        "Token contract address? (0x-prefixed — entrants must own at least one token from this contract)",
+      );
+      return;
+    case "erc20Balance":
+      return promptEntryReqExtErc20Token(api, state, chatId);
+    case "merkle":
+      return promptEntryReqExtMerkleTreeId(api, state, chatId);
+    case "opusTroves":
+      return promptEntryReqExtOpusThreshold(api, state, chatId);
+    case "tournament":
+      return promptEntryReqExtTourReq(api, state, chatId);
+  }
 }
 
 async function handleEntryReqTokenAddress(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
@@ -628,6 +714,204 @@ async function handleEntryReqLimit(api: TelegramApi, config: Config, state: Stat
     limit = n;
   }
   state.entryReqEntryLimit = limit;
+  return moveToPrizes(api, config, state, chatId);
+}
+
+// --- ERC20 Balance preset ------------------------------------------------
+
+async function promptEntryReqExtErc20Token(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "entryReqExtErc20Token";
+  const tokens = tokensForChain(state.chain);
+  await api.sendMessage(chatId, [
+    "Pick the ERC-20 to gate by:",
+    ...tokens.map((t, i) => `  ${i + 1}. ${t.symbol} (${t.name})`),
+    "",
+    "Reply with a number, or paste a 0x-prefixed token address.",
+  ].join("\n"));
+}
+
+async function handleEntryReqExtErc20Token(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const tokens = tokensForChain(state.chain);
+  const trimmed = input.trim();
+  let token: Erc20Token | undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const idx = parsePickIndex(trimmed, tokens.length);
+    if (idx === null) { await api.sendMessage(chatId, `Reply 1–${tokens.length}, or paste an address.`); return; }
+    token = tokens[idx];
+  } else if (/^0x[0-9a-fA-F]{1,64}$/.test(trimmed)) {
+    const known = findKnownToken(state.chain, trimmed);
+    if (known) {
+      token = known;
+    } else {
+      // Unknown token — we don't have decimals; ask for raw smallest-unit input later.
+      token = { address: trimmed.toLowerCase(), symbol: "TOKEN", name: "Custom token", decimals: 18 };
+    }
+  } else {
+    await api.sendMessage(chatId, "Reply with a number or a 0x address.");
+    return;
+  }
+  state.entryReqExtErc20Token = token;
+  state.step = "entryReqExtErc20MinBalance";
+  await api.sendMessage(
+    chatId,
+    `Minimum balance to qualify? (decimal — e.g. '100' = 100 ${token!.symbol})`,
+  );
+}
+
+async function handleEntryReqExtErc20MinBalance(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const token = state.entryReqExtErc20Token!;
+  const raw = parseTokenAmount(input, token.decimals);
+  if (raw === null) {
+    await api.sendMessage(chatId, "Couldn't parse that. Try a decimal like '100' or '0.5'.");
+    return;
+  }
+  state.entryReqExtErc20MinBalance = BigInt(raw);
+  state.step = "entryReqExtErc20MaxEntries";
+  await api.sendMessage(
+    chatId,
+    "Max entries per qualifying address? (default 1 — same player can enter up to N times if they hold enough)",
+  );
+}
+
+async function handleEntryReqExtErc20MaxEntries(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const t = input.trim();
+  let n = 1;
+  if (t.length > 0 && !/^skip$/i.test(t)) {
+    if (!/^\d+$/.test(t)) {
+      await api.sendMessage(chatId, "Must be a positive integer, or 'skip' for default 1.");
+      return;
+    }
+    n = Number(t);
+    if (n < 1 || n > 1_000_000) { await api.sendMessage(chatId, "Must be 1–1,000,000."); return; }
+  }
+  state.entryReqExtErc20MaxEntries = n;
+  return moveToPrizes(api, config, state, chatId);
+}
+
+// --- Merkle preset ------------------------------------------------------
+
+async function promptEntryReqExtMerkleTreeId(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "entryReqExtMerkleTreeId";
+  await api.sendMessage(chatId, [
+    "Allowlist (Merkle) tree ID?",
+    "",
+    "If you don't have a tree yet, create one at:",
+    "  https://metagame-extensions.up.railway.app/merkle",
+    "",
+    "Then send the numeric tree ID.",
+  ].join("\n"));
+}
+
+async function handleEntryReqExtMerkleTreeId(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const t = input.trim();
+  if (!/^\d+$/.test(t)) {
+    await api.sendMessage(chatId, "Tree ID must be a non-negative integer.");
+    return;
+  }
+  state.entryReqExtMerkleTreeId = Number(t);
+  return moveToPrizes(api, config, state, chatId);
+}
+
+// --- Opus Troves preset --------------------------------------------------
+
+async function promptEntryReqExtOpusThreshold(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "entryReqExtOpusThreshold";
+  await api.sendMessage(
+    chatId,
+    "Minimum CASH borrowed (USD) to qualify? (e.g. '10' = $10 — Opus's CASH is 1:1 USD)",
+  );
+}
+
+async function handleEntryReqExtOpusThreshold(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const t = input.trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) {
+    await api.sendMessage(chatId, "Must be a non-negative number like '10' or '5.5'.");
+    return;
+  }
+  const usd = Number(t);
+  if (!Number.isFinite(usd) || usd < 0 || usd > 1_000_000_000) {
+    await api.sendMessage(chatId, "Must be 0–1,000,000,000.");
+    return;
+  }
+  state.entryReqExtOpusThresholdUsd = usd;
+  state.step = "entryReqExtOpusMaxEntries";
+  await api.sendMessage(
+    chatId,
+    "Entries per qualifying trove? (default 1 — a borrower can enter up to N times)",
+  );
+}
+
+async function handleEntryReqExtOpusMaxEntries(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const t = input.trim();
+  let n = 1;
+  if (t.length > 0 && !/^skip$/i.test(t)) {
+    if (!/^\d+$/.test(t)) {
+      await api.sendMessage(chatId, "Must be a positive integer, or 'skip' for default 1.");
+      return;
+    }
+    n = Number(t);
+    if (n < 1 || n > 1_000_000) { await api.sendMessage(chatId, "Must be 1–1,000,000."); return; }
+  }
+  state.entryReqExtOpusMaxEntries = n;
+  return moveToPrizes(api, config, state, chatId);
+}
+
+// --- Tournament preset --------------------------------------------------
+
+async function promptEntryReqExtTourReq(api: TelegramApi, state: State, chatId: string): Promise<void> {
+  state.step = "entryReqExtTourReq";
+  await api.sendMessage(chatId, [
+    "Qualify by prior tournament how?",
+    "  1. Participated (any entry counts)",
+    "  2. Won (placed in top N)",
+    "",
+    "Reply with a number.",
+  ].join("\n"));
+}
+
+async function handleEntryReqExtTourReq(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
+  const idx = parsePickIndex(input, 2);
+  if (idx === null) { await api.sendMessage(chatId, "Reply 1 or 2."); return; }
+  state.entryReqExtTourRequirement = idx === 0 ? "participated" : "won";
+  state.step = "entryReqExtTourIds";
+  await api.sendMessage(
+    chatId,
+    "Which tournament(s)? Send tournament IDs separated by commas, e.g. '123' or '123,456'.",
+  );
+}
+
+async function handleEntryReqExtTourIds(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const ids = input.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (ids.length === 0 || !ids.every((s) => /^\d+$/.test(s))) {
+    await api.sendMessage(chatId, "Need at least one integer tournament ID. e.g. '123' or '123, 456'.");
+    return;
+  }
+  if (ids.length > 50) {
+    await api.sendMessage(chatId, "Cap is 50 tournament IDs per requirement.");
+    return;
+  }
+  state.entryReqExtTourIds = ids;
+  if (state.entryReqExtTourRequirement === "won") {
+    state.step = "entryReqExtTourTopN";
+    await api.sendMessage(
+      chatId,
+      "Top how many positions count as 'won'? (e.g. '1' = winners only, '3' = podium)",
+    );
+    return;
+  }
+  // Participated — no top-N needed.
+  return moveToPrizes(api, config, state, chatId);
+}
+
+async function handleEntryReqExtTourTopN(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
+  const t = input.trim();
+  if (!/^\d+$/.test(t)) {
+    await api.sendMessage(chatId, "Must be a positive integer.");
+    return;
+  }
+  const n = Number(t);
+  if (n < 1 || n > 1000) { await api.sendMessage(chatId, "Must be 1–1000."); return; }
+  state.entryReqExtTourTopN = n;
   return moveToPrizes(api, config, state, chatId);
 }
 
@@ -1041,12 +1325,99 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   }
 }
 
+/**
+ * Build EntryRequirementArgs from the collected /create state. Returns
+ * undefined if gating is disabled or required fields are missing.
+ *
+ * For extension presets the entry_limit field on EntryRequirement is set
+ * to 0 — each validator enforces its own per-player limit via the config
+ * (max_entries, top_positions, etc.), and budokan itself does no extra
+ * accounting. This matches the budokan client's formatting.ts behavior.
+ */
 function buildEntryRequirementArgs(state: State): EntryRequirementArgs | undefined {
-  if (!state.entryReqEnabled || !state.entryReqTokenAddress) return undefined;
-  return {
-    entryLimit: state.entryReqEntryLimit ?? 1,
-    type: { kind: "token", tokenAddress: state.entryReqTokenAddress },
-  };
+  if (!state.entryReqEnabled || !state.entryReqKind) return undefined;
+  switch (state.entryReqKind) {
+    case "token":
+      if (!state.entryReqTokenAddress) return undefined;
+      return {
+        entryLimit: state.entryReqEntryLimit ?? 1,
+        type: { kind: "token", tokenAddress: state.entryReqTokenAddress },
+      };
+    case "erc20Balance": {
+      if (!state.entryReqExtErc20Token || state.entryReqExtErc20MinBalance === undefined) {
+        return undefined;
+      }
+      const config = buildErc20BalanceConfig({
+        tokenAddress: state.entryReqExtErc20Token.address,
+        minThreshold: state.entryReqExtErc20MinBalance,
+        maxThreshold: 0n,
+        valuePerEntry: 0n,
+        maxEntries: state.entryReqExtErc20MaxEntries ?? 1,
+        bannable: false,
+      });
+      return {
+        entryLimit: 0,
+        type: {
+          kind: "extension",
+          address: extensionAddressFor(state.chain, "erc20Balance"),
+          config,
+        },
+      };
+    }
+    case "merkle": {
+      if (state.entryReqExtMerkleTreeId === undefined) return undefined;
+      const config = buildMerkleConfig({ treeId: state.entryReqExtMerkleTreeId });
+      return {
+        entryLimit: 0,
+        type: {
+          kind: "extension",
+          address: extensionAddressFor(state.chain, "merkle"),
+          config,
+        },
+      };
+    }
+    case "opusTroves": {
+      if (state.entryReqExtOpusThresholdUsd === undefined) return undefined;
+      // CASH is 18 decimals, 1:1 USD. Use Math.round on (usd * 1e18) via
+      // string scaling to avoid floating-point precision loss for inputs
+      // like 0.1 USD.
+      const thresholdRaw = parseTokenAmount(String(state.entryReqExtOpusThresholdUsd), 18);
+      if (thresholdRaw === null) return undefined;
+      const config = buildOpusTrovesConfig({
+        assetAddresses: [],
+        threshold: BigInt(thresholdRaw),
+        valuePerEntry: 0n,
+        maxEntries: state.entryReqExtOpusMaxEntries ?? 1,
+        bannable: false,
+      });
+      return {
+        entryLimit: 0,
+        type: {
+          kind: "extension",
+          address: extensionAddressFor(state.chain, "opusTroves"),
+          config,
+        },
+      };
+    }
+    case "tournament": {
+      if (!state.entryReqExtTourRequirement || !state.entryReqExtTourIds?.length) {
+        return undefined;
+      }
+      const config = buildTournamentValidatorConfig({
+        requirement: state.entryReqExtTourRequirement,
+        tournamentIds: state.entryReqExtTourIds,
+        topPositions: state.entryReqExtTourTopN ?? 0,
+      });
+      return {
+        entryLimit: 0,
+        type: {
+          kind: "extension",
+          address: extensionAddressFor(state.chain, "tournament"),
+          config,
+        },
+      };
+    }
+  }
 }
 
 /** Assemble EntryFeeArgs from state, or undefined if the user opted out. */
@@ -1090,10 +1461,8 @@ function formatSummary(s: State): string {
     `  Lower scores win: ${s.leaderboardAscending ? "yes" : "no"}`,
     `  Require game over: ${s.gameMustBeOver ? "yes" : "no"}`,
   );
-  if (s.entryReqEnabled && s.entryReqTokenAddress) {
-    lines.push(
-      `  Entry requirement: token-gated (${shortHex(s.entryReqTokenAddress)}), up to ${s.entryReqEntryLimit ?? 1} ${s.entryReqEntryLimit === 1 ? "entry" : "entries"} per token`,
-    );
+  if (s.entryReqEnabled && s.entryReqKind) {
+    lines.push(`  Entry requirement: ${formatEntryReqSummary(s)}`);
   } else {
     lines.push("  Entry requirement: none");
   }
@@ -1120,6 +1489,45 @@ function formatSummary(s: State): string {
     }
   }
   return lines.join("\n");
+}
+
+function formatEntryReqSummary(s: State): string {
+  switch (s.entryReqKind) {
+    case "token":
+      if (!s.entryReqTokenAddress) return "(incomplete)";
+      return `token-gated (${shortHex(s.entryReqTokenAddress)}), up to ${s.entryReqEntryLimit ?? 1} ${s.entryReqEntryLimit === 1 ? "entry" : "entries"} per token`;
+    case "erc20Balance": {
+      const tok = s.entryReqExtErc20Token;
+      const min = s.entryReqExtErc20MinBalance;
+      if (!tok || min === undefined) return "ERC-20 balance (incomplete)";
+      const balanceStr = formatTokenAmount(min.toString(), tok.decimals);
+      const max = s.entryReqExtErc20MaxEntries ?? 1;
+      return `≥ ${balanceStr} ${tok.symbol}, up to ${max} ${max === 1 ? "entry" : "entries"} per address`;
+    }
+    case "merkle": {
+      if (s.entryReqExtMerkleTreeId === undefined) return "Allowlist (incomplete)";
+      return `Allowlist (Merkle tree #${s.entryReqExtMerkleTreeId})`;
+    }
+    case "opusTroves": {
+      if (s.entryReqExtOpusThresholdUsd === undefined) return "Opus Troves (incomplete)";
+      const max = s.entryReqExtOpusMaxEntries ?? 1;
+      return `Opus: ≥ $${s.entryReqExtOpusThresholdUsd} CASH borrowed, up to ${max} ${max === 1 ? "entry" : "entries"} per trove`;
+    }
+    case "tournament": {
+      if (!s.entryReqExtTourRequirement || !s.entryReqExtTourIds?.length) {
+        return "Prior tournament (incomplete)";
+      }
+      const verb = s.entryReqExtTourRequirement === "won"
+        ? `won (top ${s.entryReqExtTourTopN ?? 1})`
+        : "participated in";
+      const idsStr = s.entryReqExtTourIds.length > 5
+        ? `${s.entryReqExtTourIds.slice(0, 5).join(", ")}…`
+        : s.entryReqExtTourIds.join(", ");
+      return `${verb} tournament(s) ${idsStr}`;
+    }
+    default:
+      return "(unknown)";
+  }
 }
 
 // --- section editing (edit N + /back) ---
@@ -1193,8 +1601,20 @@ const SECTIONS: readonly SectionDef[] = [
     id: "entryRequirement",
     title: "Entry requirement (gating)",
     firstStep: "entryReqChoice",
-    steps: ["entryReqChoice", "entryReqTokenAddress", "entryReqLimit"],
-    clear: ["entryReqEnabled", "entryReqTokenAddress", "entryReqEntryLimit"],
+    steps: [
+      "entryReqChoice", "entryReqTokenAddress", "entryReqLimit",
+      "entryReqExtErc20Token", "entryReqExtErc20MinBalance", "entryReqExtErc20MaxEntries",
+      "entryReqExtMerkleTreeId",
+      "entryReqExtOpusThreshold", "entryReqExtOpusMaxEntries",
+      "entryReqExtTourReq", "entryReqExtTourIds", "entryReqExtTourTopN",
+    ],
+    clear: [
+      "entryReqEnabled", "entryReqKind", "entryReqTokenAddress", "entryReqEntryLimit",
+      "entryReqExtErc20Token", "entryReqExtErc20MinBalance", "entryReqExtErc20MaxEntries",
+      "entryReqExtMerkleTreeId",
+      "entryReqExtOpusThresholdUsd", "entryReqExtOpusMaxEntries",
+      "entryReqExtTourRequirement", "entryReqExtTourIds", "entryReqExtTourTopN",
+    ],
   },
   {
     id: "prizes",
@@ -1292,7 +1712,7 @@ async function renderStepPrompt(api: TelegramApi, state: State, chatId: string, 
       await api.sendMessage(chatId, [
         "Gate who can enter?",
         "  1. No (anyone can enter)",
-        "  2. Token-gated (must own a token from a specific contract)",
+        ...ENTRY_REQ_PRESETS.map((p, i) => `  ${i + 2}. ${p.label}`),
         "",
         "Reply with a number.",
       ].join("\n"));

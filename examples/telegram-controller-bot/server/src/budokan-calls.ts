@@ -208,14 +208,17 @@ export interface EntryFeeArgs {
  * Entry-requirement gating. The chain has two variants on the
  * EntryRequirementType enum:
  *   - token: ContractAddress — must own a token from this contract
- *   - extension: ExtensionConfig — custom validator contract
+ *   - extension: ExtensionConfig — a validator contract address + config Span
  *
- * Only the token-gated case is exposed via chat. Extensions are
- * surface-area for protocol integrators and require domain-specific
- * config formats; budokan.gg handles those.
+ * For "extension" the caller is responsible for building the config Span
+ * in the exact felt order the target validator's `add_config` expects
+ * (see metagame-extensions/packages/presets/src/entry_requirement/* for
+ * per-validator config layouts). `config` values are passed through as
+ * raw felt strings — addresses, decimal numbers, hex are all fine.
  */
 export type EntryRequirementSpec =
-  | { kind: "token"; tokenAddress: string };
+  | { kind: "token"; tokenAddress: string }
+  | { kind: "extension"; address: string; config: string[] };
 
 export interface EntryRequirementArgs {
   entryLimit: number;       // max entries per qualifying token / extension match
@@ -398,7 +401,19 @@ function encodeEntryRequirementType(spec: EntryRequirementSpec) {
   if (spec.kind === "token") {
     return { type, variant: { token: spec.tokenAddress } };
   }
-  // Future: extension. Unreachable while only "token" is exposed.
+  if (spec.kind === "extension") {
+    // ExtensionConfig { address: ContractAddress, config: Span<felt252> }.
+    // CallData.compile serializes string[] as a Span by emitting len + felts.
+    return {
+      type,
+      variant: {
+        extension: {
+          address: spec.address,
+          config: spec.config,
+        },
+      },
+    };
+  }
   throw new Error(`Unsupported entry requirement kind: ${(spec as { kind: string }).kind}`);
 }
 
