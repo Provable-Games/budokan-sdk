@@ -4,7 +4,9 @@
 // in-memory only; restart loses it (the user just runs /create again).
 //
 // UX improvements over the v1 12-step Q&A:
-//   - Game: numbered pick from games-catalog (chain-aware)
+//   - Game: numbered pick from games-catalog (chain-aware). Leaderboard
+//     ordering (ascending/descending) and game-must-be-over flag are
+//     inherited from the game's catalog metadata — not asked here.
 //   - Settings: numbered pick from denshokan-sdk (paginated; supports
 //     "next"/"prev" between pages and "search <q>" within a page)
 //   - Schedule: presets + "custom" fallback
@@ -53,7 +55,6 @@ type Step =
   | "settings"
   | "schedule"
   | "scheduleCustom"
-  | "leaderboard"
   | "entryFeeChoice"
   | "entryFeeToken"
   | "entryFeeAmount"
@@ -153,7 +154,7 @@ interface PrizeSpec {
 // see fresh state and re-ask the right questions).
 type SectionId =
   | "game" | "metadata" | "settings" | "schedule"
-  | "leaderboard" | "entryFee" | "entryRequirement" | "prizes";
+  | "entryFee" | "entryRequirement" | "prizes";
 
 interface State {
   step: Step;
@@ -282,8 +283,6 @@ export async function handleAnswer(
       return handleSchedule(api, state, chatId, trimmed);
     case "scheduleCustom":
       return handleScheduleCustom(api, state, chatId, trimmed);
-    case "leaderboard":
-      return handleLeaderboard(api, state, chatId, trimmed);
     case "entryFeeChoice":
       return handleEntryFeeChoice(api, config, state, chatId, trimmed);
     case "entryFeeToken":
@@ -352,6 +351,12 @@ async function handleGame(api: TelegramApi, state: State, chatId: string, input:
     return;
   }
   state.game = state.gamesList[idx];
+  // Leaderboard ordering + game-over requirement are properties of the
+  // game, not the tournament — sourced from the catalog's metadata and
+  // baked in here so we don't ask the user. Both default to false (higher
+  // scores win, game can submit anytime) when metadata doesn't specify.
+  state.leaderboardAscending = state.game!.leaderboardAscending ?? false;
+  state.gameMustBeOver = state.game!.leaderboardGameMustBeOver ?? false;
   if (await maybeReturnToConfirm(api, state, chatId)) return;
   state.step = "name";
   await api.sendMessage(
@@ -494,7 +499,7 @@ async function handleSchedule(api: TelegramApi, state: State, chatId: string, in
   if (idx < SCHEDULE_PRESETS.length) {
     const p = SCHEDULE_PRESETS[idx]!;
     state.schedule = { regStart: p.regStart, regDuration: p.regDuration, staging: p.staging, gameDuration: p.gameDuration, submission: p.submission };
-    return moveToLeaderboard(api, state, chatId);
+    return moveToEntryFee(api, state, chatId);
   }
   // Custom path — ask registration style first.
   state.step = "scheduleCustom";
@@ -562,38 +567,8 @@ async function handleScheduleCustom(api: TelegramApi, state: State, chatId: stri
       state.customSchedule = undefined;
       state.customScheduleStep = undefined;
       state.customScheduleStyle = undefined;
-      return moveToLeaderboard(api, state, chatId);
+      return moveToEntryFee(api, state, chatId);
     }
-  }
-}
-
-async function moveToLeaderboard(api: TelegramApi, state: State, chatId: string): Promise<void> {
-  if (await maybeReturnToConfirm(api, state, chatId)) return;
-  state.step = "leaderboard";
-  await api.sendMessage(chatId, [
-    `Schedule set.`,
-    "",
-    "Lower scores win? (yes/no — 'yes' for golf-style, 'no' for points-style)",
-  ].join("\n"));
-}
-
-async function handleLeaderboard(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
-  // Two yes/no questions — leaderboard config is just (ascending, gameMustBeOver).
-  // "Leaderboard size" isn't a contract field; it's distribution_count on EntryFee
-  // and on distributed prizes, asked there if/when the user opts into a fee or
-  // distributed prize.
-  if (state.leaderboardAscending === undefined) {
-    const b = parseYesNo(input);
-    if (b === null) { await api.sendMessage(chatId, "Send 'yes' or 'no'."); return; }
-    state.leaderboardAscending = b;
-    await api.sendMessage(chatId, "Must the game be finished before submitting a score? (yes/no)");
-    return;
-  }
-  if (state.gameMustBeOver === undefined) {
-    const b = parseYesNo(input);
-    if (b === null) { await api.sendMessage(chatId, "Send 'yes' or 'no'."); return; }
-    state.gameMustBeOver = b;
-    return moveToEntryFee(api, state, chatId);
   }
 }
 
@@ -1601,9 +1576,16 @@ function buildEntryFeeArgs(state: State): EntryFeeArgs | undefined {
 function formatSummary(s: State): string {
   const sched = s.schedule!;
   const isOpen = sched.regStart === 0 && sched.regDuration === 0;
+  // Leaderboard ordering + game-over flag are inherited from the game
+  // metadata, not asked. Surface them inline with the game line so the
+  // user can still verify what'll be encoded on chain.
+  const scoringClauses: string[] = [];
+  if (s.leaderboardAscending) scoringClauses.push("lower scores win");
+  if (s.gameMustBeOver) scoringClauses.push("game must be over to submit");
+  const scoringSuffix = scoringClauses.length > 0 ? ` (${scoringClauses.join(", ")})` : "";
   const lines = [
     "Ready to create:",
-    `  Game: ${s.game!.name}`,
+    `  Game: ${s.game!.name}${scoringSuffix}`,
     `  Name: ${s.name}`,
     `  Description: ${s.description || "(none)"}`,
     `  Settings: ${s.settingsName}`,
@@ -1615,8 +1597,6 @@ function formatSummary(s: State): string {
   lines.push(
     `  Live game: ${formatDuration(sched.gameDuration)}`,
     `  Submission window: ${formatDuration(sched.submission)}`,
-    `  Lower scores win: ${s.leaderboardAscending ? "yes" : "no"}`,
-    `  Require game over: ${s.gameMustBeOver ? "yes" : "no"}`,
   );
   if (s.entryReqEnabled && s.entryReqKind) {
     lines.push(`  Entry requirement: ${formatEntryReqSummary(s)}`);
@@ -1724,7 +1704,8 @@ const SECTIONS: readonly SectionDef[] = [
     title: "Game",
     firstStep: "game",
     steps: ["game"],
-    clear: ["game"],
+    // Re-picking the game refreshes the leaderboard fields it implies.
+    clear: ["game", "leaderboardAscending", "gameMustBeOver"],
   },
   {
     id: "metadata",
@@ -1746,13 +1727,6 @@ const SECTIONS: readonly SectionDef[] = [
     firstStep: "schedule",
     steps: ["schedule", "scheduleCustom"],
     clear: ["schedule", "customSchedule", "customScheduleStep", "customScheduleStyle"],
-  },
-  {
-    id: "leaderboard",
-    title: "Leaderboard rules",
-    firstStep: "leaderboard",
-    steps: ["leaderboard"],
-    clear: ["leaderboardAscending", "gameMustBeOver"],
   },
   {
     id: "entryFee",
@@ -1871,9 +1845,6 @@ async function renderStepPrompt(api: TelegramApi, state: State, chatId: string, 
       return renderSettingsPage(api, state, chatId, 0);
     case "schedule":
       return moveToScheduleNoEditCheck(api, state, chatId);
-    case "leaderboard":
-      await api.sendMessage(chatId, "Lower scores win? (yes/no — 'yes' for golf-style, 'no' for points-style)");
-      return;
     case "entryFeeChoice":
       await api.sendMessage(chatId, [
         "Add an entry fee?",

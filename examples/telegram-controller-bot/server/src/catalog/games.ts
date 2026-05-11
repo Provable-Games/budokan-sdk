@@ -29,6 +29,18 @@ interface GameMetadata {
   defaultEntryFeeToken?: string;
   defaultGameFeePercentage?: number;
   controllerOnly?: boolean;
+  /**
+   * Score ordering for this game. `true` = lower-is-better (golf-style),
+   * `false` (default) = higher-is-better (points-style). Used to skip the
+   * "Lower scores win?" question in /create — most games are points-based
+   * and the answer is a property of the game, not the tournament.
+   */
+  leaderboardAscending?: boolean;
+  /**
+   * Whether scores are only valid once the game has finished. Default false.
+   * Same rationale: a property of the game, not a per-tournament choice.
+   */
+  leaderboardGameMustBeOver?: boolean;
 }
 
 const METADATA: Record<string, GameMetadata> = {
@@ -77,6 +89,8 @@ export interface Game {
   defaultEntryFeeToken?: string;
   defaultGameFeePercentage?: number;
   controllerOnly?: boolean;
+  leaderboardAscending?: boolean;
+  leaderboardGameMustBeOver?: boolean;
 }
 
 const clients = new Map<Chain, DenshokanClient>();

@@ -46,6 +46,18 @@ export interface WhitelistedGame {
   averageGasCostUsd?: number;
   /** Some game tokens use animated SVG that needs `<object>` rather than `<img>`. */
   objectImage?: boolean;
+  /**
+   * Score ordering. `true` = lower-is-better (golf-style), `false` = higher-
+   * is-better (points-style). Defaults to false when omitted — most games
+   * are points-based.
+   */
+  leaderboardAscending?: boolean;
+  /**
+   * Whether the game's score is only valid once the game is in a completed
+   * (e.g. dead, finished) state. Tournament-creation UIs hide this question
+   * when the property of the game is known. Defaults to false.
+   */
+  leaderboardGameMustBeOver?: boolean;
 }
 
 const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
@@ -184,6 +196,10 @@ export interface GameDefaults {
   defaultEntryFeeToken: string;
   defaultGameFeePercentage: number;
   averageGasCostUsd: number | undefined;
+  /** Inherited leaderboard ordering (true = lower wins, false = higher wins). */
+  leaderboardAscending: boolean;
+  /** Inherited "must finish game before submitting" flag. */
+  leaderboardGameMustBeOver: boolean;
 }
 
 export function getGameDefaults(
@@ -196,6 +212,8 @@ export function getGameDefaults(
     defaultEntryFeeToken: game?.defaultEntryFeeToken ?? STRK,
     defaultGameFeePercentage: game?.defaultGameFeePercentage ?? 1,
     averageGasCostUsd: game?.averageGasCostUsd,
+    leaderboardAscending: game?.leaderboardAscending ?? false,
+    leaderboardGameMustBeOver: game?.leaderboardGameMustBeOver ?? false,
   };
 }
 
