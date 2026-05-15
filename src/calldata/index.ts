@@ -35,6 +35,7 @@ import {
   CairoOption,
   CairoOptionVariant,
   CallData,
+  hash,
   num,
   uint256,
 } from "starknet";
@@ -510,6 +511,51 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
       out.push("0x1", "0x3", num.toHex(reward.tokenId));
       return;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Event parsing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal receipt shape — `events: Array<{ from_address, keys, ... }>`
+ * is all `parseTournamentIdFromReceipt` needs and matches what every
+ * Starknet RPC / starknet.js `waitForTransaction` returns.
+ */
+export interface ReceiptWithEvents {
+  events?: Array<{ from_address?: string; keys?: string[] }>;
+}
+
+const TOURNAMENT_CREATED_SELECTOR = hash.getSelectorFromName(
+  "TournamentCreated",
+);
+
+/**
+ * Extract the new tournament's id from a `create_tournament` tx receipt
+ * by scanning for the `TournamentCreated` event emitted by the budokan
+ * contract. The event has the tournament id in its first indexed key
+ * (`keys[1]` — `keys[0]` is the selector).
+ *
+ * Returns `undefined` if no matching event is found (e.g. the receipt
+ * came from a different call, or the budokan address didn't match).
+ *
+ * Caller is responsible for fetching the receipt — typically via
+ * `account.waitForTransaction(hash)` or `provider.waitForTransaction(hash)`.
+ */
+export function parseTournamentIdFromReceipt(
+  receipt: ReceiptWithEvents,
+  budokanAddress: string,
+): number | undefined {
+  const normalise = (addr: string) =>
+    addr.toLowerCase().replace(/^0x0*/, "0x");
+  const normContract = normalise(budokanAddress);
+  for (const event of receipt.events ?? []) {
+    if (!event.from_address || !event.keys || event.keys.length < 2) continue;
+    if (normalise(event.from_address) !== normContract) continue;
+    if (event.keys[0] !== TOURNAMENT_CREATED_SELECTOR) continue;
+    return Number(BigInt(event.keys[1]!));
+  }
+  return undefined;
 }
 
 // Felt252 short-string encoding: ASCII bytes packed big-endian into a felt.
