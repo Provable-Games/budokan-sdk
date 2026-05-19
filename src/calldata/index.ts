@@ -385,27 +385,23 @@ export function buildAddPrizeCall(
 
 function encodePrize(spec: PrizeSpec): CairoCustomEnum {
   // Variant order from interfaces::prize::Prize: Token, Extension.
-  // Host-assigned fields (id, context_id, sponsor_address) are zeroed
-  // on input — the host overwrites them at add_prize time.
+  // Input payloads (TokenPrizePayload / ExtensionPrizePayload) carry no
+  // host-assigned metadata — id/context_id/sponsor_address live on the
+  // wrapping PrizeRecord at read time and are filled in by the host.
   if (spec.kind === "token") {
     return new CairoCustomEnum({
       Token: {
-        id: 0,
-        context_id: 0,
-        sponsor_address: 0,
         token_address: spec.tokenAddress,
         token_type: encodeTokenType(spec.tokenType),
       },
       Extension: undefined,
     });
   }
-  // ExtensionPrize { id, context_id, address, config }. CallData.compile
+  // ExtensionPrizePayload { address, config }. CallData.compile
   // serializes string[] as a Span (len + items).
   return new CairoCustomEnum({
     Token: undefined,
     Extension: {
-      id: 0,
-      context_id: 0,
       address: spec.address,
       config: spec.config,
     },

@@ -743,20 +743,8 @@
   },
   {
     "type": "struct",
-    "name": "game_components_interfaces::prize::TokenPrize",
+    "name": "game_components_interfaces::prize::TokenPrizePayload",
     "members": [
-      {
-        "name": "id",
-        "type": "core::integer::u64"
-      },
-      {
-        "name": "context_id",
-        "type": "core::integer::u64"
-      },
-      {
-        "name": "sponsor_address",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
       {
         "name": "token_address",
         "type": "core::starknet::contract_address::ContractAddress"
@@ -769,16 +757,8 @@
   },
   {
     "type": "struct",
-    "name": "game_components_interfaces::prize::ExtensionPrize",
+    "name": "game_components_interfaces::prize::ExtensionPrizePayload",
     "members": [
-      {
-        "name": "id",
-        "type": "core::integer::u64"
-      },
-      {
-        "name": "context_id",
-        "type": "core::integer::u64"
-      },
       {
         "name": "address",
         "type": "core::starknet::contract_address::ContractAddress"
@@ -795,11 +775,11 @@
     "variants": [
       {
         "name": "Token",
-        "type": "game_components_interfaces::prize::TokenPrize"
+        "type": "game_components_interfaces::prize::TokenPrizePayload"
       },
       {
         "name": "Extension",
-        "type": "game_components_interfaces::prize::ExtensionPrize"
+        "type": "game_components_interfaces::prize::ExtensionPrizePayload"
       }
     ]
   },
@@ -1389,6 +1369,28 @@
     "interface_name": "game_components_interfaces::prize::IPrize"
   },
   {
+    "type": "struct",
+    "name": "game_components_interfaces::prize::PrizeRecord",
+    "members": [
+      {
+        "name": "id",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "context_id",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "sponsor_address",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "prize",
+        "type": "game_components_interfaces::prize::Prize"
+      }
+    ]
+  },
+  {
     "type": "interface",
     "name": "game_components_interfaces::prize::IPrize",
     "items": [
@@ -1403,7 +1405,7 @@
         ],
         "outputs": [
           {
-            "type": "game_components_interfaces::prize::Prize"
+            "type": "game_components_interfaces::prize::PrizeRecord"
           }
         ],
         "state_mutability": "view"

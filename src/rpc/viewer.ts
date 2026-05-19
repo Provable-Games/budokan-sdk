@@ -245,9 +245,30 @@ function parseRegistration(raw: unknown, tournamentId: string): Registration {
   };
 }
 
-function parsePrize(raw: unknown): Prize {
-  const obj = raw as Record<string, unknown>;
-  const tokenTypeData = obj.token_type as Record<string, unknown> | undefined;
+function parsePrize(raw: unknown): Prize | null {
+  const record = raw as Record<string, unknown>;
+
+  // Unwrap PrizeRecord -> Prize sum type. starknet.js may expose the variant
+  // via `activeVariant()` + `variant`, or as a flat record keyed by name.
+  const prizeEnum = record.prize as Record<string, unknown> | undefined;
+  if (!prizeEnum) return null;
+  const activePrize =
+    typeof prizeEnum.activeVariant === "function"
+      ? (prizeEnum.activeVariant as () => string)()
+      : prizeEnum.Token !== undefined
+        ? "Token"
+        : prizeEnum.Extension !== undefined
+          ? "Extension"
+          : null;
+  // Skip extension prizes — the flat SDK `Prize` type models token prizes
+  // only. Callers wanting extension prizes need to consume the raw record.
+  if (activePrize !== "Token") return null;
+
+  const prizeVariantBag = (prizeEnum.variant ?? prizeEnum) as Record<string, unknown>;
+  const tokenPayload = prizeVariantBag.Token as Record<string, unknown> | undefined;
+  if (!tokenPayload) return null;
+
+  const tokenTypeData = tokenPayload.token_type as Record<string, unknown> | undefined;
 
   // TokenTypeData is a Cairo enum: { erc20: ERC20Data } or { erc721: ERC721Data }
   let tokenType: "erc20" | "erc721" = "erc20";
@@ -310,10 +331,10 @@ function parsePrize(raw: unknown): Prize {
   }
 
   return {
-    prizeId: String(obj.id ?? "0"),
-    tournamentId: String(obj.context_id ?? "0"),
+    prizeId: String(record.id ?? "0"),
+    tournamentId: String(record.context_id ?? "0"),
     payoutPosition,
-    tokenAddress: num.toHex(obj.token_address as bigint),
+    tokenAddress: num.toHex(tokenPayload.token_address as bigint),
     tokenType,
     amount,
     tokenId,
@@ -321,7 +342,7 @@ function parsePrize(raw: unknown): Prize {
     distributionWeight,
     distributionShares,
     distributionCount,
-    sponsorAddress: num.toHex(obj.sponsor_address as bigint),
+    sponsorAddress: num.toHex(record.sponsor_address as bigint),
   };
 }
 
@@ -531,7 +552,9 @@ export async function viewerPrizes(
 ): Promise<Prize[]> {
   return wrapRpcCall(async () => {
     const result = await contract.call("tournament_prizes", [tournamentId]);
-    return (result as unknown[]).map(parsePrize);
+    return (result as unknown[])
+      .map(parsePrize)
+      .filter((p): p is Prize => p !== null);
   }, contract.address);
 }
 
