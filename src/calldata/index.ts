@@ -181,22 +181,39 @@ export interface AddPrizeArgs {
 /**
  * Tagged union mirroring the Cairo `RewardType` enum hierarchy:
  *
- *   variant 0: Prize(PrizeType)
- *     PrizeType variant 0: Single(u64)
- *     PrizeType variant 1: Distributed((u64, u8))
- *   variant 1: EntryFee(EntryFeeRewardType)
- *     EntryFeeRewardType variant 0: Position(u32)
- *     EntryFeeRewardType variant 1: TournamentCreator
- *     EntryFeeRewardType variant 2: GameCreator
- *     EntryFeeRewardType variant 3: Refund(felt252)
+ *   variant 0: Prize(PrizeClaim)
+ *     PrizeClaim variant 0: Token(PrizeType)
+ *       PrizeType variant 0: Single(u64)
+ *       PrizeType variant 1: Distributed((u64, u8))
+ *     PrizeClaim variant 1: Extension({prize_id, position, payout_params})
+ *   variant 1: EntryFee(EntryFeeClaim)
+ *     EntryFeeClaim variant 0: Token(EntryFeeRewardType)
+ *       EntryFeeRewardType variant 0: Position(u32)
+ *       EntryFeeRewardType variant 1: TournamentCreator
+ *       EntryFeeRewardType variant 2: GameCreator
+ *       EntryFeeRewardType variant 3: Refund(felt252)
+ *     EntryFeeClaim variant 1: Extension(Span<felt252>)
+ *
+ * Extension-prize claims auto-route on the host: budokan checks the
+ * leaderboard at `position` and pays the winner if there's one, or
+ * refunds the recorded sponsor otherwise. Callers never need to
+ * distinguish claim from refund — they just name the position they
+ * want to settle.
  */
 export type RewardType =
   | { kind: "prize_single"; prizeId: string }
   | { kind: "prize_distributed"; prizeId: string; payoutPosition: number }
+  | {
+      kind: "prize_extension";
+      prizeId: string;
+      position: number;
+      payoutParams: string[];
+    }
   | { kind: "entry_fee_position"; position: number }
   | { kind: "entry_fee_tournament_creator" }
   | { kind: "entry_fee_game_creator" }
-  | { kind: "entry_fee_refund"; tokenId: string };
+  | { kind: "entry_fee_refund"; tokenId: string }
+  | { kind: "entry_fee_extension"; claimParams: string[] };
 
 // ---------------------------------------------------------------------------
 // ERC20
@@ -555,29 +572,54 @@ function encodeDistribution(d: DistributionSpec): CairoCustomEnum {
 }
 
 function pushRewardTypeFelts(out: string[], reward: RewardType): void {
+  // Outer tags: RewardType { Prize=0, EntryFee=1 }
+  // Prize inner: PrizeClaim { Token=0, Extension=1 }
+  // PrizeClaim::Token inner: PrizeType { Single=0, Distributed=1 }
+  // EntryFee inner: EntryFeeClaim { Token=0, Extension=1 }
+  // EntryFeeClaim::Token inner: EntryFeeRewardType { Position=0,
+  //   TournamentCreator=1, GameCreator=2, Refund=3 }
   switch (reward.kind) {
     case "prize_single":
-      out.push("0x0", "0x0", num.toHex(reward.prizeId));
+      out.push("0x0", "0x0", "0x0", num.toHex(reward.prizeId));
       return;
     case "prize_distributed":
       out.push(
+        "0x0",
         "0x0",
         "0x1",
         num.toHex(reward.prizeId),
         num.toHex(reward.payoutPosition),
       );
       return;
+    case "prize_extension":
+      out.push(
+        "0x0",
+        "0x1",
+        num.toHex(reward.prizeId),
+        num.toHex(reward.position),
+        num.toHex(reward.payoutParams.length),
+        ...reward.payoutParams.map((p) => num.toHex(p)),
+      );
+      return;
     case "entry_fee_position":
-      out.push("0x1", "0x0", num.toHex(reward.position));
+      out.push("0x1", "0x0", "0x0", num.toHex(reward.position));
       return;
     case "entry_fee_tournament_creator":
-      out.push("0x1", "0x1");
+      out.push("0x1", "0x0", "0x1");
       return;
     case "entry_fee_game_creator":
-      out.push("0x1", "0x2");
+      out.push("0x1", "0x0", "0x2");
       return;
     case "entry_fee_refund":
-      out.push("0x1", "0x3", num.toHex(reward.tokenId));
+      out.push("0x1", "0x0", "0x3", num.toHex(reward.tokenId));
+      return;
+    case "entry_fee_extension":
+      out.push(
+        "0x1",
+        "0x1",
+        num.toHex(reward.claimParams.length),
+        ...reward.claimParams.map((p) => num.toHex(p)),
+      );
       return;
   }
 }
