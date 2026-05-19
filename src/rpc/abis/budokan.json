@@ -743,8 +743,20 @@
   },
   {
     "type": "struct",
-    "name": "game_components_interfaces::prize::PrizeConfig",
+    "name": "game_components_interfaces::prize::TokenPrize",
     "members": [
+      {
+        "name": "id",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "context_id",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "sponsor_address",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
       {
         "name": "token_address",
         "type": "core::starknet::contract_address::ContractAddress"
@@ -756,16 +768,38 @@
     ]
   },
   {
+    "type": "struct",
+    "name": "game_components_interfaces::prize::ExtensionPrize",
+    "members": [
+      {
+        "name": "id",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "context_id",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "address",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "config",
+        "type": "core::array::Span::<core::felt252>"
+      }
+    ]
+  },
+  {
     "type": "enum",
     "name": "game_components_interfaces::prize::Prize",
     "variants": [
       {
-        "name": "Config",
-        "type": "game_components_interfaces::prize::PrizeConfig"
+        "name": "Token",
+        "type": "game_components_interfaces::prize::TokenPrize"
       },
       {
         "name": "Extension",
-        "type": "metagame_extensions_interfaces::extension::ExtensionConfig"
+        "type": "game_components_interfaces::prize::ExtensionPrize"
       }
     ]
   },
@@ -1355,32 +1389,6 @@
     "interface_name": "game_components_interfaces::prize::IPrize"
   },
   {
-    "type": "struct",
-    "name": "game_components_interfaces::prize::PrizeData",
-    "members": [
-      {
-        "name": "id",
-        "type": "core::integer::u64"
-      },
-      {
-        "name": "context_id",
-        "type": "core::integer::u64"
-      },
-      {
-        "name": "token_address",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "token_type",
-        "type": "game_components_interfaces::prize::TokenTypeData"
-      },
-      {
-        "name": "sponsor_address",
-        "type": "core::starknet::contract_address::ContractAddress"
-      }
-    ]
-  },
-  {
     "type": "interface",
     "name": "game_components_interfaces::prize::IPrize",
     "items": [
@@ -1395,7 +1403,7 @@
         ],
         "outputs": [
           {
-            "type": "game_components_interfaces::prize::PrizeData"
+            "type": "game_components_interfaces::prize::Prize"
           }
         ],
         "state_mutability": "view"

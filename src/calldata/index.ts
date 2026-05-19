@@ -159,7 +159,7 @@ export type TokenTypeSpec =
  */
 export type PrizeSpec =
   | {
-      kind: "config";
+      kind: "token";
       tokenAddress: string;
       tokenType: TokenTypeSpec;
       /** Leaderboard slot for single (non-distributed) prizes. Omit for distributed. */
@@ -368,7 +368,7 @@ export function buildAddPrizeCall(
 ): Call {
   const prize = encodePrize(args.prize);
   const position =
-    args.prize.kind === "config" && args.prize.position !== undefined
+    args.prize.kind === "token" && args.prize.position !== undefined
       ? new CairoOption<number>(CairoOptionVariant.Some, args.prize.position)
       : new CairoOption<number>(CairoOptionVariant.None);
   const calldata = CallData.compile({
@@ -384,21 +384,31 @@ export function buildAddPrizeCall(
 }
 
 function encodePrize(spec: PrizeSpec): CairoCustomEnum {
-  // Variant order from interfaces::prize::Prize: Config, Extension.
-  if (spec.kind === "config") {
+  // Variant order from interfaces::prize::Prize: Token, Extension.
+  // Host-assigned fields (id, context_id, sponsor_address) are zeroed
+  // on input — the host overwrites them at add_prize time.
+  if (spec.kind === "token") {
     return new CairoCustomEnum({
-      Config: {
+      Token: {
+        id: 0,
+        context_id: 0,
+        sponsor_address: 0,
         token_address: spec.tokenAddress,
         token_type: encodeTokenType(spec.tokenType),
       },
       Extension: undefined,
     });
   }
-  // ExtensionConfig { address: ContractAddress, config: Span<felt252> }.
-  // CallData.compile serializes string[] as a Span (len + items).
+  // ExtensionPrize { id, context_id, address, config }. CallData.compile
+  // serializes string[] as a Span (len + items).
   return new CairoCustomEnum({
-    Config: undefined,
-    Extension: { address: spec.address, config: spec.config },
+    Token: undefined,
+    Extension: {
+      id: 0,
+      context_id: 0,
+      address: spec.address,
+      config: spec.config,
+    },
   });
 }
 
