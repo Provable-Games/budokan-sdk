@@ -213,7 +213,12 @@ export type RewardType =
   | { kind: "entry_fee_tournament_creator" }
   | { kind: "entry_fee_game_creator" }
   | { kind: "entry_fee_refund"; tokenId: string }
-  | { kind: "entry_fee_extension"; claimParams: string[] };
+  | {
+      kind: "entry_fee_extension";
+      recipient: string;
+      position?: number;
+      claimParams: string[];
+    };
 
 // ---------------------------------------------------------------------------
 // ERC20
@@ -613,14 +618,20 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
     case "entry_fee_refund":
       out.push("0x1", "0x0", "0x3", num.toHex(reward.tokenId));
       return;
-    case "entry_fee_extension":
+    case "entry_fee_extension": {
+      // ExtensionEntryFeeClaim { recipient, position: Option<u32>, claim_params }
+      out.push("0x1", "0x1", reward.recipient);
+      if (reward.position !== undefined) {
+        out.push("0x0", num.toHex(reward.position)); // Some
+      } else {
+        out.push("0x1"); // None
+      }
       out.push(
-        "0x1",
-        "0x1",
         num.toHex(reward.claimParams.length),
         ...reward.claimParams.map((p) => num.toHex(p)),
       );
       return;
+    }
   }
 }
 
