@@ -128,16 +128,54 @@ export interface CreateTournamentArgs {
   metadataValue?: number;
 }
 
+/**
+ * Token prize payload. Mirrors the Cairo `TokenTypeData` enum.
+ *
+ * - `erc20` — fungible. `amount` is required; `distribution` optional
+ *   (undefined → single winner-takes-all payout). When `distribution`
+ *   is set, `distributionCount` is required (number of paid positions).
+ * - `erc721` — single NFT. `tokenId` is the u128 id of the token the
+ *   sponsor is escrowing.
+ */
+export type TokenTypeSpec =
+  | {
+      kind: "erc20";
+      /** Raw u128 amount (decimal string). */
+      amount: string;
+      distribution?: DistributionSpec;
+      distributionCount?: number;
+    }
+  | { kind: "erc721"; tokenId: string };
+
+/**
+ * Tagged union mirroring the on-chain `Prize` enum.
+ *
+ * - `config` — built-in path: sponsor escrows an ERC20/ERC721 prize via
+ *   the budokan PrizeComponent; `position` selects a leaderboard slot
+ *   for non-distributed prizes (ignored for distributed ERC20).
+ * - `extension` — external `IPrizeExtension`: budokan forwards the
+ *   `config` blob to `IPrizeExtension.add_prize`. `position` is ignored
+ *   (the extension owns position semantics).
+ */
+export type PrizeSpec =
+  | {
+      kind: "config";
+      tokenAddress: string;
+      tokenType: TokenTypeSpec;
+      /** Leaderboard slot for single (non-distributed) prizes. Omit for distributed. */
+      position?: number;
+    }
+  | {
+      kind: "extension";
+      /** Address of the contract implementing `IPrizeExtension`. */
+      address: string;
+      /** Opaque payload forwarded to `IPrizeExtension.add_prize`. */
+      config: string[];
+    };
+
 export interface AddPrizeArgs {
   tournamentId: string;
-  tokenAddress: string;
-  /** Raw u128 amount (decimal string). */
-  amount: string;
-  /** When undefined, encoded as Option::None → winner-takes-all. */
-  distribution?: DistributionSpec;
-  /** Required when distribution is set; ignored otherwise. */
-  distributionCount?: number;
-  sponsorAddress: string;
+  prize: PrizeSpec;
 }
 
 /**
@@ -315,60 +353,86 @@ export function buildCreateTournamentCall(
 }
 
 /**
- * `add_prize(tournament_id, token_address, token_type, sponsor_address,
- *            sponsor_token_id)`
+ * `add_prize(tournament_id: u64, prize: Prize, position: Option<u32>) -> u64`
  *
- * Only the ERC20 prize path is exposed. ERC721 sponsorship needs a
- * concrete `token_id` chosen against the sponsor's NFT inventory — that's
- * a UX concern outside the scope of this builder. Add a sibling builder
- * if/when an integrator needs it.
+ * The `Prize` sum type discriminates between the built-in
+ * (ERC20/ERC721) flow and an external `IPrizeExtension` integration —
+ * see `PrizeSpec` for the variants.
  *
- * `distribution` is `Option<Distribution>` — undefined means "winner takes
- * all" (single payout). Some(...) splits the prize across the top
- * `distributionCount` placements.
+ * The on-chain entrypoint returns the minted `prize_id` (u64); callers
+ * wanting the full payload should subscribe to the `PrizeAdded` event.
  */
 export function buildAddPrizeCall(
   budokanAddress: string,
   args: AddPrizeArgs,
 ): Call {
-  // Inner ERC20Data: { amount: u128, distribution: Option<Distribution>,
-  // distribution_count: Option<u32> }. Both Options use CairoOption so
-  // CallData.compile recognizes them as typed wrappers.
-  const erc20Distribution = args.distribution
-    ? new CairoOption<CairoCustomEnum>(
-        CairoOptionVariant.Some,
-        encodeDistribution(args.distribution),
-      )
-    : new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
-  const erc20DistributionCount =
-    args.distribution && args.distributionCount !== undefined
-      ? new CairoOption<number>(CairoOptionVariant.Some, args.distributionCount)
+  const prize = encodePrize(args.prize);
+  const position =
+    args.prize.kind === "config" && args.prize.position !== undefined
+      ? new CairoOption<number>(CairoOptionVariant.Some, args.prize.position)
       : new CairoOption<number>(CairoOptionVariant.None);
-
-  // TokenTypeData is a Cairo enum (ERC20 / ERC721); CairoCustomEnum gets
-  // the right variant index.
-  const tokenType = new CairoCustomEnum({
-    ERC20: {
-      amount: args.amount,
-      distribution: erc20Distribution,
-      distribution_count: erc20DistributionCount,
-    },
-    ERC721: undefined,
-  });
-
   const calldata = CallData.compile({
     tournament_id: args.tournamentId,
-    token_address: args.tokenAddress,
-    token_type: tokenType,
-    sponsor_address: args.sponsorAddress,
-    // Option<felt252> — None for normal sponsorship.
-    sponsor_token_id: new CairoOption<string>(CairoOptionVariant.None),
+    prize,
+    position,
   });
   return {
     contractAddress: budokanAddress,
     entrypoint: "add_prize",
     calldata,
   };
+}
+
+function encodePrize(spec: PrizeSpec): CairoCustomEnum {
+  // Variant order from interfaces::prize::Prize: Config, Extension.
+  if (spec.kind === "config") {
+    return new CairoCustomEnum({
+      Config: {
+        token_address: spec.tokenAddress,
+        token_type: encodeTokenType(spec.tokenType),
+      },
+      Extension: undefined,
+    });
+  }
+  // ExtensionConfig { address: ContractAddress, config: Span<felt252> }.
+  // CallData.compile serializes string[] as a Span (len + items).
+  return new CairoCustomEnum({
+    Config: undefined,
+    Extension: { address: spec.address, config: spec.config },
+  });
+}
+
+function encodeTokenType(spec: TokenTypeSpec): CairoCustomEnum {
+  if (spec.kind === "erc20") {
+    // Inner ERC20Data: { amount: u128, distribution: Option<Distribution>,
+    // distribution_count: Option<u32> }. Both Options use CairoOption so
+    // CallData.compile recognizes them as typed wrappers.
+    const distribution = spec.distribution
+      ? new CairoOption<CairoCustomEnum>(
+          CairoOptionVariant.Some,
+          encodeDistribution(spec.distribution),
+        )
+      : new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
+    const distributionCount =
+      spec.distribution && spec.distributionCount !== undefined
+        ? new CairoOption<number>(
+            CairoOptionVariant.Some,
+            spec.distributionCount,
+          )
+        : new CairoOption<number>(CairoOptionVariant.None);
+    return new CairoCustomEnum({
+      ERC20: {
+        amount: spec.amount,
+        distribution,
+        distribution_count: distributionCount,
+      },
+      ERC721: undefined,
+    });
+  }
+  return new CairoCustomEnum({
+    ERC20: undefined,
+    ERC721: { id: spec.tokenId },
+  });
 }
 
 // ---------------------------------------------------------------------------
