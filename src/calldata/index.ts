@@ -207,15 +207,18 @@ export type RewardType =
       kind: "prize_extension";
       prizeId: string;
       /**
-       * Leaderboard position the host should validate `recipient` against:
-       *   - number: host pins `recipient` to the winner at that position
-       *     (or the recorded sponsor when the position has no qualifying
-       *     entry — i.e. the auto-refund branch).
-       *   - undefined: host doesn't validate; recipient is routed to
-       *     `record.sponsor_address` and the extension is responsible
-       *     for any eligibility logic via `payoutParams` (used for
-       *     non-positional prize extensions like raffles).
+       * Recipient of the payout. Symmetric with the entry-fee side:
+       *   - When `position` is a number, the host validates this
+       *     against the leaderboard winner at that position (or the
+       *     recorded sponsor when the position has no qualifying
+       *     entry — auto-refund branch). Caller must supply the
+       *     correct value or the call reverts.
+       *   - When `position` is undefined, the host trusts this
+       *     value and the extension is responsible for any
+       *     eligibility validation via `payoutParams` (raffle proof,
+       *     merkle proof, drawn ticket, DAO vote, etc.).
        */
+      recipient: string;
       position?: number;
       payoutParams: string[];
     }
@@ -607,8 +610,10 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
       );
       return;
     case "prize_extension":
-      // ExtensionPrizeClaim { prize_id, position: Option<u32>, payout_params }
-      out.push("0x0", "0x1", num.toHex(reward.prizeId));
+      // ExtensionPrizeClaim {
+      //   prize_id, recipient, position: Option<u32>, payout_params,
+      // }
+      out.push("0x0", "0x1", num.toHex(reward.prizeId), reward.recipient);
       if (reward.position !== undefined) {
         out.push("0x0", num.toHex(reward.position)); // Some
       } else {

@@ -658,6 +658,10 @@
         "type": "core::integer::u64"
       },
       {
+        "name": "recipient",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
         "name": "position",
         "type": "core::option::Option::<core::integer::u32>"
       },
