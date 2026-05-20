@@ -192,13 +192,22 @@ export interface AddPrizeArgs {
  *       EntryFeeRewardType variant 1: TournamentCreator
  *       EntryFeeRewardType variant 2: GameCreator
  *       EntryFeeRewardType variant 3: Refund(felt252)
- *     EntryFeeClaim variant 1: Extension(Span<felt252>)
+ *     EntryFeeClaim variant 1: Extension(ExtensionEntryFeeClaim)
  *
- * Extension-prize claims auto-route on the host: budokan checks the
- * leaderboard at `position` and pays the winner if there's one, or
- * refunds the recorded sponsor otherwise. Callers never need to
- * distinguish claim from refund — they just name the position they
- * want to settle.
+ * Extension claims are pure pass-through on the host: budokan forwards
+ * `(token_id, payout_params)` to the extension and lets it resolve
+ * recipient + eligibility from its own state. Callers don't supply
+ * recipient or position — the extension derives them.
+ *
+ * Conventions:
+ *   - `tokenId` is the game token claiming. Positional extensions
+ *     (NFTPrize, NFTEntryFee) use it to look up the leaderboard
+ *     position; ownership-based extensions use it to derive the
+ *     recipient via `owner_of`.
+ *   - `tokenId: undefined` signals a non-claim flow (sponsor refund,
+ *     dao distribution, raffle draw). The extension extracts whatever
+ *     it needs from `payoutParams` / `claimParams` — e.g. NFTPrize
+ *     reads `payoutParams[0]` as the slot index to refund.
  */
 export type RewardType =
   | { kind: "prize_single"; prizeId: string }
@@ -207,19 +216,10 @@ export type RewardType =
       kind: "prize_extension";
       prizeId: string;
       /**
-       * Recipient of the payout. Symmetric with the entry-fee side:
-       *   - When `position` is a number, the host validates this
-       *     against the leaderboard winner at that position (or the
-       *     recorded sponsor when the position has no qualifying
-       *     entry — auto-refund branch). Caller must supply the
-       *     correct value or the call reverts.
-       *   - When `position` is undefined, the host trusts this
-       *     value and the extension is responsible for any
-       *     eligibility validation via `payoutParams` (raffle proof,
-       *     merkle proof, drawn ticket, DAO vote, etc.).
+       * Game token claiming the prize, or undefined for non-claim flows
+       * (sponsor refunds, raffle draws, etc.).
        */
-      recipient: string;
-      position?: number;
+      tokenId?: string;
       payoutParams: string[];
     }
   | { kind: "entry_fee_position"; position: number }
@@ -228,8 +228,11 @@ export type RewardType =
   | { kind: "entry_fee_refund"; tokenId: string }
   | {
       kind: "entry_fee_extension";
-      recipient: string;
-      position?: number;
+      /**
+       * Game token claiming the fee-pool share, or undefined for
+       * non-claim flows (sponsor refunds, creator shares, etc.).
+       */
+      tokenId?: string;
       claimParams: string[];
     };
 
@@ -610,12 +613,10 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
       );
       return;
     case "prize_extension":
-      // ExtensionPrizeClaim {
-      //   prize_id, recipient, position: Option<u32>, payout_params,
-      // }
-      out.push("0x0", "0x1", num.toHex(reward.prizeId), reward.recipient);
-      if (reward.position !== undefined) {
-        out.push("0x0", num.toHex(reward.position)); // Some
+      // ExtensionPrizeClaim { prize_id, token_id: Option<felt252>, payout_params }
+      out.push("0x0", "0x1", num.toHex(reward.prizeId));
+      if (reward.tokenId !== undefined) {
+        out.push("0x0", reward.tokenId); // Some(token_id)
       } else {
         out.push("0x1"); // None
       }
@@ -637,10 +638,10 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
       out.push("0x1", "0x0", "0x3", num.toHex(reward.tokenId));
       return;
     case "entry_fee_extension": {
-      // ExtensionEntryFeeClaim { recipient, position: Option<u32>, claim_params }
-      out.push("0x1", "0x1", reward.recipient);
-      if (reward.position !== undefined) {
-        out.push("0x0", num.toHex(reward.position)); // Some
+      // ExtensionEntryFeeClaim { token_id: Option<felt252>, claim_params }
+      out.push("0x1", "0x1");
+      if (reward.tokenId !== undefined) {
+        out.push("0x0", reward.tokenId); // Some(token_id)
       } else {
         out.push("0x1"); // None
       }

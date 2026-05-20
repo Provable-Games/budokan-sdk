@@ -642,6 +642,20 @@
     ]
   },
   {
+    "type": "enum",
+    "name": "core::option::Option::<core::felt252>",
+    "variants": [
+      {
+        "name": "Some",
+        "type": "core::felt252"
+      },
+      {
+        "name": "None",
+        "type": "()"
+      }
+    ]
+  },
+  {
     "type": "struct",
     "name": "budokan_interfaces::budokan::ExtensionPrizeClaim",
     "members": [
@@ -650,12 +664,8 @@
         "type": "core::integer::u64"
       },
       {
-        "name": "recipient",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "position",
-        "type": "core::option::Option::<core::integer::u32>"
+        "name": "token_id",
+        "type": "core::option::Option::<core::felt252>"
       },
       {
         "name": "payout_params",
@@ -704,12 +714,8 @@
     "name": "budokan_interfaces::budokan::ExtensionEntryFeeClaim",
     "members": [
       {
-        "name": "recipient",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "position",
-        "type": "core::option::Option::<core::integer::u32>"
+        "name": "token_id",
+        "type": "core::option::Option::<core::felt252>"
       },
       {
         "name": "claim_params",
