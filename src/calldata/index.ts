@@ -182,10 +182,14 @@ export function buildErc20ApproveCall(
 // ---------------------------------------------------------------------------
 
 /**
- * `enter_tournament(tournament_id: u64, player_name: Option<felt252>,
+ * `enter_tournament(tournament_id: u64, player_name: felt252,
  *                   player_address: ContractAddress,
  *                   qualification: Option<QualificationProof>,
  *                   salt: u16, metadata_value: u16)`
+ *
+ * `player_name` is a plain `felt252` (NOT an Option) per the ABI — omit it
+ * and an empty short string (felt `0x0`) is sent. Only `qualification` is an
+ * Option here.
  *
  * Returns `(felt252, u32)` on-chain — game_token_id and entry_number — but
  * `execute()` surfaces only the tx hash. Callers can fetch the receipt
@@ -200,24 +204,19 @@ export function buildEnterTournamentCall(
   budokanAddress: string,
   args: EnterTournamentArgs,
 ): Call {
-  // Hand-built calldata: enum tag pushes are easier to reason about than
-  // configuring CallData.compile for Option<felt252> here.
+  // Hand-built calldata. player_name is a plain felt252; only qualification
+  // is an Option (None tag = 0x1).
   const calldata: string[] = [
     num.toHex(args.tournamentId), // tournament_id u64
+    felt252FromShortString(args.playerName ?? ""), // player_name felt252
+    args.playerAddress, // player_address
+    // qualification: Option<QualificationProof> — only None is supported here.
+    // Token / extension qualified tournaments require a real proof, which
+    // depends on the validator and on the caller's runtime state.
+    "0x1",
+    num.toHex(args.salt ?? 0), // salt u16
+    num.toHex(args.metadataValue ?? 0), // metadata_value u16
   ];
-  // player_name: Option<felt252>. Tags: 0 = Some, 1 = None.
-  if (args.playerName) {
-    calldata.push("0x0", felt252FromShortString(args.playerName));
-  } else {
-    calldata.push("0x1");
-  }
-  calldata.push(args.playerAddress); // player_address
-  // qualification: Option<QualificationProof> — only None is supported here.
-  // Token / extension qualified tournaments require a real proof, which
-  // depends on the validator and on the caller's runtime state.
-  calldata.push("0x1");
-  calldata.push(num.toHex(args.salt ?? 0)); // salt u16
-  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u16
   return {
     contractAddress: budokanAddress,
     entrypoint: "enter_tournament",

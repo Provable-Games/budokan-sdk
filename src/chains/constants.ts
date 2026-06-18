@@ -55,7 +55,9 @@ export function explorerAddressUrl(chain: string, address: string): string {
  */
 export function tournamentPageUrl(
   chain: string,
-  tournamentId: string | number,
+  // u64 on-chain — accept bigint/string losslessly (parseTournamentIdFromReceipt
+  // returns bigint). number is allowed for convenience.
+  tournamentId: string | number | bigint,
 ): string {
   return `https://budokan.gg/tournament/${tournamentId}?network=${chain}`;
 }

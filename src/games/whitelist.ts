@@ -160,7 +160,9 @@ function canonicalize(game: WhitelistedGame): WhitelistedGame {
  */
 export function getWhitelistedGames(chain: WhitelistChain): WhitelistedGame[] {
   const list = chain === "mainnet" ? MAINNET_GAMES : SEPOLIA_GAMES;
-  return [...list].sort((a, b) => {
+  // Clone the objects, not just the array, so a caller mutating a returned
+  // game can't corrupt the module's canonical entries (and future lookups).
+  return list.map((g) => ({ ...g })).sort((a, b) => {
     const aDisabled = a.disabled ?? false;
     const bDisabled = b.disabled ?? false;
     if (aDisabled !== bDisabled) return aDisabled ? 1 : -1;
