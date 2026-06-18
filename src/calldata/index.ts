@@ -111,6 +111,12 @@ export interface EnterTournamentArgs {
    * sponsor flows against gated tournaments.
    */
   qualifier?: string;
+  /**
+   * `entry_fee_pay_params` (`Option<Span<felt252>>`). Required only for
+   * tournaments with an `EntryFeeKind::Extension` fee — the felts the fee
+   * extension expects. Omit for the built-in fee flow (Option::None).
+   */
+  entryFeePayParams?: string[];
   salt?: number;
   metadataValue?: number;
 }
@@ -324,9 +330,17 @@ export function buildEnterTournamentCall(
   // Token / extension qualified tournaments require a real proof, which
   // depends on the validator and on the caller's runtime state.
   calldata.push("0x1");
-  // entry_fee_pay_params: Option<Span<felt252>> — None for the built-in fee
-  // flow (only needed for EntryFeeKind::Extension tournaments).
-  calldata.push("0x1");
+  // entry_fee_pay_params: Option<Span<felt252>>. Some(span) for
+  // EntryFeeKind::Extension tournaments; None for the built-in fee flow.
+  if (args.entryFeePayParams && args.entryFeePayParams.length > 0) {
+    calldata.push(
+      "0x0",
+      num.toHex(args.entryFeePayParams.length),
+      ...args.entryFeePayParams,
+    );
+  } else {
+    calldata.push("0x1");
+  }
   calldata.push(num.toHex(args.salt ?? 0)); // salt u16
   calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u16
   return {

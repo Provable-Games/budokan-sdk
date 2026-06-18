@@ -339,6 +339,11 @@ function parsePrize(raw: unknown): Prize {
   let distributionWeight: number | null = null;
   let distributionShares: number[] | null = null;
   let distributionCount: number | null = null;
+  // NOTE: the `tournament_prizes` PrizeRecord does not carry the prize's
+  // leaderboard position (it's assigned at add_prize time and stored
+  // elsewhere), so the RPC path can't populate it — defaults to 0. The API
+  // path hydrates the real position. Pre-existing viewer limitation,
+  // independent of the #269 migration.
   let payoutPosition = 0;
 
   if (tokenTypeData) {
