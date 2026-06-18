@@ -49,9 +49,10 @@ jobs:
             npx -y "$YAML_CLI" valid < "$file"
           done
 
+  # Always runs: `test` is a required status check, so it must report on
+  # every PR (a conditional skip leaves the required check pending and
+  # blocks merge on docs/CI-only PRs).
   test:
-    needs: changes
-    if: needs.changes.outputs.sdk == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
