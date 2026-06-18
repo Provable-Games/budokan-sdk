@@ -182,14 +182,15 @@ export function buildErc20ApproveCall(
 // ---------------------------------------------------------------------------
 
 /**
- * `enter_tournament(tournament_id: u64, player_name: felt252,
+ * `enter_tournament(tournament_id: u64, player_name: Option<felt252>,
  *                   player_address: ContractAddress,
  *                   qualification: Option<QualificationProof>,
  *                   salt: u16, metadata_value: u16)`
  *
- * `player_name` is a plain `felt252` (NOT an Option) per the ABI — omit it
- * and an empty short string (felt `0x0`) is sent. Only `qualification` is an
- * Option here.
+ * Matches the live mainnet contract. NOTE: sepolia runs the newer budokan
+ * #269 contract where `player_address` is also an Option and extra
+ * `qualifier` / `entry_fee_pay_params` params exist — this builder targets
+ * the mainnet shape; a per-chain/#269 path is tracked separately.
  *
  * Returns `(felt252, u32)` on-chain — game_token_id and entry_number — but
  * `execute()` surfaces only the tx hash. Callers can fetch the receipt
@@ -204,19 +205,27 @@ export function buildEnterTournamentCall(
   budokanAddress: string,
   args: EnterTournamentArgs,
 ): Call {
-  // Hand-built calldata. player_name is a plain felt252; only qualification
-  // is an Option (None tag = 0x1).
+  // Hand-built calldata. Verified against the live mainnet contract:
+  // player_name is Option<felt252> (Some tag 0x0 + value, or None tag 0x1) —
+  // the SDK's bundled budokan.json showed a plain felt252, but that ABI is
+  // stale; the deployed contract takes an Option. qualification is also an
+  // Option (None only here).
   const calldata: string[] = [
     num.toHex(args.tournamentId), // tournament_id u64
-    felt252FromShortString(args.playerName ?? ""), // player_name felt252
-    args.playerAddress, // player_address
-    // qualification: Option<QualificationProof> — only None is supported here.
-    // Token / extension qualified tournaments require a real proof, which
-    // depends on the validator and on the caller's runtime state.
-    "0x1",
-    num.toHex(args.salt ?? 0), // salt u16
-    num.toHex(args.metadataValue ?? 0), // metadata_value u16
   ];
+  // player_name: Option<felt252>. Tags: 0 = Some, 1 = None.
+  if (args.playerName) {
+    calldata.push("0x0", felt252FromShortString(args.playerName));
+  } else {
+    calldata.push("0x1");
+  }
+  calldata.push(args.playerAddress); // player_address
+  // qualification: Option<QualificationProof> — only None is supported here.
+  // Token / extension qualified tournaments require a real proof, which
+  // depends on the validator and on the caller's runtime state.
+  calldata.push("0x1");
+  calldata.push(num.toHex(args.salt ?? 0)); // salt u16
+  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u16
   return {
     contractAddress: budokanAddress,
     entrypoint: "enter_tournament",

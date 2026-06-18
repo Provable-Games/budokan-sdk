@@ -23,25 +23,26 @@ describe("buildErc20ApproveCall", () => {
 });
 
 describe("buildEnterTournamentCall", () => {
-  test("player_name is a plain felt252 when provided", () => {
+  test("player_name: Option<felt252> Some when provided", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",
       playerAddress: "0xabc",
       playerName: "ab", // ASCII 0x6162
     });
-    // [id, name_felt, address, qual_tag(None=0x1), salt, meta]
-    expect(call.calldata[1]).toBe("0x6162");
-    expect(call.calldata[2]).toBe("0xabc");
-    expect(call.calldata[3]).toBe("0x1"); // qualification None
+    // [id, name_tag(Some=0x0), name_felt, address, qual_tag(None=0x1), salt, meta]
+    expect(call.calldata[1]).toBe("0x0");
+    expect(call.calldata[2]).toBe("0x6162");
+    expect(call.calldata[3]).toBe("0xabc");
+    expect(call.calldata[4]).toBe("0x1"); // qualification None
   });
 
-  test("player_name defaults to empty felt (0x0) when omitted", () => {
+  test("player_name: Option<felt252> None when omitted", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",
       playerAddress: "0xabc",
     });
-    // [id, name_felt(0x0), address, qual_tag(None=0x1), salt, meta]
-    expect(call.calldata[1]).toBe("0x0");
+    // [id, name_tag(None=0x1), address, qual_tag(None=0x1), salt, meta]
+    expect(call.calldata[1]).toBe("0x1");
     expect(call.calldata[2]).toBe("0xabc");
     expect(call.calldata[3]).toBe("0x1"); // qualification None
     expect(call.calldata[4]).toBe("0x0"); // default salt
