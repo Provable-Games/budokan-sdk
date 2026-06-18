@@ -71,5 +71,74 @@ export { snakeToCamel, camelToSnake } from "./utils/mappers.js";
 export { withRetry } from "./utils/retry.js";
 
 // Chains
-export { CHAINS, getChainConfig } from "./chains/constants.js";
+export {
+  CHAINS,
+  getChainConfig,
+  explorerBaseUrl,
+  explorerTxUrl,
+  explorerAddressUrl,
+  tournamentPageUrl,
+} from "./chains/constants.js";
 export type { ChainConfig } from "./chains/constants.js";
+
+// Game whitelist + per-game UX metadata. The denshokan registry is the
+// source of truth for which games exist; this whitelist is the subset
+// we recommend / support, plus extra metadata that doesn't live on chain.
+export {
+  getWhitelistedGames,
+  findWhitelistedGame,
+  isGameWhitelisted,
+  getGameDefaults,
+} from "./games/whitelist.js";
+export type {
+  WhitelistedGame,
+  WhitelistChain,
+  GameDefaults,
+} from "./games/whitelist.js";
+
+// Calldata builders for Budokan's on-chain entrypoints. Use these from
+// any integration (Discord bot, CLI, agent code, …) that needs to drive
+// the same contract — they encode Cairo enums and Options correctly and
+// keep encoding gotchas in one place. See src/calldata/index.ts.
+export {
+  buildCreateTournamentCall,
+  buildEnterTournamentCall,
+  buildSubmitScoreCall,
+  buildClaimRewardCall,
+  buildAddPrizeCall,
+  buildErc20ApproveCall,
+  parseTournamentIdFromReceipt,
+} from "./calldata/index.js";
+export type {
+  Call,
+  CreateTournamentArgs,
+  EnterTournamentArgs,
+  AddPrizeArgs,
+  EntryFeeArgs,
+  EntryRequirementArgs,
+  EntryRequirementSpec,
+  DistributionSpec,
+  RewardType,
+  ReceiptWithEvents,
+} from "./calldata/index.js";
+
+// Entry-requirement validator extension presets — address lookup +
+// `Span<felt252>` config builders for the four common validators
+// (merkle, erc20Balance, opusTroves, tournament). See
+// src/extensions/index.ts.
+export {
+  extensionAddressFor,
+  u256ToLowHigh,
+  buildErc20BalanceConfig,
+  buildOpusTrovesConfig,
+  buildMerkleConfig,
+  buildTournamentValidatorConfig,
+} from "./extensions/index.js";
+export type {
+  ExtensionPresetKind,
+  Erc20BalanceConfig,
+  OpusTrovesConfig,
+  MerkleConfig,
+  TournamentValidatorConfig,
+  TournamentRequirementType,
+} from "./extensions/index.js";
