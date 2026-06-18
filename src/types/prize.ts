@@ -2,7 +2,8 @@ export interface Prize {
   prizeId: string;
   tournamentId: string;
   payoutPosition: number;
-  tokenAddress: string;
+  /** Token contract for built-in prizes; `null` for `tokenType === "extension"`. */
+  tokenAddress: string | null;
   /**
    * `erc20` / `erc721` are built-in token prizes. `extension` is an external
    * `IPrizeExtension` prize (the #269 path): the token fields below are null

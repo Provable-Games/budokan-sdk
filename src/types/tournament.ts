@@ -46,7 +46,15 @@ export interface Tournament {
   // Full structured data (JSONB from API)
   schedule: Schedule | null;
   gameConfig: GameConfig | null;
+  /** Built-in entry fee (EntryFeeKind::BuiltIn). Null for free OR extension-fee tournaments. */
   entryFee: EntryFee | null;
+  /**
+   * Discriminates the on-chain `EntryFeeKind`: `"builtin"` (see `entryFee`),
+   * `"extension"` (see `entryFeeExtension`), or `null` when there's no fee.
+   */
+  entryFeeKind: "builtin" | "extension" | null;
+  /** External entry-fee extension (EntryFeeKind::Extension). Set only when entryFeeKind === "extension". */
+  entryFeeExtension: { address: string; config: string[] } | null;
   entryRequirement: EntryRequirement | null;
   leaderboardConfig: LeaderboardConfig | null;
   // Counts

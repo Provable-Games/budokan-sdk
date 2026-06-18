@@ -157,13 +157,17 @@ function parseTournament(
   let entryFeeToken: string | null = null;
   let entryFeeAmount: string | null = null;
   let entryFee: Tournament["entryFee"] = null;
+  let entryFeeKindTag: Tournament["entryFeeKind"] = null;
+  let entryFeeExtension: Tournament["entryFeeExtension"] = null;
   if (entryFeeKind) {
     const variantBag = (entryFeeKind.variant ?? entryFeeKind) as Record<
       string,
       unknown
     >;
     const ef = variantBag.BuiltIn as Record<string, unknown> | undefined;
+    const ext = variantBag.Extension as Record<string, unknown> | undefined;
     if (ef) {
+      entryFeeKindTag = "builtin";
       entryFeeToken = num.toHex(ef.token_address as bigint);
       entryFeeAmount = String(ef.amount ?? "0");
       entryFee = {
@@ -174,6 +178,17 @@ function parseTournament(
         refundShare: Number(ef.refund_share ?? 0),
         distribution: (ef.distribution as Distribution) ?? null,
         distributionCount: Number(ef.distribution_count ?? 0),
+      };
+    } else if (ext) {
+      // EntryFeeKind::Extension { address, config } — an external fee
+      // extension. Built-in fee fields stay null; surfaced distinctly so
+      // callers don't mistake it for a free tournament.
+      entryFeeKindTag = "extension";
+      entryFeeExtension = {
+        address: num.toHex(ext.address as bigint),
+        config: Array.isArray(ext.config)
+          ? (ext.config as unknown[]).map((x) => num.toHex(x as bigint))
+          : [],
       };
     }
   }
@@ -228,6 +243,8 @@ function parseTournament(
       renderer,
     },
     entryFee,
+    entryFeeKind: entryFeeKindTag,
+    entryFeeExtension,
     entryRequirement,
     leaderboardConfig: { ascending, gameMustBeOver },
     entryCount,
@@ -257,13 +274,17 @@ function parseRegistration(raw: unknown, tournamentId: string): Registration {
   };
 }
 
-function parsePrize(raw: unknown): Prize | null {
+function parsePrize(raw: unknown): Prize {
   const record = raw as Record<string, unknown>;
 
   // Unwrap PrizeRecord -> Prize sum type. starknet.js may expose the variant
   // via `activeVariant()` + `variant`, or as a flat record keyed by name.
+  // Throw (rather than drop) on malformed/unknown shapes so a changed RPC
+  // response surfaces as an error instead of a silently-truncated prize list.
   const prizeEnum = record.prize as Record<string, unknown> | undefined;
-  if (!prizeEnum) return null;
+  if (!prizeEnum) {
+    throw new Error(`PrizeRecord missing prize field: ${JSON.stringify(raw)}`);
+  }
   const activePrize =
     typeof prizeEnum.activeVariant === "function"
       ? (prizeEnum.activeVariant as () => string)()
@@ -283,7 +304,7 @@ function parsePrize(raw: unknown): Prize | null {
       prizeId: String(record.id ?? "0"),
       tournamentId: String(record.context_id ?? "0"),
       payoutPosition: 0,
-      tokenAddress: "",
+      tokenAddress: null,
       tokenType: "extension",
       amount: null,
       tokenId: null,
@@ -299,10 +320,14 @@ function parsePrize(raw: unknown): Prize | null {
         : null,
     };
   }
-  if (activePrize !== "Token") return null;
+  if (activePrize !== "Token") {
+    throw new Error(`Unrecognised Prize variant: ${JSON.stringify(prizeEnum)}`);
+  }
 
   const tokenPayload = prizeVariantBag.Token as Record<string, unknown> | undefined;
-  if (!tokenPayload) return null;
+  if (!tokenPayload) {
+    throw new Error(`Prize::Token missing payload: ${JSON.stringify(prizeEnum)}`);
+  }
 
   const tokenTypeData = tokenPayload.token_type as Record<string, unknown> | undefined;
 
@@ -590,9 +615,7 @@ export async function viewerPrizes(
 ): Promise<Prize[]> {
   return wrapRpcCall(async () => {
     const result = await contract.call("tournament_prizes", [tournamentId]);
-    return (result as unknown[])
-      .map(parsePrize)
-      .filter((p): p is Prize => p !== null);
+    return (result as unknown[]).map(parsePrize);
   }, contract.address);
 }
 
