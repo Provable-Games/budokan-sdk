@@ -19,7 +19,10 @@ export const CHAINS: Record<string, ChainConfig> = {
     apiBaseUrl: "https://budokan-api-sepolia.up.railway.app",
     wsUrl: "wss://budokan-api-sepolia.up.railway.app/ws",
     budokanAddress: "0x074cc823c382d98e6b8d657aa86776a57d85e1dc2912d54d83a4fef147472683",
-    viewerAddress: "0x03da56daf19e0aa6ac8e7dc65da34ed1dd2353a3290260cf392c373309c0c297",
+    // Redeployed 2026-06-18 to match the upgraded #264/#269 budokan class —
+    // the prior viewer (0x03da56…) was built against the old budokan interface
+    // (called the removed `tournament_entries`) and reverted RPC reads.
+    viewerAddress: "0x06b2773d5f1f8bfa5aa3b698fbbaea0472b30af003ea6058330ed52a1acaa283",
   },
 } as const;
 
