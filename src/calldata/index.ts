@@ -448,6 +448,13 @@ function encodePrize(spec: PrizeSpec): CairoCustomEnum {
 
 function encodeTokenType(spec: TokenTypeSpec): CairoCustomEnum {
   if (spec.kind === "erc20") {
+    // distribution and distribution_count must agree: a Some(distribution)
+    // with a None count is ambiguous calldata that the contract rejects.
+    if (spec.distribution && spec.distributionCount === undefined) {
+      throw new Error(
+        "TokenTypeSpec.erc20: distributionCount is required when distribution is set",
+      );
+    }
     // Inner ERC20Data: { amount: u128, distribution: Option<Distribution>,
     // distribution_count: Option<u32> }. Both Options use CairoOption so
     // CallData.compile recognizes them as typed wrappers.

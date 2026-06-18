@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { hash } from "starknet";
 import {
+  buildAddPrizeCall,
   buildClaimRewardCall,
   buildEnterTournamentCall,
   buildErc20ApproveCall,
@@ -50,16 +51,18 @@ describe("buildEnterTournamentCall", () => {
 });
 
 describe("buildClaimRewardCall enum tags", () => {
+  // Tags: RewardType{Prize=0,EntryFee=1} → PrizeClaim/EntryFeeClaim
+  // {Token=0,Extension=1} → inner type tag.
   const cases: Array<[Parameters<typeof buildClaimRewardCall>[1]["reward"], string[]]> = [
-    [{ kind: "prize_single", prizeId: "7" }, ["0x0", "0x0", "0x7"]],
+    [{ kind: "prize_single", prizeId: "7" }, ["0x0", "0x0", "0x0", "0x7"]],
     [
       { kind: "prize_distributed", prizeId: "7", payoutPosition: 2 },
-      ["0x0", "0x1", "0x7", "0x2"],
+      ["0x0", "0x0", "0x1", "0x7", "0x2"],
     ],
-    [{ kind: "entry_fee_position", position: 3 }, ["0x1", "0x0", "0x3"]],
-    [{ kind: "entry_fee_tournament_creator" }, ["0x1", "0x1"]],
-    [{ kind: "entry_fee_game_creator" }, ["0x1", "0x2"]],
-    [{ kind: "entry_fee_refund", tokenId: "9" }, ["0x1", "0x3", "0x9"]],
+    [{ kind: "entry_fee_position", position: 3 }, ["0x1", "0x0", "0x0", "0x3"]],
+    [{ kind: "entry_fee_tournament_creator" }, ["0x1", "0x0", "0x1"]],
+    [{ kind: "entry_fee_game_creator" }, ["0x1", "0x0", "0x2"]],
+    [{ kind: "entry_fee_refund", tokenId: "9" }, ["0x1", "0x0", "0x3", "0x9"]],
   ];
   for (const [reward, expected] of cases) {
     test(reward.kind, () => {
@@ -121,6 +124,76 @@ describe("buildCreateTournamentCall", () => {
         entryLimit: 1,
         type: { kind: "token", tokenAddress: "0xgate" },
       },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildAddPrizeCall", () => {
+  test("erc20 single (winner-takes-all) compiles", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: {
+        kind: "token",
+        tokenAddress: "0xtoken",
+        tokenType: { kind: "erc20", amount: "1000" },
+        position: 1,
+      },
+    });
+    expect(call.entrypoint).toBe("add_prize");
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  test("erc20 distributed compiles with distributionCount", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: {
+        kind: "token",
+        tokenAddress: "0xtoken",
+        tokenType: {
+          kind: "erc20",
+          amount: "1000",
+          distribution: { kind: "linear", weight: 10 },
+          distributionCount: 3,
+        },
+      },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  test("erc20 distribution without distributionCount throws", () => {
+    expect(() =>
+      buildAddPrizeCall(BUDOKAN, {
+        tournamentId: "1",
+        prize: {
+          kind: "token",
+          tokenAddress: "0xtoken",
+          tokenType: {
+            kind: "erc20",
+            amount: "1000",
+            distribution: { kind: "linear", weight: 10 },
+          },
+        },
+      }),
+    ).toThrow(/distributionCount is required/);
+  });
+
+  test("erc721 prize compiles", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: {
+        kind: "token",
+        tokenAddress: "0xnft",
+        tokenType: { kind: "erc721", tokenId: "42" },
+      },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  test("extension prize compiles", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: { kind: "extension", address: "0xext", config: ["0x1", "0x2"] },
     });
     expect(call.calldata.length).toBeGreaterThan(0);
   });
