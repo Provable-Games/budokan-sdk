@@ -455,9 +455,15 @@ function encodeTokenType(spec: TokenTypeSpec): CairoCustomEnum {
         "TokenTypeSpec.erc20: distributionCount is required when distribution is set",
       );
     }
-    // Inner ERC20Data: { amount: u128, distribution: Option<Distribution>,
+    // Inner erc20 data: { amount: u128, distribution: Option<Distribution>,
     // distribution_count: Option<u32> }. Both Options use CairoOption so
     // CallData.compile recognizes them as typed wrappers.
+    //
+    // Variant keys (`erc20`/`erc721`) match the ABI's TokenTypeData variant
+    // names exactly, in declaration order. CallData.compile encodes the
+    // variant by position (it's order-based without an ABI), so casing is
+    // cosmetic for the wire format — but matching the ABI keeps the encoder
+    // self-evidently correct and ABI-aware code paths safe.
     const distribution = spec.distribution
       ? new CairoOption<CairoCustomEnum>(
           CairoOptionVariant.Some,
@@ -472,17 +478,17 @@ function encodeTokenType(spec: TokenTypeSpec): CairoCustomEnum {
           )
         : new CairoOption<number>(CairoOptionVariant.None);
     return new CairoCustomEnum({
-      ERC20: {
+      erc20: {
         amount: spec.amount,
         distribution,
         distribution_count: distributionCount,
       },
-      ERC721: undefined,
+      erc721: undefined,
     });
   }
   return new CairoCustomEnum({
-    ERC20: undefined,
-    ERC721: { id: spec.tokenId },
+    erc20: undefined,
+    erc721: { id: spec.tokenId },
   });
 }
 
