@@ -610,7 +610,12 @@ function translateCairoRewardType(rewardType: unknown): {
   payoutIndex: number | null;
   position: number | null;
   refundTokenId: string | null;
-} {
+} | null {
+  // Returns null for extension claims (PrizeClaim::Extension /
+  // EntryFeeClaim::Extension), which RewardClaimKind doesn't model — the
+  // caller filters them. This is an RPC-fallback gap for the new #269
+  // extension reward path (the API is the primary source); it omits rather
+  // than crashes. Tracked for full modelling in a follow-up.
   if (!rewardType || typeof rewardType !== "object") {
     throw new Error(`Unexpected RewardType payload: ${JSON.stringify(rewardType)}`);
   }
@@ -628,6 +633,8 @@ function translateCairoRewardType(rewardType: unknown): {
     const pcBag = (typeof prizeClaim?.activeVariant === "function"
       ? prizeClaim.variant
       : prizeClaim) as Record<string, any>;
+    // PrizeClaim::Extension — not modelled by RewardClaimKind; skip.
+    if (pcBag?.Token === undefined && pcBag?.Extension !== undefined) return null;
     const prize = pcBag?.Token ?? prizeClaim;
     const subVariant = typeof prize?.activeVariant === "function" ? prize.activeVariant() : null;
     const subBag = (typeof prize?.activeVariant === "function" ? prize.variant : prize) as Record<string, any>;
@@ -662,6 +669,8 @@ function translateCairoRewardType(rewardType: unknown): {
     const efBag = (typeof entryFeeClaim?.activeVariant === "function"
       ? entryFeeClaim.variant
       : entryFeeClaim) as Record<string, any>;
+    // EntryFeeClaim::Extension — not modelled by RewardClaimKind; skip.
+    if (efBag?.Token === undefined && efBag?.Extension !== undefined) return null;
     const entryFee = efBag?.Token ?? entryFeeClaim;
     const subVariant =
       typeof entryFee?.activeVariant === "function" ? entryFee.activeVariant() : null;
@@ -719,13 +728,15 @@ export async function viewerRewardClaims(
   return wrapRpcCall(async () => {
     const result = await contract.call("tournament_reward_claims", [tournamentId, offset, limit]);
     const obj = result as Record<string, unknown>;
-    const claims: ViewerRewardClaim[] = (obj.claims as unknown[])?.map((raw) => {
-      const claim = raw as Record<string, unknown>;
-      return {
-        ...translateCairoRewardType(claim.reward_type),
-        claimed: Boolean(claim.claimed),
-      };
-    }) ?? [];
+    const claims: ViewerRewardClaim[] = ((obj.claims as unknown[]) ?? [])
+      .map((raw) => {
+        const claim = raw as Record<string, unknown>;
+        const translated = translateCairoRewardType(claim.reward_type);
+        // null = extension claim, not modelled here (see translateCairoRewardType).
+        if (!translated) return null;
+        return { ...translated, claimed: Boolean(claim.claimed) };
+      })
+      .filter((c): c is ViewerRewardClaim => c !== null);
     return {
       claims,
       total: Number(obj.total ?? 0),
