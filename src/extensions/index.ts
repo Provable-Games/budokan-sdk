@@ -66,9 +66,13 @@ export function extensionAddressFor(
   }
 }
 
+const U256_MAX = (1n << 256n) - 1n;
+
 /** Split a u256 (as bigint) into [low_128, high_128] felt strings. */
 export function u256ToLowHigh(value: bigint): [string, string] {
   if (value < 0n) throw new Error("u256 cannot be negative");
+  if (value > U256_MAX)
+    throw new Error(`Value exceeds u256 max: ${value.toString()}`);
   const MASK = (1n << 128n) - 1n;
   return [(value & MASK).toString(), (value >> 128n).toString()];
 }

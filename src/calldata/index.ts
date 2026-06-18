@@ -536,8 +536,11 @@ const TOURNAMENT_CREATED_SELECTOR = hash.getSelectorFromName(
  * contract. The event has the tournament id in its first indexed key
  * (`keys[1]` — `keys[0]` is the selector).
  *
- * Returns `undefined` if no matching event is found (e.g. the receipt
- * came from a different call, or the budokan address didn't match).
+ * Returns the id as a `bigint` (the on-chain type is `u64`, which exceeds
+ * JS `Number.MAX_SAFE_INTEGER`, so a lossless type is required — callers
+ * deep-linking to a tournament page should `.toString()` it). Returns
+ * `undefined` if no matching event is found (e.g. the receipt came from a
+ * different call, or the budokan address didn't match).
  *
  * Caller is responsible for fetching the receipt — typically via
  * `account.waitForTransaction(hash)` or `provider.waitForTransaction(hash)`.
@@ -545,15 +548,18 @@ const TOURNAMENT_CREATED_SELECTOR = hash.getSelectorFromName(
 export function parseTournamentIdFromReceipt(
   receipt: ReceiptWithEvents,
   budokanAddress: string,
-): number | undefined {
+): bigint | undefined {
   const normalise = (addr: string) =>
     addr.toLowerCase().replace(/^0x0*/, "0x");
   const normContract = normalise(budokanAddress);
+  // Compare selectors numerically so RPC formatting differences
+  // (leading-zero padding, casing) don't cause a valid event to be missed.
+  const createdSelector = BigInt(TOURNAMENT_CREATED_SELECTOR);
   for (const event of receipt.events ?? []) {
     if (!event.from_address || !event.keys || event.keys.length < 2) continue;
     if (normalise(event.from_address) !== normContract) continue;
-    if (event.keys[0] !== TOURNAMENT_CREATED_SELECTOR) continue;
-    return Number(BigInt(event.keys[1]!));
+    if (BigInt(event.keys[0]!) !== createdSelector) continue;
+    return BigInt(event.keys[1]!);
   }
   return undefined;
 }

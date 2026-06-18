@@ -36,6 +36,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "test": "bun test",
     "clean": "rm -rf dist"
   },
   "keywords": [
