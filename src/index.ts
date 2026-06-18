@@ -212,3 +212,28 @@ export type {
   TournamentValidatorConfig,
   TournamentRequirementType,
 } from "./extensions/index.js";
+
+// 1v1 single-elimination brackets, orchestrated off-chain over ordinary
+// leaderboard tournaments (one match = one 2-player tournament). Pure
+// state + Call builders; the caller persists state and signs. See
+// src/brackets/DESIGN.md.
+export {
+  createBracket,
+  advanceBracket,
+  attachMatchTournament,
+  pendingMatchCreateCalls,
+  bracketEntryCalls,
+  nextMatchesFor,
+  bracketSummary,
+} from "./brackets/index.js";
+export type {
+  BracketState,
+  BracketMatch,
+  BracketPlayer,
+  MatchStatus,
+  MatchScheduleTemplate,
+  CreateBracketOptions,
+  CreateMatchCall,
+  MatchResult,
+  MatchReader,
+} from "./brackets/index.js";
