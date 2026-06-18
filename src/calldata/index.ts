@@ -98,9 +98,19 @@ export interface EntryRequirementArgs {
 
 export interface EnterTournamentArgs {
   tournamentId: string;
-  playerAddress: string;
+  /**
+   * Mint recipient. Encoded as `Option<ContractAddress>` — omit for
+   * `None` (the contract defaults the mint to the caller).
+   */
+  playerAddress?: string;
   /** Optional felt252 short string (≤31 ASCII bytes). Omit → Option::None. */
   playerName?: string;
+  /**
+   * Third-party qualifier to claim, as `Option<ContractAddress>`. Omit for
+   * `None` (caller is the qualifier — the common path). Only needed for
+   * sponsor flows against gated tournaments.
+   */
+  qualifier?: string;
   salt?: number;
   metadataValue?: number;
 }
@@ -120,7 +130,7 @@ export interface CreateTournamentArgs {
     submissionDuration: number;
   };
   leaderboard: { ascending: boolean; gameMustBeOver: boolean };
-  /** Encoded as Option::Some(EntryFee) on chain when set. */
+  /** Encoded as Option::Some(EntryFeeKind::BuiltIn(EntryFee)) when set. */
   entryFee?: EntryFeeArgs;
   /** Encoded as Option::Some(EntryRequirement) on chain when set. */
   entryRequirement?: EntryRequirementArgs;
@@ -258,14 +268,17 @@ export function buildErc20ApproveCall(
 // ---------------------------------------------------------------------------
 
 /**
- * `enter_tournament(tournament_id: u64, player_name: felt252,
- *                   player_address: ContractAddress,
+ * `enter_tournament(tournament_id: u64, player_name: Option<felt252>,
+ *                   player_address: Option<ContractAddress>,
+ *                   qualifier: Option<ContractAddress>,
  *                   qualification: Option<QualificationProof>,
+ *                   entry_fee_pay_params: Option<Span<felt252>>,
  *                   salt: u16, metadata_value: u16)`
  *
- * `player_name` is a plain `felt252` (NOT an Option) per the ABI — omit it
- * and an empty short string (felt `0x0`) is sent. Only `qualification` is an
- * Option here.
+ * Targets the current budokan contract (#264/#269). `qualification` and
+ * `entry_fee_pay_params` are always `None` here — gated/extension-fee
+ * tournaments need a real proof / pay-params payload, which depend on the
+ * validator and the caller's runtime state.
  *
  * Returns `(felt252, u32)` on-chain — game_token_id and entry_number — but
  * `execute()` surfaces only the tx hash. Callers can fetch the receipt
@@ -280,19 +293,42 @@ export function buildEnterTournamentCall(
   budokanAddress: string,
   args: EnterTournamentArgs,
 ): Call {
-  // Hand-built calldata. player_name is a plain felt252; only qualification
-  // is an Option (None tag = 0x1).
+  // Hand-built calldata. enter_tournament takes a chain of Options (tags:
+  // 0 = Some, 1 = None) in this exact ABI order:
+  //   tournament_id, player_name?, player_address?, qualifier?,
+  //   qualification?, entry_fee_pay_params?, salt, metadata_value
   const calldata: string[] = [
     num.toHex(args.tournamentId), // tournament_id u64
-    felt252FromShortString(args.playerName ?? ""), // player_name felt252
-    args.playerAddress, // player_address
-    // qualification: Option<QualificationProof> — only None is supported here.
-    // Token / extension qualified tournaments require a real proof, which
-    // depends on the validator and on the caller's runtime state.
-    "0x1",
-    num.toHex(args.salt ?? 0), // salt u16
-    num.toHex(args.metadataValue ?? 0), // metadata_value u16
   ];
+  // player_name: Option<felt252>
+  if (args.playerName) {
+    calldata.push("0x0", felt252FromShortString(args.playerName));
+  } else {
+    calldata.push("0x1");
+  }
+  // player_address: Option<ContractAddress> — Some(addr) sets the mint
+  // recipient; None defaults to the caller.
+  if (args.playerAddress) {
+    calldata.push("0x0", args.playerAddress);
+  } else {
+    calldata.push("0x1");
+  }
+  // qualifier: Option<ContractAddress> — Some(addr) claims a third-party
+  // qualifier; None = caller is the qualifier.
+  if (args.qualifier) {
+    calldata.push("0x0", args.qualifier);
+  } else {
+    calldata.push("0x1");
+  }
+  // qualification: Option<QualificationProof> — only None is supported here.
+  // Token / extension qualified tournaments require a real proof, which
+  // depends on the validator and on the caller's runtime state.
+  calldata.push("0x1");
+  // entry_fee_pay_params: Option<Span<felt252>> — None for the built-in fee
+  // flow (only needed for EntryFeeKind::Extension tournaments).
+  calldata.push("0x1");
+  calldata.push(num.toHex(args.salt ?? 0)); // salt u16
+  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u16
   return {
     contractAddress: budokanAddress,
     entrypoint: "enter_tournament",
@@ -508,9 +544,9 @@ interface EntryFeePayload {
 
 function encodeEntryFeeOption(
   fee: EntryFeeArgs | undefined,
-): CairoOption<EntryFeePayload> {
-  if (!fee) return new CairoOption<EntryFeePayload>(CairoOptionVariant.None);
-  return new CairoOption<EntryFeePayload>(CairoOptionVariant.Some, {
+): CairoOption<CairoCustomEnum> {
+  if (!fee) return new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
+  const builtIn: EntryFeePayload = {
     token_address: fee.tokenAddress,
     amount: fee.amount,
     tournament_creator_share: fee.tournamentCreatorShare,
@@ -518,7 +554,14 @@ function encodeEntryFeeOption(
     refund_share: fee.refundShare,
     distribution: encodeDistribution(fee.distribution),
     distribution_count: fee.distributionCount,
-  });
+  };
+  // entry_fee is now Option<EntryFeeKind>, where EntryFeeKind is a sum type
+  // { BuiltIn: EntryFee, Extension: ExtensionConfig }. The SDK only builds
+  // built-in token fees; wrap the payload in the BuiltIn variant.
+  return new CairoOption<CairoCustomEnum>(
+    CairoOptionVariant.Some,
+    new CairoCustomEnum({ BuiltIn: builtIn, Extension: undefined }),
+  );
 }
 
 interface EntryRequirementPayload {

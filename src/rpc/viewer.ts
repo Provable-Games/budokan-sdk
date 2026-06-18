@@ -146,24 +146,36 @@ function parseTournament(
   const ascending = Boolean(lc?.ascending);
   const gameMustBeOver = Boolean(lc?.game_must_be_over);
 
-  // EntryFee (Option)
-  const entryFeeRaw = parseOption(obj.entry_fee);
+  // entry_fee is Option<EntryFeeKind>, where EntryFeeKind is a sum type
+  // { BuiltIn: EntryFee, Extension: ExtensionConfig }. Unwrap the Option,
+  // then the BuiltIn variant. Extension entry fees aren't representable in
+  // the flat Tournament.entryFee shape, so they map to null (same as
+  // extension prizes in parsePrize).
+  const entryFeeKind = parseOption(obj.entry_fee) as
+    | Record<string, unknown>
+    | null;
   let entryFeeToken: string | null = null;
   let entryFeeAmount: string | null = null;
   let entryFee: Tournament["entryFee"] = null;
-  if (entryFeeRaw) {
-    const ef = entryFeeRaw as Record<string, unknown>;
-    entryFeeToken = num.toHex(ef.token_address as bigint);
-    entryFeeAmount = String(ef.amount ?? "0");
-    entryFee = {
-      tokenAddress: entryFeeToken,
-      amount: entryFeeAmount,
-      tournamentCreatorShare: Number(ef.tournament_creator_share ?? 0),
-      gameCreatorShare: Number(ef.game_creator_share ?? 0),
-      refundShare: Number(ef.refund_share ?? 0),
-      distribution: (ef.distribution as Distribution) ?? null,
-      distributionCount: Number(ef.distribution_count ?? 0),
-    };
+  if (entryFeeKind) {
+    const variantBag = (entryFeeKind.variant ?? entryFeeKind) as Record<
+      string,
+      unknown
+    >;
+    const ef = variantBag.BuiltIn as Record<string, unknown> | undefined;
+    if (ef) {
+      entryFeeToken = num.toHex(ef.token_address as bigint);
+      entryFeeAmount = String(ef.amount ?? "0");
+      entryFee = {
+        tokenAddress: entryFeeToken,
+        amount: entryFeeAmount,
+        tournamentCreatorShare: Number(ef.tournament_creator_share ?? 0),
+        gameCreatorShare: Number(ef.game_creator_share ?? 0),
+        refundShare: Number(ef.refund_share ?? 0),
+        distribution: (ef.distribution as Distribution) ?? null,
+        distributionCount: Number(ef.distribution_count ?? 0),
+      };
+    }
   }
 
   // EntryRequirement (Option)
@@ -608,7 +620,15 @@ function translateCairoRewardType(rewardType: unknown): {
   const innerBag = (typeof rt.activeVariant === "function" ? rt.variant : rt) as Record<string, any>;
 
   if (outer === "Prize" || innerBag.Prize !== undefined) {
-    const prize = innerBag.Prize;
+    // #269 nests PrizeType under PrizeClaim::Token. Unwrap that layer; fall
+    // back to the claim itself for the older flat shape. (Extension claims —
+    // PrizeClaim::Extension — aren't modelled by RewardClaimKind and fall
+    // through to the throw; the API path handles them.)
+    const prizeClaim = innerBag.Prize;
+    const pcBag = (typeof prizeClaim?.activeVariant === "function"
+      ? prizeClaim.variant
+      : prizeClaim) as Record<string, any>;
+    const prize = pcBag?.Token ?? prizeClaim;
     const subVariant = typeof prize?.activeVariant === "function" ? prize.activeVariant() : null;
     const subBag = (typeof prize?.activeVariant === "function" ? prize.variant : prize) as Record<string, any>;
 
@@ -636,7 +656,13 @@ function translateCairoRewardType(rewardType: unknown): {
   }
 
   if (outer === "EntryFee" || innerBag.EntryFee !== undefined) {
-    const entryFee = innerBag.EntryFee;
+    // #269 nests EntryFeeRewardType under EntryFeeClaim::Token. Unwrap that
+    // layer; fall back to the claim itself for the older flat shape.
+    const entryFeeClaim = innerBag.EntryFee;
+    const efBag = (typeof entryFeeClaim?.activeVariant === "function"
+      ? entryFeeClaim.variant
+      : entryFeeClaim) as Record<string, any>;
+    const entryFee = efBag?.Token ?? entryFeeClaim;
     const subVariant =
       typeof entryFee?.activeVariant === "function" ? entryFee.activeVariant() : null;
     const subBag = (typeof entryFee?.activeVariant === "function" ? entryFee.variant : entryFee) as Record<string, any>;

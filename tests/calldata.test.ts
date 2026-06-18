@@ -23,30 +23,56 @@ describe("buildErc20ApproveCall", () => {
   });
 });
 
-describe("buildEnterTournamentCall", () => {
-  test("player_name is a plain felt252 when provided", () => {
+describe("buildEnterTournamentCall (#264/#269 8-param shape)", () => {
+  test("player_name + player_address Some when provided", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",
       playerAddress: "0xabc",
       playerName: "ab", // ASCII 0x6162
     });
-    // [id, name_felt, address, qual_tag(None=0x1), salt, meta]
-    expect(call.calldata[1]).toBe("0x6162");
-    expect(call.calldata[2]).toBe("0xabc");
-    expect(call.calldata[3]).toBe("0x1"); // qualification None
+    // [id, name(Some 0x0,felt), addr(Some 0x0,felt), qualifier(None 0x1),
+    //  qualification(None 0x1), entry_fee_pay_params(None 0x1), salt, meta]
+    expect(call.calldata).toEqual([
+      "0x5", // tournament_id
+      "0x0", "0x6162", // player_name Some("ab")
+      "0x0", "0xabc", // player_address Some
+      "0x1", // qualifier None
+      "0x1", // qualification None
+      "0x1", // entry_fee_pay_params None
+      "0x0", // salt
+      "0x0", // metadata_value
+    ]);
   });
 
-  test("player_name defaults to empty felt (0x0) when omitted", () => {
+  test("player_name + player_address None when omitted", () => {
+    const call = buildEnterTournamentCall(BUDOKAN, { tournamentId: "5" });
+    expect(call.calldata).toEqual([
+      "0x5", // tournament_id
+      "0x1", // player_name None
+      "0x1", // player_address None
+      "0x1", // qualifier None
+      "0x1", // qualification None
+      "0x1", // entry_fee_pay_params None
+      "0x0", // salt
+      "0x0", // metadata_value
+    ]);
+  });
+
+  test("qualifier Some when provided", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",
       playerAddress: "0xabc",
+      qualifier: "0xq",
     });
-    // [id, name_felt(0x0), address, qual_tag(None=0x1), salt, meta]
-    expect(call.calldata[1]).toBe("0x0");
-    expect(call.calldata[2]).toBe("0xabc");
-    expect(call.calldata[3]).toBe("0x1"); // qualification None
-    expect(call.calldata[4]).toBe("0x0"); // default salt
-    expect(call.calldata[5]).toBe("0x0"); // default metadata_value
+    // name None (1 felt) → addr Some(0x0,0xabc) → qualifier Some(0x0,0xq)
+    expect(call.calldata.slice(1)).toEqual([
+      "0x1", // player_name None
+      "0x0", "0xabc", // player_address Some
+      "0x0", "0xq", // qualifier Some
+      "0x1", // qualification None
+      "0x1", // entry_fee_pay_params None
+      "0x0", "0x0", // salt, metadata
+    ]);
   });
 });
 
