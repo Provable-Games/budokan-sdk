@@ -1,0 +1,10 @@
+{
+  "agents": [
+    {
+      "agent_id": "sdk",
+      "agent_name": "SDK Reviewer",
+      "prompt_file": ".github/prompts/sdk-review.md",
+      "diff_paths": ["src/", "tests/", "package.json", "tsconfig.json", "tsup.config.ts"]
+    }
+  ]
+}
