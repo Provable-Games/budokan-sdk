@@ -5,23 +5,10 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Build + npm publish are delegated to the org-shared reusable workflow so
+# the publish flow (and npm auth pattern) live in one place. Requires the
+# NPM_TOKEN secret (inherited).
 jobs:
   publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.6"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun run build
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    uses: Provable-Games/.github/.github/workflows/publish-npm.yml@v1
+    secrets: inherit
