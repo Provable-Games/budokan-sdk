@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { hash } from "starknet";
 import {
+  buildAddPrizeCall,
   buildClaimRewardCall,
   buildEnterTournamentCall,
   buildErc20ApproveCall,
@@ -22,44 +23,72 @@ describe("buildErc20ApproveCall", () => {
   });
 });
 
-describe("buildEnterTournamentCall", () => {
-  test("player_name is a plain felt252 when provided", () => {
+describe("buildEnterTournamentCall (#264/#269 8-param shape)", () => {
+  test("player_name + player_address Some when provided", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",
       playerAddress: "0xabc",
       playerName: "ab", // ASCII 0x6162
     });
-    // [id, name_felt, address, qual_tag(None=0x1), salt, meta]
-    expect(call.calldata[1]).toBe("0x6162");
-    expect(call.calldata[2]).toBe("0xabc");
-    expect(call.calldata[3]).toBe("0x1"); // qualification None
+    // [id, name(Some 0x0,felt), addr(Some 0x0,felt), qualifier(None 0x1),
+    //  qualification(None 0x1), entry_fee_pay_params(None 0x1), salt, meta]
+    expect(call.calldata).toEqual([
+      "0x5", // tournament_id
+      "0x0", "0x6162", // player_name Some("ab")
+      "0x0", "0xabc", // player_address Some
+      "0x1", // qualifier None
+      "0x1", // qualification None
+      "0x1", // entry_fee_pay_params None
+      "0x0", // salt
+      "0x0", // metadata_value
+    ]);
   });
 
-  test("player_name defaults to empty felt (0x0) when omitted", () => {
+  test("player_name + player_address None when omitted", () => {
+    const call = buildEnterTournamentCall(BUDOKAN, { tournamentId: "5" });
+    expect(call.calldata).toEqual([
+      "0x5", // tournament_id
+      "0x1", // player_name None
+      "0x1", // player_address None
+      "0x1", // qualifier None
+      "0x1", // qualification None
+      "0x1", // entry_fee_pay_params None
+      "0x0", // salt
+      "0x0", // metadata_value
+    ]);
+  });
+
+  test("qualifier Some when provided", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",
       playerAddress: "0xabc",
+      qualifier: "0xq",
     });
-    // [id, name_felt(0x0), address, qual_tag(None=0x1), salt, meta]
-    expect(call.calldata[1]).toBe("0x0");
-    expect(call.calldata[2]).toBe("0xabc");
-    expect(call.calldata[3]).toBe("0x1"); // qualification None
-    expect(call.calldata[4]).toBe("0x0"); // default salt
-    expect(call.calldata[5]).toBe("0x0"); // default metadata_value
+    // name None (1 felt) → addr Some(0x0,0xabc) → qualifier Some(0x0,0xq)
+    expect(call.calldata.slice(1)).toEqual([
+      "0x1", // player_name None
+      "0x0", "0xabc", // player_address Some
+      "0x0", "0xq", // qualifier Some
+      "0x1", // qualification None
+      "0x1", // entry_fee_pay_params None
+      "0x0", "0x0", // salt, metadata
+    ]);
   });
 });
 
 describe("buildClaimRewardCall enum tags", () => {
+  // Tags: RewardType{Prize=0,EntryFee=1} → PrizeClaim/EntryFeeClaim
+  // {Token=0,Extension=1} → inner type tag.
   const cases: Array<[Parameters<typeof buildClaimRewardCall>[1]["reward"], string[]]> = [
-    [{ kind: "prize_single", prizeId: "7" }, ["0x0", "0x0", "0x7"]],
+    [{ kind: "prize_single", prizeId: "7" }, ["0x0", "0x0", "0x0", "0x7"]],
     [
       { kind: "prize_distributed", prizeId: "7", payoutPosition: 2 },
-      ["0x0", "0x1", "0x7", "0x2"],
+      ["0x0", "0x0", "0x1", "0x7", "0x2"],
     ],
-    [{ kind: "entry_fee_position", position: 3 }, ["0x1", "0x0", "0x3"]],
-    [{ kind: "entry_fee_tournament_creator" }, ["0x1", "0x1"]],
-    [{ kind: "entry_fee_game_creator" }, ["0x1", "0x2"]],
-    [{ kind: "entry_fee_refund", tokenId: "9" }, ["0x1", "0x3", "0x9"]],
+    [{ kind: "entry_fee_position", position: 3 }, ["0x1", "0x0", "0x0", "0x3"]],
+    [{ kind: "entry_fee_tournament_creator" }, ["0x1", "0x0", "0x1"]],
+    [{ kind: "entry_fee_game_creator" }, ["0x1", "0x0", "0x2"]],
+    [{ kind: "entry_fee_refund", tokenId: "9" }, ["0x1", "0x0", "0x3", "0x9"]],
   ];
   for (const [reward, expected] of cases) {
     test(reward.kind, () => {
@@ -121,6 +150,76 @@ describe("buildCreateTournamentCall", () => {
         entryLimit: 1,
         type: { kind: "token", tokenAddress: "0xgate" },
       },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildAddPrizeCall", () => {
+  test("erc20 single (winner-takes-all) compiles", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: {
+        kind: "token",
+        tokenAddress: "0xtoken",
+        tokenType: { kind: "erc20", amount: "1000" },
+        position: 1,
+      },
+    });
+    expect(call.entrypoint).toBe("add_prize");
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  test("erc20 distributed compiles with distributionCount", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: {
+        kind: "token",
+        tokenAddress: "0xtoken",
+        tokenType: {
+          kind: "erc20",
+          amount: "1000",
+          distribution: { kind: "linear", weight: 10 },
+          distributionCount: 3,
+        },
+      },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  test("erc20 distribution without distributionCount throws", () => {
+    expect(() =>
+      buildAddPrizeCall(BUDOKAN, {
+        tournamentId: "1",
+        prize: {
+          kind: "token",
+          tokenAddress: "0xtoken",
+          tokenType: {
+            kind: "erc20",
+            amount: "1000",
+            distribution: { kind: "linear", weight: 10 },
+          },
+        },
+      }),
+    ).toThrow(/distributionCount is required/);
+  });
+
+  test("erc721 prize compiles", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: {
+        kind: "token",
+        tokenAddress: "0xnft",
+        tokenType: { kind: "erc721", tokenId: "42" },
+      },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  test("extension prize compiles", () => {
+    const call = buildAddPrizeCall(BUDOKAN, {
+      tournamentId: "1",
+      prize: { kind: "extension", address: "0xext", config: ["0x1", "0x2"] },
     });
     expect(call.calldata.length).toBeGreaterThan(0);
   });

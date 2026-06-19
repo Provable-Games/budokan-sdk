@@ -245,6 +245,8 @@ export class BudokanClient {
             // Build aggregation by token
             const tokenMap = new Map<string, { tokenAddress: string; tokenType: string; totalAmount: bigint; nftCount: number }>();
             for (const p of prizes) {
+              // Extension prizes have no token address — not aggregable by token.
+              if (p.tokenType === "extension" || p.tokenAddress == null) continue;
               const key = p.tokenAddress;
               const existing = tokenMap.get(key);
               if (existing) {

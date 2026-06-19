@@ -2,8 +2,14 @@ export interface Prize {
   prizeId: string;
   tournamentId: string;
   payoutPosition: number;
-  tokenAddress: string;
-  tokenType: "erc20" | "erc721";
+  /** Token contract for built-in prizes; `null` for `tokenType === "extension"`. */
+  tokenAddress: string | null;
+  /**
+   * `erc20` / `erc721` are built-in token prizes. `extension` is an external
+   * `IPrizeExtension` prize (the #269 path): the token fields below are null
+   * and `extensionAddress` / `extensionConfig` are populated instead.
+   */
+  tokenType: "erc20" | "erc721" | "extension";
   amount: string | null;
   tokenId: string | null;
   distributionType: string | null;
@@ -13,6 +19,10 @@ export interface Prize {
   distributionShares: number[] | null;
   distributionCount: number | null;
   sponsorAddress: string;
+  /** Extension contract address; only set when `tokenType === "extension"`. */
+  extensionAddress: string | null;
+  /** Opaque `Span<felt252>` config; only set when `tokenType === "extension"`. */
+  extensionConfig: string[] | null;
 }
 
 /**
@@ -28,12 +38,16 @@ export type RewardClaimKind =
   | "entry_fee_position"
   | "entry_fee_tournament_creator"
   | "entry_fee_game_creator"
-  | "entry_fee_refund";
+  | "entry_fee_refund"
+  // #269 extension claims: budokan forwards (token_id, params) to the
+  // extension, which resolves recipient + eligibility from its own state.
+  | "prize_extension"
+  | "entry_fee_extension";
 
 export interface RewardClaim {
   tournamentId: string;
   claimKind: RewardClaimKind;
-  /** Populated for `prize_single` and `prize_distributed`. Stringified u64. */
+  /** Populated for `prize_single`, `prize_distributed`, `prize_extension`. Stringified u64. */
   prizeId: string | null;
   /** Populated for `prize_distributed`. */
   payoutIndex: number | null;
@@ -41,6 +55,10 @@ export interface RewardClaim {
   position: number | null;
   /** Populated for `entry_fee_refund`. felt252 hex string of the game token. */
   refundTokenId: string | null;
+  /** Game token id, for `prize_extension` / `entry_fee_extension` (Option → null when absent). */
+  extensionTokenId: string | null;
+  /** Opaque payout/claim params (`Span<felt252>`), for the extension claim kinds. */
+  extensionParams: string[] | null;
   claimed: boolean;
 }
 

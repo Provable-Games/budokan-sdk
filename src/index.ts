@@ -114,6 +114,8 @@ export type {
   CreateTournamentArgs,
   EnterTournamentArgs,
   AddPrizeArgs,
+  PrizeSpec,
+  TokenTypeSpec,
   EntryFeeArgs,
   EntryRequirementArgs,
   EntryRequirementSpec,

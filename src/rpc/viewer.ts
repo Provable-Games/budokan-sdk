@@ -146,24 +146,51 @@ function parseTournament(
   const ascending = Boolean(lc?.ascending);
   const gameMustBeOver = Boolean(lc?.game_must_be_over);
 
-  // EntryFee (Option)
-  const entryFeeRaw = parseOption(obj.entry_fee);
+  // entry_fee is Option<EntryFeeKind>, where EntryFeeKind is a sum type
+  // { BuiltIn: EntryFee, Extension: ExtensionConfig }. Unwrap the Option,
+  // then the BuiltIn variant. Extension entry fees aren't representable in
+  // the flat Tournament.entryFee shape, so they map to null (same as
+  // extension prizes in parsePrize).
+  const entryFeeKind = parseOption(obj.entry_fee) as
+    | Record<string, unknown>
+    | null;
   let entryFeeToken: string | null = null;
   let entryFeeAmount: string | null = null;
   let entryFee: Tournament["entryFee"] = null;
-  if (entryFeeRaw) {
-    const ef = entryFeeRaw as Record<string, unknown>;
-    entryFeeToken = num.toHex(ef.token_address as bigint);
-    entryFeeAmount = String(ef.amount ?? "0");
-    entryFee = {
-      tokenAddress: entryFeeToken,
-      amount: entryFeeAmount,
-      tournamentCreatorShare: Number(ef.tournament_creator_share ?? 0),
-      gameCreatorShare: Number(ef.game_creator_share ?? 0),
-      refundShare: Number(ef.refund_share ?? 0),
-      distribution: (ef.distribution as Distribution) ?? null,
-      distributionCount: Number(ef.distribution_count ?? 0),
-    };
+  let entryFeeKindTag: Tournament["entryFeeKind"] = null;
+  let entryFeeExtension: Tournament["entryFeeExtension"] = null;
+  if (entryFeeKind) {
+    const variantBag = (entryFeeKind.variant ?? entryFeeKind) as Record<
+      string,
+      unknown
+    >;
+    const ef = variantBag.BuiltIn as Record<string, unknown> | undefined;
+    const ext = variantBag.Extension as Record<string, unknown> | undefined;
+    if (ef) {
+      entryFeeKindTag = "builtin";
+      entryFeeToken = num.toHex(ef.token_address as bigint);
+      entryFeeAmount = String(ef.amount ?? "0");
+      entryFee = {
+        tokenAddress: entryFeeToken,
+        amount: entryFeeAmount,
+        tournamentCreatorShare: Number(ef.tournament_creator_share ?? 0),
+        gameCreatorShare: Number(ef.game_creator_share ?? 0),
+        refundShare: Number(ef.refund_share ?? 0),
+        distribution: (ef.distribution as Distribution) ?? null,
+        distributionCount: Number(ef.distribution_count ?? 0),
+      };
+    } else if (ext) {
+      // EntryFeeKind::Extension { address, config } — an external fee
+      // extension. Built-in fee fields stay null; surfaced distinctly so
+      // callers don't mistake it for a free tournament.
+      entryFeeKindTag = "extension";
+      entryFeeExtension = {
+        address: num.toHex(ext.address as bigint),
+        config: Array.isArray(ext.config)
+          ? (ext.config as unknown[]).map((x) => num.toHex(x as bigint))
+          : [],
+      };
+    }
   }
 
   // EntryRequirement (Option)
@@ -216,6 +243,8 @@ function parseTournament(
       renderer,
     },
     entryFee,
+    entryFeeKind: entryFeeKindTag,
+    entryFeeExtension,
     entryRequirement,
     leaderboardConfig: { ascending, gameMustBeOver },
     entryCount,
@@ -246,8 +275,61 @@ function parseRegistration(raw: unknown, tournamentId: string): Registration {
 }
 
 function parsePrize(raw: unknown): Prize {
-  const obj = raw as Record<string, unknown>;
-  const tokenTypeData = obj.token_type as Record<string, unknown> | undefined;
+  const record = raw as Record<string, unknown>;
+
+  // Unwrap PrizeRecord -> Prize sum type. starknet.js may expose the variant
+  // via `activeVariant()` + `variant`, or as a flat record keyed by name.
+  // Throw (rather than drop) on malformed/unknown shapes so a changed RPC
+  // response surfaces as an error instead of a silently-truncated prize list.
+  const prizeEnum = record.prize as Record<string, unknown> | undefined;
+  if (!prizeEnum) {
+    throw new Error(`PrizeRecord missing prize field: ${JSON.stringify(raw)}`);
+  }
+  const activePrize =
+    typeof prizeEnum.activeVariant === "function"
+      ? (prizeEnum.activeVariant as () => string)()
+      : prizeEnum.Token !== undefined
+        ? "Token"
+        : prizeEnum.Extension !== undefined
+          ? "Extension"
+          : null;
+  const prizeVariantBag = (prizeEnum.variant ?? prizeEnum) as Record<string, unknown>;
+
+  // Prize::Extension { address: ContractAddress, config: Span<felt252> } —
+  // an external IPrizeExtension prize. Modelled with tokenType "extension"
+  // and the token fields left null.
+  if (activePrize === "Extension") {
+    const ext = prizeVariantBag.Extension as Record<string, unknown> | undefined;
+    return {
+      prizeId: String(record.id ?? "0"),
+      tournamentId: String(record.context_id ?? "0"),
+      payoutPosition: 0,
+      tokenAddress: null,
+      tokenType: "extension",
+      amount: null,
+      tokenId: null,
+      distributionType: null,
+      distributionWeight: null,
+      distributionShares: null,
+      distributionCount: null,
+      sponsorAddress: num.toHex(record.sponsor_address as bigint),
+      extensionAddress:
+        ext?.address != null ? num.toHex(ext.address as bigint) : null,
+      extensionConfig: Array.isArray(ext?.config)
+        ? (ext!.config as unknown[]).map((x) => num.toHex(x as bigint))
+        : null,
+    };
+  }
+  if (activePrize !== "Token") {
+    throw new Error(`Unrecognised Prize variant: ${JSON.stringify(prizeEnum)}`);
+  }
+
+  const tokenPayload = prizeVariantBag.Token as Record<string, unknown> | undefined;
+  if (!tokenPayload) {
+    throw new Error(`Prize::Token missing payload: ${JSON.stringify(prizeEnum)}`);
+  }
+
+  const tokenTypeData = tokenPayload.token_type as Record<string, unknown> | undefined;
 
   // TokenTypeData is a Cairo enum: { erc20: ERC20Data } or { erc721: ERC721Data }
   let tokenType: "erc20" | "erc721" = "erc20";
@@ -257,6 +339,11 @@ function parsePrize(raw: unknown): Prize {
   let distributionWeight: number | null = null;
   let distributionShares: number[] | null = null;
   let distributionCount: number | null = null;
+  // NOTE: the `tournament_prizes` PrizeRecord does not carry the prize's
+  // leaderboard position (it's assigned at add_prize time and stored
+  // elsewhere), so the RPC path can't populate it — defaults to 0. The API
+  // path hydrates the real position. Pre-existing viewer limitation,
+  // independent of the #269 migration.
   let payoutPosition = 0;
 
   if (tokenTypeData) {
@@ -310,10 +397,10 @@ function parsePrize(raw: unknown): Prize {
   }
 
   return {
-    prizeId: String(obj.id ?? "0"),
-    tournamentId: String(obj.context_id ?? "0"),
+    prizeId: String(record.id ?? "0"),
+    tournamentId: String(record.context_id ?? "0"),
     payoutPosition,
-    tokenAddress: num.toHex(obj.token_address as bigint),
+    tokenAddress: num.toHex(tokenPayload.token_address as bigint),
     tokenType,
     amount,
     tokenId,
@@ -321,7 +408,9 @@ function parsePrize(raw: unknown): Prize {
     distributionWeight,
     distributionShares,
     distributionCount,
-    sponsorAddress: num.toHex(obj.sponsor_address as bigint),
+    sponsorAddress: num.toHex(record.sponsor_address as bigint),
+    extensionAddress: null,
+    extensionConfig: null,
   };
 }
 
@@ -552,6 +641,8 @@ export interface ViewerRewardClaim {
   payoutIndex: number | null;
   position: number | null;
   refundTokenId: string | null;
+  extensionTokenId: string | null;
+  extensionParams: string[] | null;
   claimed: boolean;
 }
 
@@ -569,13 +660,37 @@ export interface ViewerRewardClaimResult {
  * one with `activeVariant()` and a `variant` bag, one with a flat record
  * keyed by variant name — depending on the contract ABI codegen.
  */
-function translateCairoRewardType(rewardType: unknown): {
+type TranslatedRewardClaim = {
   claimKind: RewardClaimKind;
   prizeId: string | null;
   payoutIndex: number | null;
   position: number | null;
   refundTokenId: string | null;
-} {
+  extensionTokenId: string | null;
+  extensionParams: string[] | null;
+};
+
+// All fields default to null; each variant fills only what it carries.
+function rewardClaim(
+  partial: Partial<TranslatedRewardClaim> & { claimKind: RewardClaimKind },
+): TranslatedRewardClaim {
+  return {
+    prizeId: null,
+    payoutIndex: null,
+    position: null,
+    refundTokenId: null,
+    extensionTokenId: null,
+    extensionParams: null,
+    ...partial,
+  };
+}
+
+// Span<felt252> → hex strings; tolerates the array shape starknet.js returns.
+function spanToHex(v: unknown): string[] {
+  return Array.isArray(v) ? v.map((x) => num.toHex(x as bigint)) : [];
+}
+
+function translateCairoRewardType(rewardType: unknown): TranslatedRewardClaim {
   if (!rewardType || typeof rewardType !== "object") {
     throw new Error(`Unexpected RewardType payload: ${JSON.stringify(rewardType)}`);
   }
@@ -585,74 +700,89 @@ function translateCairoRewardType(rewardType: unknown): {
   const innerBag = (typeof rt.activeVariant === "function" ? rt.variant : rt) as Record<string, any>;
 
   if (outer === "Prize" || innerBag.Prize !== undefined) {
-    const prize = innerBag.Prize;
+    // PrizeClaim { Token: PrizeType, Extension: ExtensionPrizeClaim }.
+    const prizeClaim = innerBag.Prize;
+    const pcBag = (typeof prizeClaim?.activeVariant === "function"
+      ? prizeClaim.variant
+      : prizeClaim) as Record<string, any>;
+
+    // PrizeClaim::Extension { prize_id: u64, token_id: Option<felt252>,
+    //   payout_params: Span<felt252> }.
+    if (pcBag?.Token === undefined && pcBag?.Extension !== undefined) {
+      const ext = pcBag.Extension as Record<string, any>;
+      const tokenId = parseOption(ext.token_id);
+      return rewardClaim({
+        claimKind: "prize_extension",
+        prizeId: BigInt(ext.prize_id ?? 0).toString(),
+        extensionTokenId: tokenId != null ? num.toHex(tokenId as bigint) : null,
+        extensionParams: spanToHex(ext.payout_params),
+      });
+    }
+
+    // PrizeClaim::Token(PrizeType). Unwrap Token; fall back to the older flat shape.
+    const prize = pcBag?.Token ?? prizeClaim;
     const subVariant = typeof prize?.activeVariant === "function" ? prize.activeVariant() : null;
     const subBag = (typeof prize?.activeVariant === "function" ? prize.variant : prize) as Record<string, any>;
 
     if (subVariant === "Single" || subBag?.Single !== undefined) {
-      return {
+      return rewardClaim({
         claimKind: "prize_single",
         prizeId: BigInt(subBag.Single).toString(),
-        payoutIndex: null,
-        position: null,
-        refundTokenId: null,
-      };
+      });
     }
     if (subVariant === "Distributed" || subBag?.Distributed !== undefined) {
       const distributed = subBag.Distributed;
       const prizeId = distributed?.["0"] ?? distributed?.[0];
       const payoutIndex = distributed?.["1"] ?? distributed?.[1];
-      return {
+      return rewardClaim({
         claimKind: "prize_distributed",
         prizeId: BigInt(prizeId).toString(),
         payoutIndex: Number(payoutIndex),
-        position: null,
-        refundTokenId: null,
-      };
+      });
     }
   }
 
   if (outer === "EntryFee" || innerBag.EntryFee !== undefined) {
-    const entryFee = innerBag.EntryFee;
+    // EntryFeeClaim { Token: EntryFeeRewardType, Extension: ExtensionEntryFeeClaim }.
+    const entryFeeClaim = innerBag.EntryFee;
+    const efBag = (typeof entryFeeClaim?.activeVariant === "function"
+      ? entryFeeClaim.variant
+      : entryFeeClaim) as Record<string, any>;
+
+    // EntryFeeClaim::Extension { token_id: Option<felt252>, claim_params: Span<felt252> }.
+    if (efBag?.Token === undefined && efBag?.Extension !== undefined) {
+      const ext = efBag.Extension as Record<string, any>;
+      const tokenId = parseOption(ext.token_id);
+      return rewardClaim({
+        claimKind: "entry_fee_extension",
+        extensionTokenId: tokenId != null ? num.toHex(tokenId as bigint) : null,
+        extensionParams: spanToHex(ext.claim_params),
+      });
+    }
+
+    // EntryFeeClaim::Token(EntryFeeRewardType). Unwrap Token; fall back to flat.
+    const entryFee = efBag?.Token ?? entryFeeClaim;
     const subVariant =
       typeof entryFee?.activeVariant === "function" ? entryFee.activeVariant() : null;
     const subBag = (typeof entryFee?.activeVariant === "function" ? entryFee.variant : entryFee) as Record<string, any>;
 
     if (subVariant === "Position" || subBag?.Position !== undefined) {
-      return {
+      return rewardClaim({
         claimKind: "entry_fee_position",
-        prizeId: null,
-        payoutIndex: null,
         position: Number(subBag.Position),
-        refundTokenId: null,
-      };
+      });
     }
     if (subVariant === "TournamentCreator" || subBag?.TournamentCreator !== undefined) {
-      return {
-        claimKind: "entry_fee_tournament_creator",
-        prizeId: null,
-        payoutIndex: null,
-        position: null,
-        refundTokenId: null,
-      };
+      return rewardClaim({ claimKind: "entry_fee_tournament_creator" });
     }
     if (subVariant === "GameCreator" || subBag?.GameCreator !== undefined) {
-      return {
-        claimKind: "entry_fee_game_creator",
-        prizeId: null,
-        payoutIndex: null,
-        position: null,
-        refundTokenId: null,
-      };
+      return rewardClaim({ claimKind: "entry_fee_game_creator" });
     }
     if (subVariant === "Refund" || subBag?.Refund !== undefined) {
-      return {
+      return rewardClaim({
         claimKind: "entry_fee_refund",
-        prizeId: null,
-        payoutIndex: null,
-        position: null,
         refundTokenId: `0x${BigInt(subBag.Refund).toString(16)}`,
-      };
+      });
     }
   }
 
@@ -670,13 +800,15 @@ export async function viewerRewardClaims(
   return wrapRpcCall(async () => {
     const result = await contract.call("tournament_reward_claims", [tournamentId, offset, limit]);
     const obj = result as Record<string, unknown>;
-    const claims: ViewerRewardClaim[] = (obj.claims as unknown[])?.map((raw) => {
-      const claim = raw as Record<string, unknown>;
-      return {
-        ...translateCairoRewardType(claim.reward_type),
-        claimed: Boolean(claim.claimed),
-      };
-    }) ?? [];
+    const claims: ViewerRewardClaim[] = ((obj.claims as unknown[]) ?? []).map(
+      (raw) => {
+        const claim = raw as Record<string, unknown>;
+        return {
+          ...translateCairoRewardType(claim.reward_type),
+          claimed: Boolean(claim.claimed),
+        };
+      },
+    );
     return {
       claims,
       total: Number(obj.total ?? 0),

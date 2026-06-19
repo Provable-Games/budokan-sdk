@@ -98,9 +98,25 @@ export interface EntryRequirementArgs {
 
 export interface EnterTournamentArgs {
   tournamentId: string;
-  playerAddress: string;
+  /**
+   * Mint recipient. Encoded as `Option<ContractAddress>` — omit for
+   * `None` (the contract defaults the mint to the caller).
+   */
+  playerAddress?: string;
   /** Optional felt252 short string (≤31 ASCII bytes). Omit → Option::None. */
   playerName?: string;
+  /**
+   * Third-party qualifier to claim, as `Option<ContractAddress>`. Omit for
+   * `None` (caller is the qualifier — the common path). Only needed for
+   * sponsor flows against gated tournaments.
+   */
+  qualifier?: string;
+  /**
+   * `entry_fee_pay_params` (`Option<Span<felt252>>`). Required only for
+   * tournaments with an `EntryFeeKind::Extension` fee — the felts the fee
+   * extension expects. Omit for the built-in fee flow (Option::None).
+   */
+  entryFeePayParams?: string[];
   salt?: number;
   metadataValue?: number;
 }
@@ -120,7 +136,7 @@ export interface CreateTournamentArgs {
     submissionDuration: number;
   };
   leaderboard: { ascending: boolean; gameMustBeOver: boolean };
-  /** Encoded as Option::Some(EntryFee) on chain when set. */
+  /** Encoded as Option::Some(EntryFeeKind::BuiltIn(EntryFee)) when set. */
   entryFee?: EntryFeeArgs;
   /** Encoded as Option::Some(EntryRequirement) on chain when set. */
   entryRequirement?: EntryRequirementArgs;
@@ -128,37 +144,113 @@ export interface CreateTournamentArgs {
   metadataValue?: number;
 }
 
+/**
+ * Token prize payload. Mirrors the Cairo `TokenTypeData` enum.
+ *
+ * - `erc20` — fungible. `amount` is required; `distribution` optional
+ *   (undefined → single winner-takes-all payout). When `distribution`
+ *   is set, `distributionCount` is required (number of paid positions).
+ * - `erc721` — single NFT. `tokenId` is the u128 id of the token the
+ *   sponsor is escrowing.
+ */
+export type TokenTypeSpec =
+  | {
+      kind: "erc20";
+      /** Raw u128 amount (decimal string). */
+      amount: string;
+      distribution?: DistributionSpec;
+      distributionCount?: number;
+    }
+  | { kind: "erc721"; tokenId: string };
+
+/**
+ * Tagged union mirroring the on-chain `Prize` enum.
+ *
+ * - `config` — built-in path: sponsor escrows an ERC20/ERC721 prize via
+ *   the budokan PrizeComponent; `position` selects a leaderboard slot
+ *   for non-distributed prizes (ignored for distributed ERC20).
+ * - `extension` — external `IPrizeExtension`: budokan forwards the
+ *   `config` blob to `IPrizeExtension.add_prize`. `position` is ignored
+ *   (the extension owns position semantics).
+ */
+export type PrizeSpec =
+  | {
+      kind: "token";
+      tokenAddress: string;
+      tokenType: TokenTypeSpec;
+      /** Leaderboard slot for single (non-distributed) prizes. Omit for distributed. */
+      position?: number;
+    }
+  | {
+      kind: "extension";
+      /** Address of the contract implementing `IPrizeExtension`. */
+      address: string;
+      /** Opaque payload forwarded to `IPrizeExtension.add_prize`. */
+      config: string[];
+    };
+
 export interface AddPrizeArgs {
   tournamentId: string;
-  tokenAddress: string;
-  /** Raw u128 amount (decimal string). */
-  amount: string;
-  /** When undefined, encoded as Option::None → winner-takes-all. */
-  distribution?: DistributionSpec;
-  /** Required when distribution is set; ignored otherwise. */
-  distributionCount?: number;
-  sponsorAddress: string;
+  prize: PrizeSpec;
 }
 
 /**
  * Tagged union mirroring the Cairo `RewardType` enum hierarchy:
  *
- *   variant 0: Prize(PrizeType)
- *     PrizeType variant 0: Single(u64)
- *     PrizeType variant 1: Distributed((u64, u8))
- *   variant 1: EntryFee(EntryFeeRewardType)
- *     EntryFeeRewardType variant 0: Position(u32)
- *     EntryFeeRewardType variant 1: TournamentCreator
- *     EntryFeeRewardType variant 2: GameCreator
- *     EntryFeeRewardType variant 3: Refund(felt252)
+ *   variant 0: Prize(PrizeClaim)
+ *     PrizeClaim variant 0: Token(PrizeType)
+ *       PrizeType variant 0: Single(u64)
+ *       PrizeType variant 1: Distributed((u64, u8))
+ *     PrizeClaim variant 1: Extension({prize_id, position, payout_params})
+ *   variant 1: EntryFee(EntryFeeClaim)
+ *     EntryFeeClaim variant 0: Token(EntryFeeRewardType)
+ *       EntryFeeRewardType variant 0: Position(u32)
+ *       EntryFeeRewardType variant 1: TournamentCreator
+ *       EntryFeeRewardType variant 2: GameCreator
+ *       EntryFeeRewardType variant 3: Refund(felt252)
+ *     EntryFeeClaim variant 1: Extension(ExtensionEntryFeeClaim)
+ *
+ * Extension claims are pure pass-through on the host: budokan forwards
+ * `(token_id, payout_params)` to the extension and lets it resolve
+ * recipient + eligibility from its own state. Callers don't supply
+ * recipient or position — the extension derives them.
+ *
+ * Conventions:
+ *   - `tokenId` is the game token claiming. Positional extensions
+ *     (NFTPrize, NFTEntryFee) use it to look up the leaderboard
+ *     position; ownership-based extensions use it to derive the
+ *     recipient via `owner_of`.
+ *   - `tokenId: undefined` signals a non-claim flow (sponsor refund,
+ *     dao distribution, raffle draw). The extension extracts whatever
+ *     it needs from `payoutParams` / `claimParams` — e.g. NFTPrize
+ *     reads `payoutParams[0]` as the slot index to refund.
  */
 export type RewardType =
   | { kind: "prize_single"; prizeId: string }
   | { kind: "prize_distributed"; prizeId: string; payoutPosition: number }
+  | {
+      kind: "prize_extension";
+      prizeId: string;
+      /**
+       * Game token claiming the prize, or undefined for non-claim flows
+       * (sponsor refunds, raffle draws, etc.).
+       */
+      tokenId?: string;
+      payoutParams: string[];
+    }
   | { kind: "entry_fee_position"; position: number }
   | { kind: "entry_fee_tournament_creator" }
   | { kind: "entry_fee_game_creator" }
-  | { kind: "entry_fee_refund"; tokenId: string };
+  | { kind: "entry_fee_refund"; tokenId: string }
+  | {
+      kind: "entry_fee_extension";
+      /**
+       * Game token claiming the fee-pool share, or undefined for
+       * non-claim flows (sponsor refunds, creator shares, etc.).
+       */
+      tokenId?: string;
+      claimParams: string[];
+    };
 
 // ---------------------------------------------------------------------------
 // ERC20
@@ -182,14 +274,17 @@ export function buildErc20ApproveCall(
 // ---------------------------------------------------------------------------
 
 /**
- * `enter_tournament(tournament_id: u64, player_name: felt252,
- *                   player_address: ContractAddress,
+ * `enter_tournament(tournament_id: u64, player_name: Option<felt252>,
+ *                   player_address: Option<ContractAddress>,
+ *                   qualifier: Option<ContractAddress>,
  *                   qualification: Option<QualificationProof>,
+ *                   entry_fee_pay_params: Option<Span<felt252>>,
  *                   salt: u16, metadata_value: u16)`
  *
- * `player_name` is a plain `felt252` (NOT an Option) per the ABI — omit it
- * and an empty short string (felt `0x0`) is sent. Only `qualification` is an
- * Option here.
+ * Targets the current budokan contract (#264/#269). `qualification` and
+ * `entry_fee_pay_params` are always `None` here — gated/extension-fee
+ * tournaments need a real proof / pay-params payload, which depend on the
+ * validator and the caller's runtime state.
  *
  * Returns `(felt252, u32)` on-chain — game_token_id and entry_number — but
  * `execute()` surfaces only the tx hash. Callers can fetch the receipt
@@ -204,19 +299,50 @@ export function buildEnterTournamentCall(
   budokanAddress: string,
   args: EnterTournamentArgs,
 ): Call {
-  // Hand-built calldata. player_name is a plain felt252; only qualification
-  // is an Option (None tag = 0x1).
+  // Hand-built calldata. enter_tournament takes a chain of Options (tags:
+  // 0 = Some, 1 = None) in this exact ABI order:
+  //   tournament_id, player_name?, player_address?, qualifier?,
+  //   qualification?, entry_fee_pay_params?, salt, metadata_value
   const calldata: string[] = [
     num.toHex(args.tournamentId), // tournament_id u64
-    felt252FromShortString(args.playerName ?? ""), // player_name felt252
-    args.playerAddress, // player_address
-    // qualification: Option<QualificationProof> — only None is supported here.
-    // Token / extension qualified tournaments require a real proof, which
-    // depends on the validator and on the caller's runtime state.
-    "0x1",
-    num.toHex(args.salt ?? 0), // salt u16
-    num.toHex(args.metadataValue ?? 0), // metadata_value u16
   ];
+  // player_name: Option<felt252>
+  if (args.playerName) {
+    calldata.push("0x0", felt252FromShortString(args.playerName));
+  } else {
+    calldata.push("0x1");
+  }
+  // player_address: Option<ContractAddress> — Some(addr) sets the mint
+  // recipient; None defaults to the caller.
+  if (args.playerAddress) {
+    calldata.push("0x0", args.playerAddress);
+  } else {
+    calldata.push("0x1");
+  }
+  // qualifier: Option<ContractAddress> — Some(addr) claims a third-party
+  // qualifier; None = caller is the qualifier.
+  if (args.qualifier) {
+    calldata.push("0x0", args.qualifier);
+  } else {
+    calldata.push("0x1");
+  }
+  // qualification: Option<QualificationProof> — only None is supported here.
+  // Token / extension qualified tournaments require a real proof, which
+  // depends on the validator and on the caller's runtime state.
+  calldata.push("0x1");
+  // entry_fee_pay_params: Option<Span<felt252>>. Some(span) for
+  // EntryFeeKind::Extension tournaments; None for the built-in fee flow.
+  if (args.entryFeePayParams && args.entryFeePayParams.length > 0) {
+    calldata.push(
+      "0x0",
+      num.toHex(args.entryFeePayParams.length),
+      ...args.entryFeePayParams,
+    );
+  } else {
+    calldata.push("0x1");
+  }
+  calldata.push(num.toHex(args.salt ?? 0)); // salt u16
+  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u16
   return {
     contractAddress: budokanAddress,
     entrypoint: "enter_tournament",
@@ -315,60 +441,105 @@ export function buildCreateTournamentCall(
 }
 
 /**
- * `add_prize(tournament_id, token_address, token_type, sponsor_address,
- *            sponsor_token_id)`
+ * `add_prize(tournament_id: u64, prize: Prize, position: Option<u32>) -> u64`
  *
- * Only the ERC20 prize path is exposed. ERC721 sponsorship needs a
- * concrete `token_id` chosen against the sponsor's NFT inventory — that's
- * a UX concern outside the scope of this builder. Add a sibling builder
- * if/when an integrator needs it.
+ * The `Prize` sum type discriminates between the built-in
+ * (ERC20/ERC721) flow and an external `IPrizeExtension` integration —
+ * see `PrizeSpec` for the variants.
  *
- * `distribution` is `Option<Distribution>` — undefined means "winner takes
- * all" (single payout). Some(...) splits the prize across the top
- * `distributionCount` placements.
+ * The on-chain entrypoint returns the minted `prize_id` (u64); callers
+ * wanting the full payload should subscribe to the `PrizeAdded` event.
  */
 export function buildAddPrizeCall(
   budokanAddress: string,
   args: AddPrizeArgs,
 ): Call {
-  // Inner ERC20Data: { amount: u128, distribution: Option<Distribution>,
-  // distribution_count: Option<u32> }. Both Options use CairoOption so
-  // CallData.compile recognizes them as typed wrappers.
-  const erc20Distribution = args.distribution
-    ? new CairoOption<CairoCustomEnum>(
-        CairoOptionVariant.Some,
-        encodeDistribution(args.distribution),
-      )
-    : new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
-  const erc20DistributionCount =
-    args.distribution && args.distributionCount !== undefined
-      ? new CairoOption<number>(CairoOptionVariant.Some, args.distributionCount)
+  const prize = encodePrize(args.prize);
+  const position =
+    args.prize.kind === "token" && args.prize.position !== undefined
+      ? new CairoOption<number>(CairoOptionVariant.Some, args.prize.position)
       : new CairoOption<number>(CairoOptionVariant.None);
-
-  // TokenTypeData is a Cairo enum (ERC20 / ERC721); CairoCustomEnum gets
-  // the right variant index.
-  const tokenType = new CairoCustomEnum({
-    ERC20: {
-      amount: args.amount,
-      distribution: erc20Distribution,
-      distribution_count: erc20DistributionCount,
-    },
-    ERC721: undefined,
-  });
-
   const calldata = CallData.compile({
     tournament_id: args.tournamentId,
-    token_address: args.tokenAddress,
-    token_type: tokenType,
-    sponsor_address: args.sponsorAddress,
-    // Option<felt252> — None for normal sponsorship.
-    sponsor_token_id: new CairoOption<string>(CairoOptionVariant.None),
+    prize,
+    position,
   });
   return {
     contractAddress: budokanAddress,
     entrypoint: "add_prize",
     calldata,
   };
+}
+
+function encodePrize(spec: PrizeSpec): CairoCustomEnum {
+  // Variant order from interfaces::prize::Prize: Token, Extension.
+  // Input payloads (TokenPrizePayload / ExtensionPrizePayload) carry no
+  // host-assigned metadata — id/context_id/sponsor_address live on the
+  // wrapping PrizeRecord at read time and are filled in by the host.
+  if (spec.kind === "token") {
+    return new CairoCustomEnum({
+      Token: {
+        token_address: spec.tokenAddress,
+        token_type: encodeTokenType(spec.tokenType),
+      },
+      Extension: undefined,
+    });
+  }
+  // ExtensionPrizePayload { address, config }. CallData.compile
+  // serializes string[] as a Span (len + items).
+  return new CairoCustomEnum({
+    Token: undefined,
+    Extension: {
+      address: spec.address,
+      config: spec.config,
+    },
+  });
+}
+
+function encodeTokenType(spec: TokenTypeSpec): CairoCustomEnum {
+  if (spec.kind === "erc20") {
+    // distribution and distribution_count must agree: a Some(distribution)
+    // with a None count is ambiguous calldata that the contract rejects.
+    if (spec.distribution && spec.distributionCount === undefined) {
+      throw new Error(
+        "TokenTypeSpec.erc20: distributionCount is required when distribution is set",
+      );
+    }
+    // Inner erc20 data: { amount: u128, distribution: Option<Distribution>,
+    // distribution_count: Option<u32> }. Both Options use CairoOption so
+    // CallData.compile recognizes them as typed wrappers.
+    //
+    // Variant keys (`erc20`/`erc721`) match the ABI's TokenTypeData variant
+    // names exactly, in declaration order. CallData.compile encodes the
+    // variant by position (it's order-based without an ABI), so casing is
+    // cosmetic for the wire format — but matching the ABI keeps the encoder
+    // self-evidently correct and ABI-aware code paths safe.
+    const distribution = spec.distribution
+      ? new CairoOption<CairoCustomEnum>(
+          CairoOptionVariant.Some,
+          encodeDistribution(spec.distribution),
+        )
+      : new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
+    const distributionCount =
+      spec.distribution && spec.distributionCount !== undefined
+        ? new CairoOption<number>(
+            CairoOptionVariant.Some,
+            spec.distributionCount,
+          )
+        : new CairoOption<number>(CairoOptionVariant.None);
+    return new CairoCustomEnum({
+      erc20: {
+        amount: spec.amount,
+        distribution,
+        distribution_count: distributionCount,
+      },
+      erc721: undefined,
+    });
+  }
+  return new CairoCustomEnum({
+    erc20: undefined,
+    erc721: { id: spec.tokenId },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -387,9 +558,9 @@ interface EntryFeePayload {
 
 function encodeEntryFeeOption(
   fee: EntryFeeArgs | undefined,
-): CairoOption<EntryFeePayload> {
-  if (!fee) return new CairoOption<EntryFeePayload>(CairoOptionVariant.None);
-  return new CairoOption<EntryFeePayload>(CairoOptionVariant.Some, {
+): CairoOption<CairoCustomEnum> {
+  if (!fee) return new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
+  const builtIn: EntryFeePayload = {
     token_address: fee.tokenAddress,
     amount: fee.amount,
     tournament_creator_share: fee.tournamentCreatorShare,
@@ -397,7 +568,14 @@ function encodeEntryFeeOption(
     refund_share: fee.refundShare,
     distribution: encodeDistribution(fee.distribution),
     distribution_count: fee.distributionCount,
-  });
+  };
+  // entry_fee is now Option<EntryFeeKind>, where EntryFeeKind is a sum type
+  // { BuiltIn: EntryFee, Extension: ExtensionConfig }. The SDK only builds
+  // built-in token fees; wrap the payload in the BuiltIn variant.
+  return new CairoOption<CairoCustomEnum>(
+    CairoOptionVariant.Some,
+    new CairoCustomEnum({ BuiltIn: builtIn, Extension: undefined }),
+  );
 }
 
 interface EntryRequirementPayload {
@@ -485,30 +663,64 @@ function encodeDistribution(d: DistributionSpec): CairoCustomEnum {
 }
 
 function pushRewardTypeFelts(out: string[], reward: RewardType): void {
+  // Outer tags: RewardType { Prize=0, EntryFee=1 }
+  // Prize inner: PrizeClaim { Token=0, Extension=1 }
+  // PrizeClaim::Token inner: PrizeType { Single=0, Distributed=1 }
+  // EntryFee inner: EntryFeeClaim { Token=0, Extension=1 }
+  // EntryFeeClaim::Token inner: EntryFeeRewardType { Position=0,
+  //   TournamentCreator=1, GameCreator=2, Refund=3 }
   switch (reward.kind) {
     case "prize_single":
-      out.push("0x0", "0x0", num.toHex(reward.prizeId));
+      out.push("0x0", "0x0", "0x0", num.toHex(reward.prizeId));
       return;
     case "prize_distributed":
       out.push(
+        "0x0",
         "0x0",
         "0x1",
         num.toHex(reward.prizeId),
         num.toHex(reward.payoutPosition),
       );
       return;
+    case "prize_extension":
+      // ExtensionPrizeClaim { prize_id, token_id: Option<felt252>, payout_params }
+      out.push("0x0", "0x1", num.toHex(reward.prizeId));
+      if (reward.tokenId !== undefined) {
+        out.push("0x0", reward.tokenId); // Some(token_id)
+      } else {
+        out.push("0x1"); // None
+      }
+      out.push(
+        num.toHex(reward.payoutParams.length),
+        ...reward.payoutParams.map((p) => num.toHex(p)),
+      );
+      return;
     case "entry_fee_position":
-      out.push("0x1", "0x0", num.toHex(reward.position));
+      out.push("0x1", "0x0", "0x0", num.toHex(reward.position));
       return;
     case "entry_fee_tournament_creator":
-      out.push("0x1", "0x1");
+      out.push("0x1", "0x0", "0x1");
       return;
     case "entry_fee_game_creator":
-      out.push("0x1", "0x2");
+      out.push("0x1", "0x0", "0x2");
       return;
     case "entry_fee_refund":
-      out.push("0x1", "0x3", num.toHex(reward.tokenId));
+      out.push("0x1", "0x0", "0x3", num.toHex(reward.tokenId));
       return;
+    case "entry_fee_extension": {
+      // ExtensionEntryFeeClaim { token_id: Option<felt252>, claim_params }
+      out.push("0x1", "0x1");
+      if (reward.tokenId !== undefined) {
+        out.push("0x0", reward.tokenId); // Some(token_id)
+      } else {
+        out.push("0x1"); // None
+      }
+      out.push(
+        num.toHex(reward.claimParams.length),
+        ...reward.claimParams.map((p) => num.toHex(p)),
+      );
+      return;
+    }
   }
 }
 
