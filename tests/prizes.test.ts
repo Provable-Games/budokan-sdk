@@ -97,16 +97,19 @@ describe("Budokan prize helpers", () => {
     expect(isExtensionPrize({ ...extensionPrize, sponsorAddress: "" })).toBe(false);
   });
 
-  test("rejects token prizes with unhydrated zero payout position", () => {
-    expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(false);
-    expect(() => getTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }])).toThrow(
-      "Cannot read malformed Budokan token prize (prizeId=2, tokenType=erc721)",
-    );
+  test("accepts token prizes with unhydrated zero payout position", () => {
+    expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(true);
+    expect(getTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }])).toHaveLength(1);
   });
 
   test("rejects unhydrated zero payout positions when adapting token prizes", () => {
     expect(() =>
       toMetagameTokenPrize({ ...erc721Prize, payoutPosition: 0 } as TokenPrize),
+    ).toThrow(
+      "Cannot adapt Budokan token prize with unhydrated payout position (prizeId=2, tokenType=erc721)",
+    );
+    expect(() =>
+      toMetagameTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }]),
     ).toThrow(
       "Cannot adapt Budokan token prize with unhydrated payout position (prizeId=2, tokenType=erc721)",
     );

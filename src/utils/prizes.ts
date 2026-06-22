@@ -51,16 +51,9 @@ function hasBasePrizeFields(prize: Prize): boolean {
   return (
     isNonNegativeIntegerString(prize.prizeId) &&
     Number.isInteger(prize.payoutPosition) &&
+    prize.payoutPosition >= 0 &&
     isNonEmptyString(prize.sponsorAddress)
   );
-}
-
-function hasHydratedTokenPosition(prize: Prize): boolean {
-  return prize.payoutPosition > 0;
-}
-
-function hasNonNegativePayoutPosition(prize: Prize): boolean {
-  return prize.payoutPosition >= 0;
 }
 
 function hasExtensionConfig(value: unknown): boolean {
@@ -97,7 +90,6 @@ function assertMetagameTokenPosition(prize: TokenPrize): void {
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
-    !hasHydratedTokenPosition(prize) ||
     !isNonEmptyString(prize.tokenAddress)
   ) {
     return false;
@@ -118,7 +110,6 @@ export function isTokenPrize(prize: Prize): prize is TokenPrize {
 export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
   return (
     hasBasePrizeFields(prize) &&
-    hasNonNegativePayoutPosition(prize) &&
     prize.tokenType === "extension" &&
     prize.tokenAddress === null &&
     prize.amount === null &&
@@ -130,7 +121,9 @@ export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
 
 /**
  * Returns validated token prizes. Extension prizes are skipped; malformed
- * `erc20`/`erc721` records throw instead of being silently dropped.
+ * `erc20`/`erc721` records throw instead of being silently dropped. RPC
+ * records with `payoutPosition === 0` are returned here for raw token-prize
+ * visibility, but metagame token adapters reject them until hydrated.
  */
 export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
   return prizes.flatMap((prize) => {
