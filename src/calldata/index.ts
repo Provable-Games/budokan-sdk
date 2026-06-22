@@ -241,6 +241,7 @@ export type RewardType =
   | { kind: "entry_fee_position"; position: number }
   | { kind: "entry_fee_tournament_creator" }
   | { kind: "entry_fee_game_creator" }
+  | { kind: "entry_fee_protocol_fee" }
   | { kind: "entry_fee_refund"; tokenId: string }
   | {
       kind: "entry_fee_extension";
@@ -668,7 +669,7 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
   // PrizeClaim::Token inner: PrizeType { Single=0, Distributed=1 }
   // EntryFee inner: EntryFeeClaim { Token=0, Extension=1 }
   // EntryFeeClaim::Token inner: EntryFeeRewardType { Position=0,
-  //   TournamentCreator=1, GameCreator=2, Refund=3 }
+  //   TournamentCreator=1, GameCreator=2, Refund=3, ProtocolFee=4 }
   switch (reward.kind) {
     case "prize_single":
       out.push("0x0", "0x0", "0x0", num.toHex(reward.prizeId));
@@ -706,6 +707,9 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
       return;
     case "entry_fee_refund":
       out.push("0x1", "0x0", "0x3", num.toHex(reward.tokenId));
+      return;
+    case "entry_fee_protocol_fee":
+      out.push("0x1", "0x0", "0x4");
       return;
     case "entry_fee_extension": {
       // ExtensionEntryFeeClaim { token_id: Option<felt252>, claim_params }

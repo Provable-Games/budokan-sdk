@@ -706,6 +706,10 @@
       {
         "name": "Refund",
         "type": "core::felt252"
+      },
+      {
+        "name": "ProtocolFee",
+        "type": "()"
       }
     ]
   },
