@@ -103,17 +103,66 @@ describe("Budokan prize helpers", () => {
       false,
     );
     expect(isTokenPrize({ ...erc20Prize, prizeId: "0x1" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, tournamentId: "" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, tournamentId: "not-a-number" }))
+      .toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, tournamentId: "0xa" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, amount: "" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, amount: "not-a-number" })).toBe(
       false,
     );
     expect(isTokenPrize({ ...erc20Prize, amount: "0x3e8" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, distributionType: "unknown" }))
+      .toBe(false);
+    expect(isTokenPrize({
+      ...erc20Prize,
+      distributionType: "linear",
+      distributionWeight: null,
+      distributionCount: 3,
+    })).toBe(false);
+    expect(isTokenPrize({
+      ...erc20Prize,
+      distributionType: "linear",
+      distributionWeight: 10,
+      distributionCount: 0,
+    })).toBe(false);
+    expect(isTokenPrize({
+      ...erc20Prize,
+      distributionType: "linear",
+      distributionWeight: 10,
+      distributionShares: [10000],
+      distributionCount: 3,
+    })).toBe(false);
+    expect(isTokenPrize({
+      ...erc20Prize,
+      distributionType: "custom",
+      distributionShares: [5000],
+      distributionCount: 2,
+    })).toBe(false);
+    expect(isTokenPrize({
+      ...erc20Prize,
+      distributionType: "custom",
+      distributionShares: [5000, 4000],
+      distributionCount: 2,
+    })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "abc" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "0x4d" })).toBe(false);
+    expect(isTokenPrize({
+      ...erc721Prize,
+      distributionType: "uniform",
+      distributionCount: 2,
+    })).toBe(false);
     expect(isRawExtensionPrize({ ...extensionPrize, extensionAddress: null }))
       .toBe(false);
     expect(isExtensionPrize({ ...hydratedExtensionPrize, extensionAddress: null }))
       .toBe(false);
+    expect(isRawExtensionPrize({ ...extensionPrize, tournamentId: "bad" }))
+      .toBe(false);
+    expect(isRawExtensionPrize({
+      ...extensionPrize,
+      distributionType: "uniform",
+      distributionCount: 2,
+    })).toBe(false);
     expect(isRawExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" }))
       .toBe(false);
     expect(isRawExtensionPrize({
@@ -238,6 +287,17 @@ describe("Budokan prize helpers", () => {
       distributionWeight: 10,
       distributionCount: 3,
     });
+    const uniformPrize = asTokenPrize({
+      ...erc20Prize,
+      distributionType: "uniform",
+      distributionCount: 3,
+    });
+    const customPrize = asTokenPrize({
+      ...erc20Prize,
+      distributionType: "custom",
+      distributionShares: [6000, 4000],
+      distributionCount: 2,
+    });
 
     expect(toMetagameTokenPrize(distributedPrize)).toEqual({
       id: "1",
@@ -247,6 +307,8 @@ describe("Budokan prize helpers", () => {
       amount: "1000",
       sponsorAddress: "0xsponsor",
     });
+    expect(toMetagameTokenPrize(uniformPrize).amount).toBe("1000");
+    expect(toMetagameTokenPrize(customPrize).amount).toBe("1000");
   });
 
   test("converts extension prizes to metagame extension prizes", () => {

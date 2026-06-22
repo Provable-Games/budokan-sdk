@@ -31,9 +31,61 @@ function isNonNegativeIntegerString(value: unknown): value is string {
   }
 }
 
+function isNonNegativeIntegerNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isPositiveIntegerNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function isDistributionType(value: unknown): value is string {
+  return (
+    value === "linear" ||
+    value === "exponential" ||
+    value === "uniform" ||
+    value === "custom"
+  );
+}
+
+function hasNoDistributionFields(prize: Prize): boolean {
+  return (
+    prize.distributionType === null &&
+    prize.distributionWeight === null &&
+    prize.distributionShares === null &&
+    prize.distributionCount === null
+  );
+}
+
+function hasValidDistributionFields(prize: Prize): boolean {
+  if (prize.distributionType === null) return hasNoDistributionFields(prize);
+  if (!isDistributionType(prize.distributionType)) return false;
+  if (!isPositiveIntegerNumber(prize.distributionCount)) return false;
+
+  if (prize.distributionType === "custom") {
+    return (
+      prize.distributionWeight === null &&
+      Array.isArray(prize.distributionShares) &&
+      prize.distributionShares.length === prize.distributionCount &&
+      prize.distributionShares.every(isNonNegativeIntegerNumber) &&
+      prize.distributionShares.reduce((sum, share) => sum + share, 0) === 10000
+    );
+  }
+
+  if (prize.distributionType === "uniform") {
+    return prize.distributionWeight === null && prize.distributionShares === null;
+  }
+
+  return (
+    isNonNegativeIntegerNumber(prize.distributionWeight) &&
+    prize.distributionShares === null
+  );
+}
+
 function hasBasePrizeFields(prize: Prize): boolean {
   return (
     isNonNegativeIntegerString(prize.prizeId) &&
+    isNonNegativeIntegerString(prize.tournamentId) &&
     Number.isInteger(prize.payoutPosition) &&
     prize.payoutPosition >= 0 &&
     isNonEmptyString(prize.sponsorAddress)
@@ -128,12 +180,14 @@ export function isRawTokenPrize(prize: Prize): prize is TokenPrize {
     ? isNonNegativeIntegerString(prize.amount) &&
         prize.tokenId === null &&
         prize.extensionAddress === null &&
-        prize.extensionConfig === null
+        prize.extensionConfig === null &&
+        hasValidDistributionFields(prize)
     : prize.tokenType === "erc721" &&
         prize.amount === null &&
         isNonNegativeIntegerString(prize.tokenId) &&
         prize.extensionAddress === null &&
-        prize.extensionConfig === null;
+        prize.extensionConfig === null &&
+        hasNoDistributionFields(prize);
 }
 
 export function isRawExtensionPrize(prize: Prize): prize is ExtensionPrize {
@@ -143,6 +197,7 @@ export function isRawExtensionPrize(prize: Prize): prize is ExtensionPrize {
     prize.tokenAddress === null &&
     prize.amount === null &&
     prize.tokenId === null &&
+    hasNoDistributionFields(prize) &&
     isNonEmptyString(prize.extensionAddress) &&
     hasExtensionConfig(prize.extensionConfig)
   );
