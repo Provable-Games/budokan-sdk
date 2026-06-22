@@ -1,24 +1,28 @@
-import type { Prize as MetagameTokenPrizeBase } from "@provable-games/metagame-sdk";
+import type {
+  ExtensionPrize as MetagameExtensionPrize,
+  Prize as MetagameTokenPrize,
+  PrizeLike as MetagamePrizeLike,
+} from "@provable-games/metagame-sdk";
 import type {
   ExtensionPrize,
   Prize,
   TokenPrize,
 } from "../types/prize.js";
 
-export type MetagameTokenPrize = MetagameTokenPrizeBase;
+export type { MetagameExtensionPrize, MetagamePrizeLike, MetagameTokenPrize };
 
-export type MetagameExtensionPrize = {
-  id: string;
-  position: number;
-  tokenAddress: null;
-  tokenType: "extension";
-  amount: null;
-  sponsorAddress: string;
-  extensionAddress: string | null;
-  extensionConfig: string[] | null;
-};
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
 
-export type MetagamePrizeLike = MetagameTokenPrize | MetagameExtensionPrize;
+function hasBasePrizeFields(prize: Prize): boolean {
+  return (
+    isNonEmptyString(prize.prizeId) &&
+    Number.isInteger(prize.payoutPosition) &&
+    prize.payoutPosition >= 0 &&
+    isNonEmptyString(prize.sponsorAddress)
+  );
+}
 
 function hasExtensionConfig(value: unknown): boolean {
   return (
@@ -28,30 +32,34 @@ function hasExtensionConfig(value: unknown): boolean {
 }
 
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
-  if (typeof prize.tokenAddress !== "string" || prize.tokenAddress.length === 0) {
+  if (
+    !hasBasePrizeFields(prize) ||
+    prize.payoutPosition <= 0 ||
+    !isNonEmptyString(prize.tokenAddress)
+  ) {
     return false;
   }
 
   return prize.tokenType === "erc20"
-    ? typeof prize.amount === "string" &&
+    ? isNonEmptyString(prize.amount) &&
         prize.tokenId === null &&
         prize.extensionAddress === null &&
         prize.extensionConfig === null
     : prize.tokenType === "erc721" &&
         prize.amount === null &&
-        typeof prize.tokenId === "string" &&
+        isNonEmptyString(prize.tokenId) &&
         prize.extensionAddress === null &&
         prize.extensionConfig === null;
 }
 
 export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
   return (
+    hasBasePrizeFields(prize) &&
     prize.tokenType === "extension" &&
     prize.tokenAddress === null &&
     prize.amount === null &&
     prize.tokenId === null &&
-    typeof prize.extensionAddress === "string" &&
-    prize.extensionAddress.length > 0 &&
+    isNonEmptyString(prize.extensionAddress) &&
     hasExtensionConfig(prize.extensionConfig)
   );
 }
