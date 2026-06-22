@@ -61,6 +61,17 @@ function malformedTokenPrizeError(
   );
 }
 
+function malformedExtensionPrizeError(
+  action: "adapt",
+  prize: Prize,
+): TypeError {
+  return new TypeError(
+    `Cannot ${action} malformed Budokan extension prize (${
+      describePrize(prize)
+    })`,
+  );
+}
+
 function assertMetagameTokenPosition(prize: TokenPrize): void {
   if (Number.isInteger(prize.payoutPosition) && prize.payoutPosition > 0) {
     return;
@@ -198,6 +209,9 @@ export function toMetagameTokenPrize(
   prize: TokenPrize,
 ): MetagameTokenPrize {
   assertMetagameTokenPosition(prize);
+  if (!isRawTokenPrize(prize)) {
+    throw malformedTokenPrizeError("adapt", prize);
+  }
 
   const adapted = {
     id: prize.prizeId,
@@ -222,6 +236,9 @@ export function toMetagameExtensionPrize(
   prize: ExtensionPrize,
 ): MetagameExtensionPrize {
   assertMetagameExtensionPosition(prize);
+  if (!isRawExtensionPrize(prize)) {
+    throw malformedExtensionPrizeError("adapt", prize);
+  }
 
   const adapted = {
     id: prize.prizeId,

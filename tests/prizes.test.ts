@@ -182,6 +182,27 @@ describe("Budokan prize helpers", () => {
     );
   });
 
+  test("rejects malformed records in direct adapters", () => {
+    expect(() =>
+      toMetagameTokenPrize({ ...erc20Prize, amount: "abc" } as TokenPrize),
+    ).toThrow(
+      "Cannot adapt malformed Budokan token prize (prizeId=1, tokenType=erc20)",
+    );
+    expect(() =>
+      toMetagameTokenPrize({ ...erc20Prize, tokenAddress: "" } as TokenPrize),
+    ).toThrow(
+      "Cannot adapt malformed Budokan token prize (prizeId=1, tokenType=erc20)",
+    );
+    expect(() =>
+      toMetagameExtensionPrize({
+        ...hydratedExtensionPrize,
+        extensionAddress: null,
+      } as ExtensionPrize),
+    ).toThrow(
+      "Cannot adapt malformed Budokan extension prize (prizeId=3, tokenType=extension)",
+    );
+  });
+
   test("filters token prizes", () => {
     expect(getTokenPrizes([erc20Prize, extensionPrize, erc721Prize])).toEqual([
       erc20Prize,
