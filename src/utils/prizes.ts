@@ -1,13 +1,24 @@
-import type {
-  ExtensionPrize as MetagameExtensionPrize,
-  Prize as MetagameTokenPrize,
-  PrizeLike as MetagamePrizeLike,
-} from "@provable-games/metagame-sdk";
+import type { Prize as MetagameTokenPrizeBase } from "@provable-games/metagame-sdk";
 import type {
   ExtensionPrize,
   Prize,
   TokenPrize,
 } from "../types/prize.js";
+
+export type MetagameTokenPrize = MetagameTokenPrizeBase;
+
+export type MetagameExtensionPrize = {
+  id: string;
+  position: number;
+  tokenAddress: null;
+  tokenType: "extension";
+  amount: null;
+  sponsorAddress: string;
+  extensionAddress: string | null;
+  extensionConfig: string[] | null;
+};
+
+export type MetagamePrizeLike = MetagameTokenPrize | MetagameExtensionPrize;
 
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (

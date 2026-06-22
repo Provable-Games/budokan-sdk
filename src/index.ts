@@ -83,6 +83,11 @@ export {
   toMetagameTokenPrize,
   toMetagameTokenPrizes,
 } from "./utils/prizes.js";
+export type {
+  MetagameExtensionPrize,
+  MetagamePrizeLike,
+  MetagameTokenPrize,
+} from "./utils/prizes.js";
 
 // Chains
 export {
