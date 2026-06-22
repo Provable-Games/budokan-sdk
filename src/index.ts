@@ -15,7 +15,11 @@ export type {
   QualificationEntry,
   Registration,
   LeaderboardEntry,
+  Erc20Prize,
+  Erc721Prize,
+  ExtensionPrize,
   Prize,
+  TokenPrize,
   RewardClaim,
   PrizeAggregation,
   RewardClaimSummary,
@@ -69,6 +73,16 @@ export { WSManager } from "./ws/manager.js";
 export { normalizeAddress } from "./utils/address.js";
 export { snakeToCamel, camelToSnake } from "./utils/mappers.js";
 export { withRetry } from "./utils/retry.js";
+export {
+  getTokenPrizes,
+  isExtensionPrize,
+  isTokenPrize,
+  toMetagameExtensionPrize,
+  toMetagamePrize,
+  toMetagamePrizes,
+  toMetagameTokenPrize,
+  toMetagameTokenPrizes,
+} from "./utils/prizes.js";
 
 // Chains
 export {

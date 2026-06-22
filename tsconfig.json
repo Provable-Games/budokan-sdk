@@ -19,7 +19,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@provable-games/metagame-sdk": ["../metagame-sdk/dist/index.d.ts"]
+      "@provable-games/metagame-sdk": ["../metagame-sdk"]
     }
   },
   "include": ["src"],

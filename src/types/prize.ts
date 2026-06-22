@@ -25,6 +25,35 @@ export interface Prize {
   extensionConfig: string[] | null;
 }
 
+export type Erc20Prize = Prize & {
+  tokenType: "erc20";
+  tokenAddress: string;
+  amount: string;
+  tokenId: null;
+  extensionAddress: null;
+  extensionConfig: null;
+};
+
+export type Erc721Prize = Prize & {
+  tokenType: "erc721";
+  tokenAddress: string;
+  amount: null;
+  tokenId: string;
+  extensionAddress: null;
+  extensionConfig: null;
+};
+
+export type TokenPrize = Erc20Prize | Erc721Prize;
+
+export type ExtensionPrize = Prize & {
+  tokenType: "extension";
+  tokenAddress: null;
+  amount: null;
+  tokenId: null;
+  extensionAddress: string | null;
+  extensionConfig: string[] | null;
+};
+
 /**
  * Discriminator for `RewardClaim.claimKind`. Picks one of the six terminal
  * variants of the on-chain `RewardType` enum (Prize::Single, Prize::Distributed,

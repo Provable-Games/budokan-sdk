@@ -1,0 +1,119 @@
+import { describe, expect, test } from "bun:test";
+import {
+  getTokenPrizes,
+  isExtensionPrize,
+  isTokenPrize,
+  toMetagamePrize,
+  toMetagamePrizes,
+  toMetagameTokenPrize,
+  toMetagameTokenPrizes,
+} from "../src/utils/prizes.ts";
+import type { Prize, TokenPrize } from "../src/types/prize.ts";
+
+const erc20Prize: Prize = {
+  prizeId: "1",
+  tournamentId: "10",
+  payoutPosition: 1,
+  tokenAddress: "0xerc20",
+  tokenType: "erc20",
+  amount: "1000",
+  tokenId: null,
+  distributionType: null,
+  distributionWeight: null,
+  distributionShares: null,
+  distributionCount: null,
+  sponsorAddress: "0xsponsor",
+  extensionAddress: null,
+  extensionConfig: null,
+};
+
+const erc721Prize: Prize = {
+  prizeId: "2",
+  tournamentId: "10",
+  payoutPosition: 2,
+  tokenAddress: "0xnft",
+  tokenType: "erc721",
+  amount: null,
+  tokenId: "77",
+  distributionType: null,
+  distributionWeight: null,
+  distributionShares: null,
+  distributionCount: null,
+  sponsorAddress: "0xsponsor",
+  extensionAddress: null,
+  extensionConfig: null,
+};
+
+const extensionPrize: Prize = {
+  prizeId: "3",
+  tournamentId: "10",
+  payoutPosition: 0,
+  tokenAddress: null,
+  tokenType: "extension",
+  amount: null,
+  tokenId: null,
+  distributionType: null,
+  distributionWeight: null,
+  distributionShares: null,
+  distributionCount: null,
+  sponsorAddress: "0xsponsor",
+  extensionAddress: "0xextension",
+  extensionConfig: ["0x1", "0x2"],
+};
+
+describe("Budokan prize helpers", () => {
+  test("identifies token and extension prizes", () => {
+    expect(isTokenPrize(erc20Prize)).toBe(true);
+    expect(isTokenPrize(erc721Prize)).toBe(true);
+    expect(isTokenPrize(extensionPrize)).toBe(false);
+    expect(isExtensionPrize(extensionPrize)).toBe(true);
+  });
+
+  test("filters token prizes", () => {
+    expect(getTokenPrizes([erc20Prize, extensionPrize, erc721Prize])).toEqual([
+      erc20Prize,
+      erc721Prize,
+    ]);
+  });
+
+  test("converts token prizes to metagame token prizes", () => {
+    expect(toMetagameTokenPrize(erc20Prize as TokenPrize)).toEqual({
+      id: "1",
+      position: 1,
+      tokenAddress: "0xerc20",
+      tokenType: "erc20",
+      amount: "1000",
+      sponsorAddress: "0xsponsor",
+    });
+
+    expect(toMetagameTokenPrize(erc721Prize as TokenPrize)).toEqual({
+      id: "2",
+      position: 2,
+      tokenAddress: "0xnft",
+      tokenType: "erc721",
+      amount: "77",
+      sponsorAddress: "0xsponsor",
+    });
+  });
+
+  test("converts extension prizes to metagame extension prizes", () => {
+    expect(toMetagamePrize(extensionPrize)).toEqual({
+      id: "3",
+      position: 0,
+      tokenAddress: null,
+      tokenType: "extension",
+      amount: null,
+      sponsorAddress: "0xsponsor",
+      extensionAddress: "0xextension",
+      extensionConfig: ["0x1", "0x2"],
+    });
+  });
+
+  test("converts mixed and token-only prize lists", () => {
+    expect(toMetagamePrizes([erc20Prize, extensionPrize])).toHaveLength(2);
+    expect(toMetagameTokenPrizes([erc20Prize, extensionPrize, erc721Prize])).toEqual([
+      toMetagameTokenPrize(erc20Prize as TokenPrize),
+      toMetagameTokenPrize(erc721Prize as TokenPrize),
+    ]);
+  });
+});
