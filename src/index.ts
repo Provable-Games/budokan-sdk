@@ -75,8 +75,11 @@ export { snakeToCamel, camelToSnake } from "./utils/mappers.js";
 export { withRetry } from "./utils/retry.js";
 export {
   getTokenPrizes,
+  getRawTokenPrizes,
   isExtensionPrize,
   isMetagameAdaptablePrize,
+  isRawExtensionPrize,
+  isRawTokenPrize,
   isTokenPrize,
   toMetagameExtensionPrize,
   toMetagamePrize,

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  getRawTokenPrizes,
   getTokenPrizes,
   isExtensionPrize,
   isMetagameAdaptablePrize,
+  isRawExtensionPrize,
+  isRawTokenPrize,
   isTokenPrize,
   toMetagamePrize,
   toMetagamePrizes,
@@ -70,7 +73,7 @@ const hydratedExtensionPrize: Prize = {
 };
 
 function asTokenPrize(prize: Prize): TokenPrize {
-  if (!isTokenPrize(prize)) {
+  if (!isRawTokenPrize(prize)) {
     throw new Error(`Expected token prize ${prize.prizeId}`);
   }
   return prize;
@@ -81,7 +84,11 @@ describe("Budokan prize helpers", () => {
     expect(isTokenPrize(erc20Prize)).toBe(true);
     expect(isTokenPrize(erc721Prize)).toBe(true);
     expect(isTokenPrize(extensionPrize)).toBe(false);
-    expect(isExtensionPrize(extensionPrize)).toBe(true);
+    expect(isRawTokenPrize(erc20Prize)).toBe(true);
+    expect(isRawTokenPrize(erc721Prize)).toBe(true);
+    expect(isRawExtensionPrize(extensionPrize)).toBe(true);
+    expect(isExtensionPrize(extensionPrize)).toBe(false);
+    expect(isExtensionPrize(hydratedExtensionPrize)).toBe(true);
   });
 
   test("rejects malformed prize refinements", () => {
@@ -102,29 +109,31 @@ describe("Budokan prize helpers", () => {
     expect(isTokenPrize({ ...erc20Prize, amount: "0x3e8" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "abc" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "0x4d" })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, extensionAddress: null })).toBe(
-      false,
-    );
-    expect(isExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" })).toBe(
-      false,
-    );
-    expect(isExtensionPrize({
+    expect(isRawExtensionPrize({ ...extensionPrize, extensionAddress: null }))
+      .toBe(false);
+    expect(isExtensionPrize({ ...hydratedExtensionPrize, extensionAddress: null }))
+      .toBe(false);
+    expect(isRawExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" }))
+      .toBe(false);
+    expect(isRawExtensionPrize({
       ...extensionPrize,
       extensionConfig: "0x1" as unknown as string[],
     })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, prizeId: "" })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, prizeId: "not-a-number" })).toBe(
-      false,
-    );
-    expect(isExtensionPrize({ ...extensionPrize, prizeId: "0x3" })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, sponsorAddress: "" })).toBe(false);
+    expect(isRawExtensionPrize({ ...extensionPrize, prizeId: "" })).toBe(false);
+    expect(isRawExtensionPrize({ ...extensionPrize, prizeId: "not-a-number" }))
+      .toBe(false);
+    expect(isRawExtensionPrize({ ...extensionPrize, prizeId: "0x3" }))
+      .toBe(false);
+    expect(isRawExtensionPrize({ ...extensionPrize, sponsorAddress: "" }))
+      .toBe(false);
   });
 
-  test("accepts token prizes with unhydrated zero payout position", () => {
-    expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(true);
-    expect(getTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }])).toHaveLength(
-      1,
-    );
+  test("keeps raw helpers available for unhydrated zero payout positions", () => {
+    expect(isRawTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(true);
+    expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(false);
+    expect(getRawTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }]))
+      .toHaveLength(1);
+    expect(getTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }])).toEqual([]);
   });
 
   test("identifies metagame-adaptable prizes", () => {

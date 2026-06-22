@@ -97,7 +97,11 @@ function assertMetagameExtensionPosition(prize: ExtensionPrize): void {
   );
 }
 
-export function isTokenPrize(prize: Prize): prize is TokenPrize {
+function hasHydratedPayoutPosition(prize: Prize): boolean {
+  return prize.payoutPosition > 0;
+}
+
+export function isRawTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
     !isNonEmptyString(prize.tokenAddress)
@@ -117,7 +121,7 @@ export function isTokenPrize(prize: Prize): prize is TokenPrize {
         prize.extensionConfig === null;
 }
 
-export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
+export function isRawExtensionPrize(prize: Prize): prize is ExtensionPrize {
   return (
     hasBasePrizeFields(prize) &&
     prize.tokenType === "extension" &&
@@ -129,6 +133,14 @@ export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
   );
 }
 
+export function isTokenPrize(prize: Prize): prize is TokenPrize {
+  return isRawTokenPrize(prize) && hasHydratedPayoutPosition(prize);
+}
+
+export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
+  return isRawExtensionPrize(prize) && hasHydratedPayoutPosition(prize);
+}
+
 /**
  * Returns true when a prize is a valid Budokan token/extension prize and has a
  * hydrated leaderboard position suitable for the metagame prize shape.
@@ -136,22 +148,32 @@ export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
 export function isMetagameAdaptablePrize(
   prize: Prize,
 ): prize is TokenPrize | ExtensionPrize {
-  return (
-    prize.payoutPosition > 0 &&
-    (isTokenPrize(prize) || isExtensionPrize(prize))
-  );
+  return isTokenPrize(prize) || isExtensionPrize(prize);
 }
 
 /**
- * Returns validated token prizes. Extension prizes are skipped; malformed
- * `erc20`/`erc721` records throw instead of being silently dropped. RPC
- * records with `payoutPosition === 0` are returned here for raw token-prize
- * visibility, but metagame token adapters reject them until hydrated.
+ * Returns validated raw token prizes. Extension prizes are skipped; malformed
+ * `erc20`/`erc721` records throw instead of being silently dropped. RPC records
+ * with `payoutPosition === 0` are returned here for raw token-prize visibility.
+ */
+export function getRawTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
+  return prizes.flatMap((prize) => {
+    if (isRawTokenPrize(prize)) return [prize];
+    if (prize.tokenType === "extension") return [];
+
+    throw malformedTokenPrizeError("read", prize);
+  });
+}
+
+/**
+ * Returns validated hydrated token prizes. Extension prizes and valid raw
+ * token prizes with `payoutPosition === 0` are skipped; malformed
+ * `erc20`/`erc721` records throw instead of being silently dropped.
  */
 export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
   return prizes.flatMap((prize) => {
     if (isTokenPrize(prize)) return [prize];
-    if (prize.tokenType === "extension") return [];
+    if (isRawTokenPrize(prize) || prize.tokenType === "extension") return [];
 
     throw malformedTokenPrizeError("read", prize);
   });
@@ -216,8 +238,8 @@ export function toMetagameExtensionPrize(
 export function toMetagamePrize(
   prize: Prize,
 ): MetagamePrizeLike {
-  if (isTokenPrize(prize)) return toMetagameTokenPrize(prize);
-  if (isExtensionPrize(prize)) return toMetagameExtensionPrize(prize);
+  if (isRawTokenPrize(prize)) return toMetagameTokenPrize(prize);
+  if (isRawExtensionPrize(prize)) return toMetagameExtensionPrize(prize);
 
   throw new TypeError(
     `Cannot adapt malformed Budokan prize (${describePrize(prize)})`,
@@ -270,7 +292,7 @@ export function toMetagameTokenPrizes(
   prizes: readonly Prize[],
 ): MetagameTokenPrize[] {
   return prizes.flatMap((prize) => {
-    if (isTokenPrize(prize)) return [toMetagameTokenPrize(prize)];
+    if (isRawTokenPrize(prize)) return [toMetagameTokenPrize(prize)];
     if (prize.tokenType === "extension") return [];
 
     throw malformedTokenPrizeError("adapt", prize);
