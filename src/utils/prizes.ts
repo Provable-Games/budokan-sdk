@@ -15,9 +15,19 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function isNonNegativeIntegerString(value: unknown): value is string {
+  if (!isNonEmptyString(value) || value.trim() !== value) return false;
+
+  try {
+    return BigInt(value) >= 0n;
+  } catch {
+    return false;
+  }
+}
+
 function hasBasePrizeFields(prize: Prize): boolean {
   return (
-    isNonEmptyString(prize.prizeId) &&
+    isNonNegativeIntegerString(prize.prizeId) &&
     Number.isInteger(prize.payoutPosition) &&
     prize.payoutPosition >= 0 &&
     isNonEmptyString(prize.sponsorAddress)
@@ -40,13 +50,13 @@ export function isTokenPrize(prize: Prize): prize is TokenPrize {
   }
 
   return prize.tokenType === "erc20"
-    ? isNonEmptyString(prize.amount) &&
+    ? isNonNegativeIntegerString(prize.amount) &&
         prize.tokenId === null &&
         prize.extensionAddress === null &&
         prize.extensionConfig === null
     : prize.tokenType === "erc721" &&
         prize.amount === null &&
-        isNonEmptyString(prize.tokenId) &&
+        isNonNegativeIntegerString(prize.tokenId) &&
         prize.extensionAddress === null &&
         prize.extensionConfig === null;
 }
@@ -67,6 +77,12 @@ export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
   return prizes.filter(isTokenPrize);
 }
 
+/**
+ * Converts a guard-validated Budokan token prize into the Metagame SDK token
+ * prize shape. Metagame token prizes do not carry Budokan distribution fields,
+ * so distributed ERC20 prizes are represented by their aggregate `amount` at
+ * `payoutPosition`; use the original Budokan `Prize` for payout-split math.
+ */
 export function toMetagameTokenPrize(
   prize: TokenPrize,
 ): MetagameTokenPrize {
@@ -83,6 +99,10 @@ export function toMetagameTokenPrize(
   return adapted;
 }
 
+/**
+ * Converts a guard-validated Budokan extension prize into the Metagame SDK
+ * extension-prize shape.
+ */
 export function toMetagameExtensionPrize(
   prize: ExtensionPrize,
 ): MetagameExtensionPrize {
@@ -100,6 +120,10 @@ export function toMetagameExtensionPrize(
   return adapted;
 }
 
+/**
+ * Converts supported Budokan prize variants into Metagame SDK prize shapes.
+ * See `toMetagameTokenPrize` for token prize distribution behavior.
+ */
 export function toMetagamePrize(
   prize: Prize,
 ): MetagamePrizeLike | null {
@@ -108,6 +132,10 @@ export function toMetagamePrize(
   return null;
 }
 
+/**
+ * Converts supported Budokan prize variants into Metagame SDK prize shapes.
+ * See `toMetagameTokenPrize` for token prize distribution behavior.
+ */
 export function toMetagamePrizes(
   prizes: readonly Prize[],
 ): MetagamePrizeLike[] {
@@ -117,6 +145,10 @@ export function toMetagamePrizes(
   });
 }
 
+/**
+ * Converts Budokan token prizes into Metagame SDK token prize shapes.
+ * See `toMetagameTokenPrize` for distribution behavior.
+ */
 export function toMetagameTokenPrizes(
   prizes: readonly Prize[],
 ): MetagameTokenPrize[] {
