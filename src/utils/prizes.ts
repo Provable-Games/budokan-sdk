@@ -62,7 +62,17 @@ function malformedTokenPrizeError(
 }
 
 function assertMetagameTokenPosition(prize: TokenPrize): void {
-  if (prize.payoutPosition > 0) return;
+  if (Number.isInteger(prize.payoutPosition) && prize.payoutPosition > 0) {
+    return;
+  }
+
+  if (prize.payoutPosition !== 0) {
+    throw new TypeError(
+      `Cannot adapt Budokan token prize with invalid payout position (${
+        describePrize(prize)
+      })`,
+    );
+  }
 
   throw new TypeError(
     `Cannot adapt Budokan token prize with unhydrated payout position (${
@@ -72,7 +82,17 @@ function assertMetagameTokenPosition(prize: TokenPrize): void {
 }
 
 function assertMetagameExtensionPosition(prize: ExtensionPrize): void {
-  if (prize.payoutPosition > 0) return;
+  if (Number.isInteger(prize.payoutPosition) && prize.payoutPosition > 0) {
+    return;
+  }
+
+  if (prize.payoutPosition !== 0) {
+    throw new TypeError(
+      `Cannot adapt Budokan extension prize with invalid payout position (${
+        describePrize(prize)
+      })`,
+    );
+  }
 
   throw new TypeError(
     `Cannot adapt Budokan extension prize with unhydrated payout position (${
@@ -219,6 +239,7 @@ export function toMetagameExtensionPrize(
 /**
  * Converts supported Budokan prize variants into Metagame SDK prize shapes.
  * Throws when a prize has malformed fields or an unhydrated payout position.
+ * Raw-but-valid zero-position prizes throw the unhydrated-position error.
  * See `toMetagameTokenPrize` for token prize distribution behavior.
  */
 export function toMetagamePrize(

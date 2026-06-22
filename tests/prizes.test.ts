@@ -7,6 +7,7 @@ import {
   isRawExtensionPrize,
   isRawTokenPrize,
   isTokenPrize,
+  toMetagameExtensionPrize,
   toMetagamePrize,
   toMetagamePrizes,
   toMetagameTokenPrize,
@@ -14,7 +15,7 @@ import {
   tryToMetagamePrize,
   tryToMetagamePrizes,
 } from "../src/utils/prizes.ts";
-import type { Prize, TokenPrize } from "../src/types/prize.ts";
+import type { ExtensionPrize, Prize, TokenPrize } from "../src/types/prize.ts";
 
 const erc20Prize: Prize = {
   prizeId: "1",
@@ -162,6 +163,22 @@ describe("Budokan prize helpers", () => {
     );
     expect(() => toMetagamePrizes([erc20Prize, extensionPrize])).toThrow(
       "Cannot adapt Budokan extension prize with unhydrated payout position (prizeId=3, tokenType=extension)",
+    );
+  });
+
+  test("rejects non-integer payout positions in direct adapters", () => {
+    expect(() =>
+      toMetagameTokenPrize({ ...erc20Prize, payoutPosition: 1.5 } as TokenPrize),
+    ).toThrow(
+      "Cannot adapt Budokan token prize with invalid payout position (prizeId=1, tokenType=erc20)",
+    );
+    expect(() =>
+      toMetagameExtensionPrize({
+        ...hydratedExtensionPrize,
+        payoutPosition: 2.5,
+      } as ExtensionPrize),
+    ).toThrow(
+      "Cannot adapt Budokan extension prize with invalid payout position (prizeId=3, tokenType=extension)",
     );
   });
 
