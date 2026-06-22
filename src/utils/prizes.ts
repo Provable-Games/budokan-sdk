@@ -34,7 +34,6 @@ function hasExtensionConfig(value: unknown): boolean {
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
-    prize.payoutPosition <= 0 ||
     !isNonEmptyString(prize.tokenAddress)
   ) {
     return false;
@@ -71,7 +70,7 @@ export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
 export function toMetagameTokenPrize(
   prize: TokenPrize,
 ): MetagameTokenPrize {
-  return {
+  const adapted = {
     id: prize.prizeId,
     position: prize.payoutPosition,
     tokenAddress: prize.tokenAddress,
@@ -79,13 +78,15 @@ export function toMetagameTokenPrize(
     // Metagame token prizes use `amount` as the token id for ERC721 entries.
     amount: prize.tokenType === "erc20" ? prize.amount : prize.tokenId,
     sponsorAddress: prize.sponsorAddress,
-  };
+  } satisfies MetagameTokenPrize;
+
+  return adapted;
 }
 
 export function toMetagameExtensionPrize(
   prize: ExtensionPrize,
 ): MetagameExtensionPrize {
-  return {
+  const adapted = {
     id: prize.prizeId,
     position: prize.payoutPosition,
     tokenAddress: null,
@@ -94,7 +95,9 @@ export function toMetagameExtensionPrize(
     sponsorAddress: prize.sponsorAddress,
     extensionAddress: prize.extensionAddress,
     extensionConfig: prize.extensionConfig,
-  };
+  } satisfies MetagameExtensionPrize;
+
+  return adapted;
 }
 
 export function toMetagamePrize(

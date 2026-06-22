@@ -61,6 +61,13 @@ const extensionPrize: Prize = {
   extensionConfig: ["0x1", "0x2"],
 };
 
+function asTokenPrize(prize: Prize): TokenPrize {
+  if (!isTokenPrize(prize)) {
+    throw new Error(`Expected token prize ${prize.prizeId}`);
+  }
+  return prize;
+}
+
 describe("Budokan prize helpers", () => {
   test("identifies token and extension prizes", () => {
     expect(isTokenPrize(erc20Prize)).toBe(true);
@@ -73,7 +80,6 @@ describe("Budokan prize helpers", () => {
     expect(isTokenPrize({ ...erc20Prize, tokenId: "unexpected" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, amount: "unexpected" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, extensionAddress: "0xextension" })).toBe(false);
-    expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, prizeId: "" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, amount: "" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, extensionAddress: null })).toBe(false);
@@ -81,6 +87,18 @@ describe("Budokan prize helpers", () => {
     expect(isExtensionPrize({ ...extensionPrize, extensionConfig: "0x1" as unknown as string[] })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, prizeId: "" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, sponsorAddress: "" })).toBe(false);
+  });
+
+  test("accepts token prizes with unhydrated zero payout position", () => {
+    expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(true);
+    expect(toMetagameTokenPrize(asTokenPrize({ ...erc721Prize, payoutPosition: 0 }))).toEqual({
+      id: "2",
+      position: 0,
+      tokenAddress: "0xnft",
+      tokenType: "erc721",
+      amount: "77",
+      sponsorAddress: "0xsponsor",
+    });
   });
 
   test("filters token prizes", () => {
@@ -91,7 +109,7 @@ describe("Budokan prize helpers", () => {
   });
 
   test("converts token prizes to metagame token prizes", () => {
-    expect(toMetagameTokenPrize(erc20Prize as TokenPrize)).toEqual({
+    expect(toMetagameTokenPrize(asTokenPrize(erc20Prize))).toEqual({
       id: "1",
       position: 1,
       tokenAddress: "0xerc20",
@@ -100,7 +118,7 @@ describe("Budokan prize helpers", () => {
       sponsorAddress: "0xsponsor",
     });
 
-    expect(toMetagameTokenPrize(erc721Prize as TokenPrize)).toEqual({
+    expect(toMetagameTokenPrize(asTokenPrize(erc721Prize))).toEqual({
       id: "2",
       position: 2,
       tokenAddress: "0xnft",
@@ -126,8 +144,8 @@ describe("Budokan prize helpers", () => {
   test("converts mixed and token-only prize lists", () => {
     expect(toMetagamePrizes([erc20Prize, extensionPrize])).toHaveLength(2);
     expect(toMetagameTokenPrizes([erc20Prize, extensionPrize, erc721Prize])).toEqual([
-      toMetagameTokenPrize(erc20Prize as TokenPrize),
-      toMetagameTokenPrize(erc721Prize as TokenPrize),
+      toMetagameTokenPrize(asTokenPrize(erc20Prize)),
+      toMetagameTokenPrize(asTokenPrize(erc721Prize)),
     ]);
   });
 });
