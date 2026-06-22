@@ -26,11 +26,12 @@ export interface Prize {
 }
 
 /**
- * Discriminator for `RewardClaim.claimKind`. Picks one of the six terminal
+ * Discriminator for `RewardClaim.claimKind`. Picks one of the seven terminal
  * variants of the on-chain `RewardType` enum (Prize::Single, Prize::Distributed,
- * EntryFee::Position / TournamentCreator / GameCreator / Refund). The
- * variant-specific fields below are populated only for the kinds that carry
- * them; the two pure-marker creator kinds leave all four nullable fields null.
+ * EntryFee::Position / TournamentCreator / GameCreator / Refund / ProtocolFee).
+ * The variant-specific fields below are populated only for the kinds that carry
+ * them; the three pure-marker kinds (tournament_creator, game_creator,
+ * protocol_fee) leave all four nullable fields null.
  */
 export type RewardClaimKind =
   | "prize_single"
@@ -38,6 +39,7 @@ export type RewardClaimKind =
   | "entry_fee_position"
   | "entry_fee_tournament_creator"
   | "entry_fee_game_creator"
+  | "entry_fee_protocol_fee"
   | "entry_fee_refund"
   // #269 extension claims: budokan forwards (token_id, params) to the
   // extension, which resolves recipient + eligibility from its own state.
