@@ -778,6 +778,9 @@ function translateCairoRewardType(rewardType: unknown): TranslatedRewardClaim {
     if (subVariant === "GameCreator" || subBag?.GameCreator !== undefined) {
       return rewardClaim({ claimKind: "entry_fee_game_creator" });
     }
+    if (subVariant === "ProtocolFee" || subBag?.ProtocolFee !== undefined) {
+      return rewardClaim({ claimKind: "entry_fee_protocol_fee" });
+    }
     if (subVariant === "Refund" || subBag?.Refund !== undefined) {
       return rewardClaim({
         claimKind: "entry_fee_refund",

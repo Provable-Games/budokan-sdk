@@ -11,7 +11,16 @@ export type {
 } from "./tournament.js";
 export type { Registration } from "./registration.js";
 export type { LeaderboardEntry } from "./leaderboard.js";
-export type { Prize, RewardClaim, PrizeAggregation, RewardClaimSummary } from "./prize.js";
+export type {
+  Erc20Prize,
+  Erc721Prize,
+  ExtensionPrize,
+  Prize,
+  PrizeAggregation,
+  RewardClaim,
+  RewardClaimSummary,
+  TokenPrize,
+} from "./prize.js";
 export type {
   PlatformStats,
   PrizeStats,
