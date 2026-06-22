@@ -2237,6 +2237,16 @@
         "name": "QualificationEntriesUpdated",
         "type": "budokan::events::QualificationEntriesUpdated",
         "kind": "nested"
+      },
+      {
+        "name": "ProtocolFeeBpsUpdated",
+        "type": "budokan::events::ProtocolFeeBpsUpdated",
+        "kind": "nested"
+      },
+      {
+        "name": "ProtocolFeeRecipientUpdated",
+        "type": "budokan::events::ProtocolFeeRecipientUpdated",
+        "kind": "nested"
       }
     ]
   },
@@ -2289,6 +2299,46 @@
           }
         ],
         "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "tournament_protocol_fee_bps",
+        "inputs": [
+          {
+            "name": "tournament_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u16"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan::events::ProtocolFeeBpsUpdated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bps",
+        "type": "core::integer::u16",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan::events::ProtocolFeeRecipientUpdated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "recipient",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
       }
     ]
   }
