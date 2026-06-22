@@ -38,6 +38,7 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isNonNegativeIntegerString(value: unknown): value is string {
   if (!isNonEmptyString(value) || value.trim() !== value) return false;
+  if (!/^\d+$/.test(value)) return false;
 
   try {
     return BigInt(value) >= 0n;

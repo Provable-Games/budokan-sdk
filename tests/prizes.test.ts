@@ -82,14 +82,18 @@ describe("Budokan prize helpers", () => {
     expect(isTokenPrize({ ...erc20Prize, extensionAddress: "0xextension" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, prizeId: "" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, prizeId: "not-a-number" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, prizeId: "0x1" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, amount: "" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, amount: "not-a-number" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, amount: "0x3e8" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "abc" })).toBe(false);
+    expect(isTokenPrize({ ...erc721Prize, tokenId: "0x4d" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, extensionAddress: null })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, extensionConfig: "0x1" as unknown as string[] })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, prizeId: "" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, prizeId: "not-a-number" })).toBe(false);
+    expect(isExtensionPrize({ ...extensionPrize, prizeId: "0x3" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, sponsorAddress: "" })).toBe(false);
   });
 
