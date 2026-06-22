@@ -2010,6 +2010,11 @@
         "name": "entry_requirement",
         "type": "core::option::Option::<game_components_interfaces::entry_requirement::EntryRequirement>",
         "kind": "data"
+      },
+      {
+        "name": "protocol_fee_bps",
+        "type": "core::integer::u16",
+        "kind": "data"
       }
     ]
   },
@@ -2232,6 +2237,58 @@
         "name": "QualificationEntriesUpdated",
         "type": "budokan::events::QualificationEntriesUpdated",
         "kind": "nested"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "budokan::budokan::Budokan::IBudokanProtocolFeeAdmin",
+    "items": [
+      {
+        "type": "function",
+        "name": "set_protocol_fee_bps",
+        "inputs": [
+          {
+            "name": "bps",
+            "type": "core::integer::u16"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "set_protocol_fee_recipient",
+        "inputs": [
+          {
+            "name": "recipient",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "protocol_fee_bps",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::integer::u16"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "protocol_fee_recipient",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
       }
     ]
   }

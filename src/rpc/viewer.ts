@@ -226,6 +226,9 @@ function parseTournament(
     leaderboardGameMustBeOver: gameMustBeOver,
     entryFeeToken,
     entryFeeAmount,
+    // The per-tournament protocol-fee snapshot isn't exposed on-chain (no
+    // getter / not in the viewer), so it's unavailable over the RPC source.
+    protocolFeeShare: null,
     hasEntryRequirement,
     schedule: {
       registrationStartDelay,

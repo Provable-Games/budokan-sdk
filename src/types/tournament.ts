@@ -42,6 +42,14 @@ export interface Tournament {
   // Entry fee summary
   entryFeeToken: string | null;
   entryFeeAmount: string | null;
+  /**
+   * Effective protocol-fee rate (basis points) snapshotted for this tournament
+   * at creation — the slice of the built-in entry-fee pool routed to the DAO
+   * buyback/treasury. `0` when no protocol fee applies. Sourced from the
+   * `TournamentCreated` event via the indexer/API; `null` over the RPC/viewer
+   * data source (the per-tournament snapshot has no on-chain getter).
+   */
+  protocolFeeShare: number | null;
   hasEntryRequirement: boolean | null;
   // Full structured data (JSONB from API)
   schedule: Schedule | null;
