@@ -20,22 +20,37 @@ export type MetagameExtensionPrize = {
 
 export type MetagamePrizeLike = MetagameTokenPrize | MetagameExtensionPrize;
 
+function hasExtensionConfig(value: string[] | null): value is string[] | null {
+  return value === null || value.every((entry) => typeof entry === "string");
+}
+
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
-  if (
-    (prize.tokenType !== "erc20" && prize.tokenType !== "erc721") ||
-    typeof prize.tokenAddress !== "string" ||
-    prize.tokenAddress.length === 0
-  ) {
+  if (typeof prize.tokenAddress !== "string" || prize.tokenAddress.length === 0) {
     return false;
   }
 
   return prize.tokenType === "erc20"
-    ? typeof prize.amount === "string"
-    : typeof prize.tokenId === "string";
+    ? typeof prize.amount === "string" &&
+        prize.tokenId === null &&
+        prize.extensionAddress === null &&
+        prize.extensionConfig === null
+    : prize.tokenType === "erc721" &&
+        prize.amount === null &&
+        typeof prize.tokenId === "string" &&
+        prize.extensionAddress === null &&
+        prize.extensionConfig === null;
 }
 
 export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
-  return prize.tokenType === "extension";
+  return (
+    prize.tokenType === "extension" &&
+    prize.tokenAddress === null &&
+    prize.amount === null &&
+    prize.tokenId === null &&
+    typeof prize.extensionAddress === "string" &&
+    prize.extensionAddress.length > 0 &&
+    hasExtensionConfig(prize.extensionConfig)
+  );
 }
 
 export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {

@@ -50,7 +50,7 @@ export type ExtensionPrize = Prize & {
   tokenAddress: null;
   amount: null;
   tokenId: null;
-  extensionAddress: string | null;
+  extensionAddress: string;
   extensionConfig: string[] | null;
 };
 
