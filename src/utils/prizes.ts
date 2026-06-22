@@ -76,6 +76,16 @@ function malformedTokenPrizeError(
   );
 }
 
+function assertMetagameTokenPosition(prize: TokenPrize): void {
+  if (prize.payoutPosition > 0) return;
+
+  throw new TypeError(
+    `Cannot adapt Budokan token prize with unhydrated payout position (${
+      describePrize(prize)
+    })`,
+  );
+}
+
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
@@ -126,10 +136,14 @@ export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
  * prize shape. Metagame token prizes do not carry Budokan distribution fields,
  * so distributed ERC20 prizes are represented by their aggregate `amount` at
  * `payoutPosition`; use the original Budokan `Prize` for payout-split math.
+ * Throws when `payoutPosition` is zero because the RPC path uses zero for
+ * unhydrated token-prize positions and metagame positions are leaderboard slots.
  */
 export function toMetagameTokenPrize(
   prize: TokenPrize,
 ): MetagameTokenPrize {
+  assertMetagameTokenPosition(prize);
+
   const adapted = {
     id: prize.prizeId,
     position: prize.payoutPosition,

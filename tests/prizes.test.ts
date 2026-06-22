@@ -95,14 +95,15 @@ describe("Budokan prize helpers", () => {
 
   test("accepts token prizes with unhydrated zero payout position", () => {
     expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(true);
-    expect(toMetagameTokenPrize(asTokenPrize({ ...erc721Prize, payoutPosition: 0 }))).toEqual({
-      id: "2",
-      position: 0,
-      tokenAddress: "0xnft",
-      tokenType: "erc721",
-      amount: "77",
-      sponsorAddress: "0xsponsor",
-    });
+    expect(getTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }])).toHaveLength(1);
+  });
+
+  test("rejects unhydrated zero payout positions when adapting token prizes", () => {
+    expect(() =>
+      toMetagameTokenPrize(asTokenPrize({ ...erc721Prize, payoutPosition: 0 })),
+    ).toThrow(
+      "Cannot adapt Budokan token prize with unhydrated payout position (prizeId=2, tokenType=erc721)",
+    );
   });
 
   test("filters token prizes", () => {
@@ -135,7 +136,7 @@ describe("Budokan prize helpers", () => {
   test("converts distributed token prizes as aggregate metagame amounts", () => {
     const distributedPrize = asTokenPrize({
       ...erc20Prize,
-      payoutPosition: 0,
+      payoutPosition: 1,
       distributionType: "linear",
       distributionWeight: 10,
       distributionCount: 3,
@@ -143,7 +144,7 @@ describe("Budokan prize helpers", () => {
 
     expect(toMetagameTokenPrize(distributedPrize)).toEqual({
       id: "1",
-      position: 0,
+      position: 1,
       tokenAddress: "0xerc20",
       tokenType: "erc20",
       amount: "1000",
