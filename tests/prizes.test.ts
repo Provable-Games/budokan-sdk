@@ -2,11 +2,14 @@ import { describe, expect, test } from "bun:test";
 import {
   getTokenPrizes,
   isExtensionPrize,
+  isMetagameAdaptablePrize,
   isTokenPrize,
   toMetagamePrize,
   toMetagamePrizes,
   toMetagameTokenPrize,
   toMetagameTokenPrizes,
+  tryToMetagamePrize,
+  tryToMetagamePrizes,
 } from "../src/utils/prizes.ts";
 import type { Prize, TokenPrize } from "../src/types/prize.ts";
 
@@ -61,6 +64,11 @@ const extensionPrize: Prize = {
   extensionConfig: ["0x1", "0x2"],
 };
 
+const hydratedExtensionPrize: Prize = {
+  ...extensionPrize,
+  payoutPosition: 3,
+};
+
 function asTokenPrize(prize: Prize): TokenPrize {
   if (!isTokenPrize(prize)) {
     throw new Error(`Expected token prize ${prize.prizeId}`);
@@ -79,30 +87,57 @@ describe("Budokan prize helpers", () => {
   test("rejects malformed prize refinements", () => {
     expect(isTokenPrize({ ...erc20Prize, tokenId: "unexpected" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, amount: "unexpected" })).toBe(false);
-    expect(isTokenPrize({ ...erc20Prize, extensionAddress: "0xextension" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, extensionAddress: "0xextension" })).toBe(
+      false,
+    );
     expect(isTokenPrize({ ...erc20Prize, prizeId: "" })).toBe(false);
-    expect(isTokenPrize({ ...erc20Prize, prizeId: "not-a-number" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, prizeId: "not-a-number" })).toBe(
+      false,
+    );
     expect(isTokenPrize({ ...erc20Prize, prizeId: "0x1" })).toBe(false);
     expect(isTokenPrize({ ...erc20Prize, amount: "" })).toBe(false);
-    expect(isTokenPrize({ ...erc20Prize, amount: "not-a-number" })).toBe(false);
+    expect(isTokenPrize({ ...erc20Prize, amount: "not-a-number" })).toBe(
+      false,
+    );
     expect(isTokenPrize({ ...erc20Prize, amount: "0x3e8" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "abc" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "0x4d" })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, extensionAddress: null })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, extensionConfig: "0x1" as unknown as string[] })).toBe(false);
+    expect(isExtensionPrize({ ...extensionPrize, extensionAddress: null })).toBe(
+      false,
+    );
+    expect(isExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" })).toBe(
+      false,
+    );
+    expect(isExtensionPrize({
+      ...extensionPrize,
+      extensionConfig: "0x1" as unknown as string[],
+    })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, prizeId: "" })).toBe(false);
-    expect(isExtensionPrize({ ...extensionPrize, prizeId: "not-a-number" })).toBe(false);
+    expect(isExtensionPrize({ ...extensionPrize, prizeId: "not-a-number" })).toBe(
+      false,
+    );
     expect(isExtensionPrize({ ...extensionPrize, prizeId: "0x3" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, sponsorAddress: "" })).toBe(false);
   });
 
   test("accepts token prizes with unhydrated zero payout position", () => {
     expect(isTokenPrize({ ...erc20Prize, payoutPosition: 0 })).toBe(true);
-    expect(getTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }])).toHaveLength(1);
+    expect(getTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }])).toHaveLength(
+      1,
+    );
   });
 
-  test("rejects unhydrated zero payout positions when adapting token prizes", () => {
+  test("identifies metagame-adaptable prizes", () => {
+    expect(isMetagameAdaptablePrize(erc20Prize)).toBe(true);
+    expect(isMetagameAdaptablePrize(hydratedExtensionPrize)).toBe(true);
+    expect(isMetagameAdaptablePrize({ ...erc20Prize, payoutPosition: 0 })).toBe(
+      false,
+    );
+    expect(isMetagameAdaptablePrize(extensionPrize)).toBe(false);
+    expect(isMetagameAdaptablePrize({ ...erc20Prize, amount: "" })).toBe(false);
+  });
+
+  test("rejects unhydrated zero payout positions when adapting prizes", () => {
     expect(() =>
       toMetagameTokenPrize({ ...erc721Prize, payoutPosition: 0 } as TokenPrize),
     ).toThrow(
@@ -112,6 +147,12 @@ describe("Budokan prize helpers", () => {
       toMetagameTokenPrizes([{ ...erc721Prize, payoutPosition: 0 }]),
     ).toThrow(
       "Cannot adapt Budokan token prize with unhydrated payout position (prizeId=2, tokenType=erc721)",
+    );
+    expect(() => toMetagamePrize(extensionPrize)).toThrow(
+      "Cannot adapt Budokan extension prize with unhydrated payout position (prizeId=3, tokenType=extension)",
+    );
+    expect(() => toMetagamePrizes([erc20Prize, extensionPrize])).toThrow(
+      "Cannot adapt Budokan extension prize with unhydrated payout position (prizeId=3, tokenType=extension)",
     );
   });
 
@@ -162,9 +203,9 @@ describe("Budokan prize helpers", () => {
   });
 
   test("converts extension prizes to metagame extension prizes", () => {
-    expect(toMetagamePrize(extensionPrize)).toEqual({
+    expect(toMetagamePrize(hydratedExtensionPrize)).toEqual({
       id: "3",
-      position: 0,
+      position: 3,
       tokenAddress: null,
       tokenType: "extension",
       amount: null,
@@ -175,10 +216,33 @@ describe("Budokan prize helpers", () => {
   });
 
   test("converts mixed and token-only prize lists", () => {
-    expect(toMetagamePrizes([erc20Prize, extensionPrize])).toHaveLength(2);
-    expect(toMetagameTokenPrizes([erc20Prize, extensionPrize, erc721Prize])).toEqual([
+    expect(toMetagamePrizes([erc20Prize, hydratedExtensionPrize])).toHaveLength(
+      2,
+    );
+    expect(
+      toMetagameTokenPrizes([erc20Prize, extensionPrize, erc721Prize]),
+    ).toEqual([
       toMetagameTokenPrize(asTokenPrize(erc20Prize)),
       toMetagameTokenPrize(asTokenPrize(erc721Prize)),
+    ]);
+  });
+
+  test("try adapters skip malformed and unhydrated prize records", () => {
+    expect(tryToMetagamePrize(extensionPrize)).toBeNull();
+    expect(tryToMetagamePrize({ ...erc20Prize, payoutPosition: 0 })).toBeNull();
+    expect(tryToMetagamePrize({ ...erc20Prize, amount: "" })).toBeNull();
+    expect(tryToMetagamePrize(erc20Prize)).toEqual(
+      toMetagameTokenPrize(asTokenPrize(erc20Prize)),
+    );
+    expect(tryToMetagamePrizes([
+      erc20Prize,
+      { ...erc721Prize, payoutPosition: 0 },
+      extensionPrize,
+      hydratedExtensionPrize,
+      { ...erc20Prize, amount: "" },
+    ])).toEqual([
+      toMetagameTokenPrize(asTokenPrize(erc20Prize)),
+      toMetagamePrize(hydratedExtensionPrize),
     ]);
   });
 
@@ -189,10 +253,14 @@ describe("Budokan prize helpers", () => {
     expect(() => toMetagamePrize({ ...erc20Prize, amount: "" })).toThrow(
       "Cannot adapt malformed Budokan prize (prizeId=1, tokenType=erc20)",
     );
-    expect(() => toMetagamePrizes([erc20Prize, { ...erc20Prize, amount: "" }])).toThrow(
+    expect(() =>
+      toMetagamePrizes([erc20Prize, { ...erc20Prize, amount: "" }]),
+    ).toThrow(
       "Cannot adapt malformed Budokan prize (prizeId=1, tokenType=erc20)",
     );
-    expect(() => toMetagameTokenPrizes([{ ...erc721Prize, tokenId: "abc" }])).toThrow(
+    expect(() =>
+      toMetagameTokenPrizes([{ ...erc721Prize, tokenId: "abc" }]),
+    ).toThrow(
       "Cannot adapt malformed Budokan token prize (prizeId=2, tokenType=erc721)",
     );
   });

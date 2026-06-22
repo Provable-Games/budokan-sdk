@@ -87,6 +87,16 @@ function assertMetagameTokenPosition(prize: TokenPrize): void {
   );
 }
 
+function assertMetagameExtensionPosition(prize: ExtensionPrize): void {
+  if (prize.payoutPosition > 0) return;
+
+  throw new TypeError(
+    `Cannot adapt Budokan extension prize with unhydrated payout position (${
+      describePrize(prize)
+    })`,
+  );
+}
+
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
@@ -116,6 +126,19 @@ export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
     prize.tokenId === null &&
     isNonEmptyString(prize.extensionAddress) &&
     hasExtensionConfig(prize.extensionConfig)
+  );
+}
+
+/**
+ * Returns true when a prize is a valid Budokan token/extension prize and has a
+ * hydrated leaderboard position suitable for the metagame prize shape.
+ */
+export function isMetagameAdaptablePrize(
+  prize: Prize,
+): prize is TokenPrize | ExtensionPrize {
+  return (
+    prize.payoutPosition > 0 &&
+    (isTokenPrize(prize) || isExtensionPrize(prize))
   );
 }
 
@@ -162,11 +185,15 @@ export function toMetagameTokenPrize(
 
 /**
  * Converts a guard-validated Budokan extension prize into the Metagame SDK
- * extension-prize shape.
+ * extension-prize shape. Throws when `payoutPosition` is zero because metagame
+ * positions are leaderboard slots and the RPC path uses zero for unhydrated
+ * prize positions.
  */
 export function toMetagameExtensionPrize(
   prize: ExtensionPrize,
 ): MetagameExtensionPrize {
+  assertMetagameExtensionPosition(prize);
+
   const adapted = {
     id: prize.prizeId,
     position: prize.payoutPosition,
@@ -183,7 +210,7 @@ export function toMetagameExtensionPrize(
 
 /**
  * Converts supported Budokan prize variants into Metagame SDK prize shapes.
- * Throws when a prize has a known Budokan token type but malformed fields.
+ * Throws when a prize has malformed fields or an unhydrated payout position.
  * See `toMetagameTokenPrize` for token prize distribution behavior.
  */
 export function toMetagamePrize(
@@ -198,8 +225,21 @@ export function toMetagamePrize(
 }
 
 /**
+ * Non-throwing metagame adapter. Returns null for malformed prize records and
+ * for valid RPC-sourced prizes whose `payoutPosition` is not hydrated yet.
+ */
+export function tryToMetagamePrize(
+  prize: Prize,
+): MetagamePrizeLike | null {
+  if (!isMetagameAdaptablePrize(prize)) return null;
+  return prize.tokenType === "extension"
+    ? toMetagameExtensionPrize(prize)
+    : toMetagameTokenPrize(prize);
+}
+
+/**
  * Converts supported Budokan prize variants into Metagame SDK prize shapes.
- * Throws when any prize has a known Budokan token type but malformed fields.
+ * Throws when any prize has malformed fields or an unhydrated payout position.
  * See `toMetagameTokenPrize` for token prize distribution behavior.
  */
 export function toMetagamePrizes(
@@ -209,8 +249,22 @@ export function toMetagamePrizes(
 }
 
 /**
+ * Non-throwing batch metagame adapter. Skips malformed records and valid
+ * RPC-sourced prizes whose `payoutPosition` is not hydrated yet.
+ */
+export function tryToMetagamePrizes(
+  prizes: readonly Prize[],
+): MetagamePrizeLike[] {
+  return prizes.flatMap((prize) => {
+    const adapted = tryToMetagamePrize(prize);
+    return adapted ? [adapted] : [];
+  });
+}
+
+/**
  * Converts Budokan token prizes into Metagame SDK token prize shapes.
- * See `toMetagameTokenPrize` for distribution behavior.
+ * Throws for unhydrated token positions. See `toMetagameTokenPrize` for
+ * distribution behavior.
  */
 export function toMetagameTokenPrizes(
   prizes: readonly Prize[],

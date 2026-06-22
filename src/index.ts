@@ -76,12 +76,15 @@ export { withRetry } from "./utils/retry.js";
 export {
   getTokenPrizes,
   isExtensionPrize,
+  isMetagameAdaptablePrize,
   isTokenPrize,
   toMetagameExtensionPrize,
   toMetagamePrize,
   toMetagamePrizes,
   toMetagameTokenPrize,
   toMetagameTokenPrizes,
+  tryToMetagamePrize,
+  tryToMetagamePrizes,
 } from "./utils/prizes.js";
 export type {
   MetagameExtensionPrize,
