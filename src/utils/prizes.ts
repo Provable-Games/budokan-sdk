@@ -1,7 +1,6 @@
 import type {
-  ExtensionPrize as MetagameExtensionPrize,
-  Prize as MetagameTokenPrize,
-  PrizeLike as MetagamePrizeLike,
+  ExtensionPrize as MetagameSdkExtensionPrize,
+  Prize as MetagameSdkTokenPrize,
 } from "@provable-games/metagame-sdk";
 import type {
   ExtensionPrize,
@@ -9,9 +8,29 @@ import type {
   TokenPrize,
 } from "../types/prize.js";
 
-// Adapter output aliases intentionally track metagame-sdk@0.1.13. Review this
+// Adapter output shapes intentionally track metagame-sdk@0.1.13. Review this
 // module before changing the pinned metagame-sdk dependency.
-export type { MetagameExtensionPrize, MetagamePrizeLike, MetagameTokenPrize };
+export interface MetagameTokenPrize {
+  id: string;
+  position: number;
+  tokenAddress: string;
+  tokenType: "erc20" | "erc721";
+  amount: string;
+  sponsorAddress: string;
+}
+
+export interface MetagameExtensionPrize {
+  id: string;
+  position: number;
+  tokenAddress: null;
+  tokenType: "extension";
+  amount: null;
+  sponsorAddress: string;
+  extensionAddress: string | null;
+  extensionConfig: string[] | null;
+}
+
+export type MetagamePrizeLike = MetagameTokenPrize | MetagameExtensionPrize;
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -119,7 +138,7 @@ export function toMetagameTokenPrize(
     // Metagame token prizes use `amount` as the token id for ERC721 entries.
     amount: prize.tokenType === "erc20" ? prize.amount : prize.tokenId,
     sponsorAddress: prize.sponsorAddress,
-  } satisfies MetagameTokenPrize;
+  } satisfies MetagameTokenPrize & MetagameSdkTokenPrize;
 
   return adapted;
 }
@@ -140,7 +159,7 @@ export function toMetagameExtensionPrize(
     sponsorAddress: prize.sponsorAddress,
     extensionAddress: prize.extensionAddress,
     extensionConfig: prize.extensionConfig,
-  } satisfies MetagameExtensionPrize;
+  } satisfies MetagameExtensionPrize & MetagameSdkExtensionPrize;
 
   return adapted;
 }
