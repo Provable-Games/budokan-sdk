@@ -1,6 +1,6 @@
 {
   "name": "@provable-games/budokan-sdk",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "description": "TypeScript SDK for Budokan — tournament management platform on Starknet",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -65,7 +65,7 @@
     }
   },
   "dependencies": {
-    "@provable-games/metagame-sdk": "^0.1.12"
+    "@provable-games/metagame-sdk": "^0.1.13"
   },
   "devDependencies": {
     "@provable-games/denshokan-sdk": "^0.1.33",
