@@ -50,9 +50,16 @@ function hasBasePrizeFields(prize: Prize): boolean {
   return (
     isNonNegativeIntegerString(prize.prizeId) &&
     Number.isInteger(prize.payoutPosition) &&
-    prize.payoutPosition >= 0 &&
     isNonEmptyString(prize.sponsorAddress)
   );
+}
+
+function hasHydratedTokenPosition(prize: Prize): boolean {
+  return prize.payoutPosition > 0;
+}
+
+function hasNonNegativePayoutPosition(prize: Prize): boolean {
+  return prize.payoutPosition >= 0;
 }
 
 function hasExtensionConfig(value: unknown): boolean {
@@ -89,6 +96,7 @@ function assertMetagameTokenPosition(prize: TokenPrize): void {
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
+    !hasHydratedTokenPosition(prize) ||
     !isNonEmptyString(prize.tokenAddress)
   ) {
     return false;
@@ -109,6 +117,7 @@ export function isTokenPrize(prize: Prize): prize is TokenPrize {
 export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
   return (
     hasBasePrizeFields(prize) &&
+    hasNonNegativePayoutPosition(prize) &&
     prize.tokenType === "extension" &&
     prize.tokenAddress === null &&
     prize.amount === null &&
