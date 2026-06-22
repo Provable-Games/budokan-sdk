@@ -9,8 +9,9 @@ import type {
   TokenPrize,
 } from "../types/prize.js";
 
-// Adapter output types are derived from metagame-sdk@0.1.13. Review this
-// module before changing the pinned metagame-sdk dependency.
+// Adapter output types are derived from metagame-sdk@0.1.13. These exported
+// aliases are part of Budokan's public API; changing the pinned metagame-sdk
+// version needs a compatibility review.
 export type MetagameTokenPrize = MetagameSdkTokenPrize;
 export type MetagameExtensionPrize = MetagameSdkExtensionPrize;
 export type MetagamePrizeLike = MetagameSdkPrizeLike;
@@ -135,9 +136,10 @@ export function isMetagameAdaptablePrize(
 }
 
 /**
- * Returns validated raw token prizes. Extension prizes are skipped; malformed
- * `erc20`/`erc721` records throw instead of being silently dropped. RPC records
- * with `payoutPosition === 0` are returned here for raw token-prize visibility.
+ * Returns validated raw token prizes. Extension records are skipped without
+ * validation; malformed `erc20`/`erc721` records throw instead of being
+ * silently dropped. RPC records with `payoutPosition === 0` are returned here
+ * for raw token-prize visibility.
  */
 export function getRawTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
   return prizes.flatMap((prize) => {
@@ -149,9 +151,10 @@ export function getRawTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
 }
 
 /**
- * Returns validated hydrated token prizes. Extension prizes and valid raw
- * token prizes with `payoutPosition === 0` are skipped; malformed
- * `erc20`/`erc721` records throw instead of being silently dropped.
+ * Returns validated hydrated token prizes. Extension records are skipped
+ * without validation, and valid raw token prizes with `payoutPosition === 0`
+ * are skipped; malformed `erc20`/`erc721` records throw instead of being
+ * silently dropped.
  */
 export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
   return prizes.flatMap((prize) => {
@@ -267,9 +270,10 @@ export function tryToMetagamePrizes(
 }
 
 /**
- * Converts Budokan token prizes into Metagame SDK token prize shapes.
- * Throws for unhydrated token positions. See `toMetagameTokenPrize` for
- * distribution behavior.
+ * Converts Budokan token prizes into Metagame SDK token prize shapes. Extension
+ * records are skipped without validation. Throws for malformed token records
+ * and unhydrated token positions. See `toMetagameTokenPrize` for distribution
+ * behavior.
  */
 export function toMetagameTokenPrizes(
   prizes: readonly Prize[],
