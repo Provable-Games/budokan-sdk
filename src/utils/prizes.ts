@@ -190,6 +190,7 @@ export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
  * prize shape. Metagame token prizes do not carry Budokan distribution fields,
  * so distributed ERC20 prizes are represented by their aggregate `amount` at
  * `payoutPosition`; use the original Budokan `Prize` for payout-split math.
+ * For ERC721 prizes, metagame-sdk@0.1.13 uses `amount` to carry the token ID.
  * Throws when `payoutPosition` is zero because the RPC path uses zero for
  * unhydrated token-prize positions and metagame positions are leaderboard slots.
  */
