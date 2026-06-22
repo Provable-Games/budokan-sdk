@@ -41,6 +41,11 @@ function hasExtensionConfig(value: unknown): boolean {
   );
 }
 
+function describePrize(prize: Prize): string {
+  const prizeId = isNonEmptyString(prize.prizeId) ? prize.prizeId : "<invalid>";
+  return `prizeId=${prizeId}, tokenType=${prize.tokenType}`;
+}
+
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
@@ -122,27 +127,29 @@ export function toMetagameExtensionPrize(
 
 /**
  * Converts supported Budokan prize variants into Metagame SDK prize shapes.
+ * Throws when a prize has a known Budokan token type but malformed fields.
  * See `toMetagameTokenPrize` for token prize distribution behavior.
  */
 export function toMetagamePrize(
   prize: Prize,
-): MetagamePrizeLike | null {
+): MetagamePrizeLike {
   if (isTokenPrize(prize)) return toMetagameTokenPrize(prize);
   if (isExtensionPrize(prize)) return toMetagameExtensionPrize(prize);
-  return null;
+
+  throw new TypeError(
+    `Cannot adapt malformed Budokan prize (${describePrize(prize)})`,
+  );
 }
 
 /**
  * Converts supported Budokan prize variants into Metagame SDK prize shapes.
+ * Throws when any prize has a known Budokan token type but malformed fields.
  * See `toMetagameTokenPrize` for token prize distribution behavior.
  */
 export function toMetagamePrizes(
   prizes: readonly Prize[],
 ): MetagamePrizeLike[] {
-  return prizes.flatMap((prize) => {
-    const adapted = toMetagamePrize(prize);
-    return adapted ? [adapted] : [];
-  });
+  return prizes.map(toMetagamePrize);
 }
 
 /**
@@ -152,5 +159,12 @@ export function toMetagamePrizes(
 export function toMetagameTokenPrizes(
   prizes: readonly Prize[],
 ): MetagameTokenPrize[] {
-  return getTokenPrizes(prizes).map(toMetagameTokenPrize);
+  return prizes.flatMap((prize) => {
+    if (isTokenPrize(prize)) return [toMetagameTokenPrize(prize)];
+    if (prize.tokenType === "extension") return [];
+
+    throw new TypeError(
+      `Cannot adapt malformed Budokan token prize (${describePrize(prize)})`,
+    );
+  });
 }
