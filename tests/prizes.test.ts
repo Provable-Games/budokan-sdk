@@ -75,6 +75,7 @@ describe("Budokan prize helpers", () => {
     expect(isTokenPrize({ ...erc20Prize, extensionAddress: "0xextension" })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, extensionAddress: null })).toBe(false);
     expect(isExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" })).toBe(false);
+    expect(isExtensionPrize({ ...extensionPrize, extensionConfig: "0x1" as unknown as string[] })).toBe(false);
   });
 
   test("filters token prizes", () => {

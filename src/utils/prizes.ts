@@ -20,8 +20,11 @@ export type MetagameExtensionPrize = {
 
 export type MetagamePrizeLike = MetagameTokenPrize | MetagameExtensionPrize;
 
-function hasExtensionConfig(value: string[] | null): value is string[] | null {
-  return value === null || value.every((entry) => typeof entry === "string");
+function hasExtensionConfig(value: unknown): boolean {
+  return (
+    value === null ||
+    (Array.isArray(value) && value.every((entry) => typeof entry === "string"))
+  );
 }
 
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
@@ -65,6 +68,7 @@ export function toMetagameTokenPrize(
     position: prize.payoutPosition,
     tokenAddress: prize.tokenAddress,
     tokenType: prize.tokenType,
+    // Metagame token prizes use `amount` as the token id for ERC721 entries.
     amount: prize.tokenType === "erc20" ? prize.amount : prize.tokenId,
     sponsorAddress: prize.sponsorAddress,
   };
