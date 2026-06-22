@@ -5,7 +5,7 @@
     "": {
       "name": "@provable-games/budokan-sdk",
       "dependencies": {
-        "@provable-games/metagame-sdk": "^0.1.13",
+        "@provable-games/metagame-sdk": "0.1.13",
       },
       "devDependencies": {
         "@provable-games/denshokan-sdk": "^0.1.33",
