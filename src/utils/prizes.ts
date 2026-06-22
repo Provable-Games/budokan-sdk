@@ -9,6 +9,8 @@ import type {
   TokenPrize,
 } from "../types/prize.js";
 
+// Adapter output aliases intentionally track metagame-sdk@0.1.13. Review this
+// module before changing the pinned metagame-sdk dependency.
 export type { MetagameExtensionPrize, MetagamePrizeLike, MetagameTokenPrize };
 
 function isNonEmptyString(value: unknown): value is string {
@@ -46,6 +48,15 @@ function describePrize(prize: Prize): string {
   return `prizeId=${prizeId}, tokenType=${prize.tokenType}`;
 }
 
+function malformedTokenPrizeError(
+  action: "adapt" | "read",
+  prize: Prize,
+): TypeError {
+  return new TypeError(
+    `Cannot ${action} malformed Budokan token prize (${describePrize(prize)})`,
+  );
+}
+
 export function isTokenPrize(prize: Prize): prize is TokenPrize {
   if (
     !hasBasePrizeFields(prize) ||
@@ -78,8 +89,17 @@ export function isExtensionPrize(prize: Prize): prize is ExtensionPrize {
   );
 }
 
+/**
+ * Returns validated token prizes. Extension prizes are skipped; malformed
+ * `erc20`/`erc721` records throw instead of being silently dropped.
+ */
 export function getTokenPrizes(prizes: readonly Prize[]): TokenPrize[] {
-  return prizes.filter(isTokenPrize);
+  return prizes.flatMap((prize) => {
+    if (isTokenPrize(prize)) return [prize];
+    if (prize.tokenType === "extension") return [];
+
+    throw malformedTokenPrizeError("read", prize);
+  });
 }
 
 /**
@@ -163,8 +183,6 @@ export function toMetagameTokenPrizes(
     if (isTokenPrize(prize)) return [toMetagameTokenPrize(prize)];
     if (prize.tokenType === "extension") return [];
 
-    throw new TypeError(
-      `Cannot adapt malformed Budokan token prize (${describePrize(prize)})`,
-    );
+    throw malformedTokenPrizeError("adapt", prize);
   });
 }

@@ -173,6 +173,9 @@ describe("Budokan prize helpers", () => {
   });
 
   test("throws when adapting malformed prize records", () => {
+    expect(() => getTokenPrizes([{ ...erc20Prize, amount: "" }])).toThrow(
+      "Cannot read malformed Budokan token prize (prizeId=1, tokenType=erc20)",
+    );
     expect(() => toMetagamePrize({ ...erc20Prize, amount: "" })).toThrow(
       "Cannot adapt malformed Budokan prize (prizeId=1, tokenType=erc20)",
     );
