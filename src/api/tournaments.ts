@@ -11,7 +11,13 @@ function normalizeTournament(raw: Record<string, unknown>): Tournament {
   const t = snakeToCamel<Tournament & { id?: string }>(raw);
   // API returns `id`, SDK type uses `tournamentId` — keep both in sync
   const id = t.id ?? t.tournamentId;
-  return { ...t, id, tournamentId: id };
+  // The protocol-fee share is carried on the entry fee object by the API; lift
+  // it to the top level so consumers get it typed (top-level wins if present).
+  const protocolFeeShare =
+    t.protocolFeeShare ??
+    (t.entryFee as { protocolFeeShare?: number } | null)?.protocolFeeShare ??
+    null;
+  return { ...t, id, tournamentId: id, protocolFeeShare };
 }
 
 interface ApiContext {

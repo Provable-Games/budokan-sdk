@@ -99,6 +99,7 @@ function phaseToRpcArg(phase: Phase): CairoCustomEnum {
 function parseTournament(
   raw: unknown,
   entryCount: number,
+  protocolFeeShare: number | null = null,
 ): Tournament {
   const obj = raw as Record<string, unknown>;
   const id = String(obj.id ?? "0");
@@ -226,6 +227,8 @@ function parseTournament(
     leaderboardGameMustBeOver: gameMustBeOver,
     entryFeeToken,
     entryFeeAmount,
+    // Protocol-fee bps snapshot, surfaced by the viewer's TournamentFullState.
+    protocolFeeShare,
     hasEntryRequirement,
     schedule: {
       registrationStartDelay,
@@ -456,7 +459,9 @@ function parseFilterResult(raw: unknown): TournamentFilterResult {
 function parseTournamentFullState(raw: unknown): Tournament {
   const obj = raw as Record<string, unknown>;
   const entryCount = Number(obj.entry_count ?? 0);
-  return parseTournament(obj.tournament, entryCount);
+  const protocolFeeShare =
+    obj.protocol_fee_bps != null ? Number(obj.protocol_fee_bps) : null;
+  return parseTournament(obj.tournament, entryCount, protocolFeeShare);
 }
 
 // --- Tournament listing ---
