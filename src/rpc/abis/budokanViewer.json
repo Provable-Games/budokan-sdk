@@ -436,6 +436,10 @@
       {
         "name": "phase",
         "type": "budokan_interfaces::budokan::Phase"
+      },
+      {
+        "name": "protocol_fee_bps",
+        "type": "core::integer::u16"
       }
     ]
   },
