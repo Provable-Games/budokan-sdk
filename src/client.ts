@@ -84,7 +84,7 @@ interface ResolvedConfig extends BudokanClientConfig {
  * // RPC-only (bypass API entirely)
  * const client = new BudokanClient({
  *   primarySource: "rpc",
- *   rpcUrl: "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_10",
+ *   rpcUrl: "https://rpc.provable.games/rpc",
  *   viewerAddress: "0x...",
  * });
  * ```

@@ -8,7 +8,7 @@ export interface ChainConfig {
 
 export const CHAINS: Record<string, ChainConfig> = {
   mainnet: {
-    rpcUrl: "https://api.cartridge.gg/x/starknet/mainnet/rpc/v0_10",
+    rpcUrl: "https://rpc.provable.games/rpc",
     apiBaseUrl: "https://budokan-api-production.up.railway.app",
     wsUrl: "wss://budokan-api-production.up.railway.app/ws",
     budokanAddress: "0x0596ced030e74ebc37f33607f07ecd5a62eff22cdc4ae31fe2d724040c1bdc0b",
