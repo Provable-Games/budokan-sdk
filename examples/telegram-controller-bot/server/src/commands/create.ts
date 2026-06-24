@@ -37,7 +37,7 @@ import {
   explorerTxUrl,
   parseTournamentIdFromReceipt,
   tournamentPageUrl,
-} from "../links.ts";
+} from "@provable-games/budokan-sdk";
 
 import { gamesForChain, gameMetadataFor, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
@@ -1468,7 +1468,7 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   // event and hand the user a direct link to the tournament page. We use
   // a fresh RpcProvider against the same Cartridge RPC the auth flow
   // uses — `ExecutingAccount` deliberately doesn't expose waitForTransaction.
-  let tournamentId: number | undefined;
+  let tournamentId: bigint | undefined;
   try {
     const rpcUrl = keychainSafeRpcUrl(state.chain, config.rpcUrl);
     const provider = new RpcProvider({ nodeUrl: rpcUrl });

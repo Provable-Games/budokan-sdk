@@ -29,7 +29,7 @@ import { buildEnterTournamentCall } from "@provable-games/budokan-sdk";
 import { gamesForChain } from "../catalog/games.ts";
 import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
-import { explorerTxUrl, tournamentPageUrl } from "../links.ts";
+import { explorerTxUrl, tournamentPageUrl } from "@provable-games/budokan-sdk";
 import { formatTimeUntil, formatTopPrizes } from "../format.ts";
 
 type Step = "picker";

@@ -2,14 +2,19 @@
 // for plain objects, which is what starknet.js / Cartridge often throw.
 // This unwraps common shapes so the chat reply has something meaningful.
 //
-// Also logs the raw error to stderr — `String(err)` doesn't surface enough
-// to debug from Railway logs alone, so we always dump the full thing.
+// Also logs the error to stderr (Railway logs) — but Cartridge/session/account
+// errors can carry secrets (signer.privKey, session keys, auth URLs, request
+// bodies), so EVERYTHING that gets logged or echoed to chat goes through
+// `replacer`, which redacts sensitive keys. Never log the raw object directly.
+
+// Keys whose values may carry a private key, session secret, or auth token.
+const SENSITIVE_KEY = /priv|secret|seed|mnemonic|password|passwd|signer|session|authorization|cookie|bearer|api[-_]?key|access[-_]?token/i;
 
 export function formatError(error: unknown): string {
-  // Always log first so the server has the full original object regardless
-  // of what we return to the user.
+  // Always log first so the server has context regardless of what we return
+  // to the user — but redacted, never the raw object.
   try {
-    console.error("formatError raw:", error);
+    console.error("formatError:", shortObject(error, 2000));
   } catch {
     // Some error objects throw on toString — ignore.
   }
@@ -119,20 +124,28 @@ function hexToAscii(hex: string): string {
 }
 
 // JSON.stringify with a length cap so we don't fire a 50KB Telegram message.
-function shortObject(value: unknown): string {
+// Error objects don't serialize their own message/stack via JSON, so pull
+// those out explicitly before stringifying.
+function shortObject(value: unknown, cap = 500): string {
   let s: string;
   try {
-    s = JSON.stringify(value, replacer);
+    const seed =
+      value instanceof Error
+        ? { name: value.name, message: value.message, cause: (value as { cause?: unknown }).cause }
+        : value;
+    s = JSON.stringify(seed, replacer);
   } catch {
     s = String(value);
   }
-  if (s.length > 500) s = s.slice(0, 497) + "…";
+  if (s === undefined) s = String(value);
+  if (s.length > cap) s = s.slice(0, cap - 3) + "…";
   return s;
 }
 
-// JSON.stringify doesn't natively handle BigInt; coerce so a thrown
-// starknet.js BigNumberish doesn't itself throw at format time.
-function replacer(_key: string, value: unknown): unknown {
+// Redact secret-bearing fields and coerce BigInt (JSON.stringify throws on it),
+// so nothing logged or echoed to chat leaks a key/session/token.
+function replacer(key: string, value: unknown): unknown {
+  if (SENSITIVE_KEY.test(key)) return "[redacted]";
   if (typeof value === "bigint") return value.toString();
   return value;
 }

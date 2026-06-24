@@ -6,16 +6,19 @@ A Telegram bot that lets users create, enter, and claim Budokan tournaments enti
 
 ## Status
 
-**Scaffold stage.** Architecture and project structure are in place. Implementation lands stage by stage:
+**Implemented.** The bot drives the full tournament lifecycle from inside Telegram:
 
-1. ✅ Architecture, scaffold
-2. ⬜ Server foundation: HTTP + long-poll, auth handshake, `/connect` / `/disconnect` / `/whoami` end-to-end
-3. ⬜ Mini App scaffold + connect mode
-4. ⬜ Sessioned `/claim`, `/create`
-5. ⬜ Per-tx Mini App mode + hybrid `/enter`
-6. ⬜ Read-only commands ported from `examples/telegram-tournament-bot.mjs`
+- Auth (Cartridge session): `/connect`, `/disconnect`, `/whoami`
+- Manage: `/create`, `/add_prize`
+- Play: `/enter`, `/submit_score`
+- Settle: `/claim` (auto or by reward kind), `/distribute`
+- Browse: `/tournaments`, `/my_tournaments`, `/leaderboard`, `/prizes`, `/chain`
 
-The dependency-free read-only example at `examples/telegram-tournament-bot.mjs` is unchanged and remains the simpler reference.
+All on-chain encoding and reward resolution go through `@provable-games/budokan-sdk` — the example does not re-implement calldata.
+
+The dependency-free read-only example at `examples/telegram-tournament-bot.mjs` remains the simpler reference.
+
+> **Mini App caveat:** paid `/enter` and `/add_prize` currently deeplink to budokan.gg to sign, because Cartridge's keychain doesn't run reliably inside Telegram's in-app browser. The per-tx Mini App flow under `miniapp/` is therefore not exercised by any command today.
 
 ## Layout
 
@@ -28,18 +31,16 @@ telegram-controller-bot/
 └── miniapp/              Vite + React Telegram Mini App
 ```
 
-## Setup (forthcoming)
+## Setup
 
-The full local setup will involve:
+Full local + production instructions — env vars, the `/connect` auth callback, and deployment — are in [DEPLOY.md](./DEPLOY.md). Quick start:
 
 1. Get a `TELEGRAM_BOT_TOKEN` from `@BotFather`.
-2. Register the Mini App URL with `@BotFather` via `/newapp`.
-3. Run `bun install` in both `server/` and `miniapp/`.
-4. Set `BOT_PUBLIC_URL` to an HTTPS URL — `ngrok http 8787` is the easiest dev path.
-5. Set `MINIAPP_URL` to the running Mini App (Vite dev server, or a deployed static site).
-6. `bun run dev` in both directories.
+2. `bun install` in `server/`.
+3. Set `BOT_PUBLIC_URL` to an HTTPS URL for the auth callback (`ngrok http 8787` is the easiest dev path).
+4. `bun run dev` in `server/`.
 
-Detailed instructions land with the working server (stage 2).
+See `.env.example` for all configuration.
 
 ## License
 

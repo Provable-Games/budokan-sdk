@@ -14,7 +14,7 @@ import type { SessionStore } from "../session-store.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { formatError } from "../format-error.ts";
-import { tournamentPageUrl } from "../links.ts";
+import { tournamentPageUrl } from "@provable-games/budokan-sdk";
 import { formatTimeUntil, formatTopPrizes } from "../format.ts";
 
 const PAGE_SIZE = 5;

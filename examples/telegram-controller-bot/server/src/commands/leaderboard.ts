@@ -33,7 +33,7 @@ import type { Chain, ChatStateStore } from "../chat-state.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { gamesForChain } from "../catalog/games.ts";
 import { formatError } from "../format-error.ts";
-import { tournamentPageUrl } from "../links.ts";
+import { tournamentPageUrl } from "@provable-games/budokan-sdk";
 import { formatTimeUntil, formatTopPrizes, rankMedal } from "../format.ts";
 
 const PAGE_SIZE = 10;

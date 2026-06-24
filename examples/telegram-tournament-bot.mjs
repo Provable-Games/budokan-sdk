@@ -585,9 +585,11 @@ async function sendPrizes(chatId, inputId) {
   await sendMessage(chatId, [`Prizes for ${tournamentId}`, "", ...sections].join("\n\n"));
 }
 
-// Build a lookup of (prizeId, payoutIndex) → claimed boolean. The
-// indexer's payoutIndex is 0-based and matches `position - 1` after
-// expansion. Single-position prizes use the sentinel "single".
+// Build a lookup of (prizeId, payoutIndex) → claimed boolean. The indexer's
+// payoutIndex is 1-based — it's the leaderboard position the contract emits
+// verbatim (see _claim_distributed_prize: asserts payout_index > 0). So it
+// matches `payoutPosition` directly, not `position - 1`. Single-position
+// prizes use the sentinel "single".
 function buildClaimMap(claims) {
   const map = new Map();
   for (const c of claims) {
@@ -624,7 +626,7 @@ function formatPoolBlock(prize, claimMap) {
   const totalLabel = formatErc20(prize.amount, prize.tokenAddress);
   const header = `Pool: ${totalLabel} (${distType}, ${distCount} place${distCount === 1 ? "" : "s"})`;
   const rows = expanded.map((row) => {
-    const claimed = claimMap.get(`${prize.prizeId}:${row.payoutPosition - 1}`);
+    const claimed = claimMap.get(`${prize.prizeId}:${row.payoutPosition}`);
     const suffix = claimed ? " (claimed)" : "";
     return `  ${row.payoutPosition}. ${formatErc20(row.amount, row.tokenAddress)}${suffix}`;
   });
@@ -894,7 +896,9 @@ function helpText() {
 }
 
 function tournamentUrl(tournamentId) {
-  return `${config.webUrl}/tournament/${tournamentId}`;
+  // Include the active chain — without ?network the site defaults to mainnet,
+  // sending sepolia users to the wrong (or nonexistent) tournament.
+  return `${config.webUrl}/tournament/${tournamentId}?network=${currentChain}`;
 }
 
 function normalizeTournamentId(value) {

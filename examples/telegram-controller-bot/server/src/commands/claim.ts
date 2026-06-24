@@ -31,7 +31,7 @@ import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { executeBatched, DEFAULT_BATCH_SIZE } from "../execute-batched.ts";
 import { formatError } from "../format-error.ts";
-import { explorerTxUrl } from "../links.ts";
+import { explorerTxUrl } from "@provable-games/budokan-sdk";
 
 export async function claimAll(
   api: TelegramApi,
