@@ -170,11 +170,16 @@ export type {
 
 // Player reward resolution — which rewards a player can still claim + the
 // claim_reward Calls to claim them. See src/rewards/index.ts.
-export { getClaimableRewards, buildClaimCalls } from "./rewards/index.js";
+export {
+  getClaimableRewards,
+  getDistributableRewards,
+  buildClaimCalls,
+} from "./rewards/index.js";
 export type {
   ClaimableReward,
   ClaimableRewardSource,
   GetClaimableRewardsInput,
+  GetDistributableRewardsInput,
 } from "./rewards/index.js";
 
 // Tournament lifecycle phase derivation (mirrors the contract). See

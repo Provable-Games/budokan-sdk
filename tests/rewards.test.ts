@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { getClaimableRewards, buildClaimCalls } from "../src/rewards/index.ts";
+import {
+  getClaimableRewards,
+  getDistributableRewards,
+  buildClaimCalls,
+} from "../src/rewards/index.ts";
 import type { Tournament } from "../src/types/tournament.ts";
 import type { Prize, RewardClaim } from "../src/types/prize.ts";
 import type { PlayerPlacement } from "../src/types/player.ts";
@@ -168,5 +172,99 @@ describe("buildClaimCalls", () => {
       expect(c.entrypoint).toBe("claim_reward");
       expect(c.calldata[0]).toBe("0xa"); // tournament_id 10
     }
+  });
+});
+
+describe("getDistributableRewards", () => {
+  const poolTournament = {
+    id: "10",
+    name: "Cup",
+    entryCount: 10,
+    protocolFeeShare: 300, // 3%
+    entryFee: {
+      tokenAddress: "0xfee",
+      amount: "1000000", // total pool 10_000_000
+      tournamentCreatorShare: 1000, // 10%
+      gameCreatorShare: 500, // 5%
+      refundShare: 500, // 5%
+      distribution: { Uniform: {} },
+      distributionCount: 3,
+    },
+  } as unknown as Tournament;
+
+  test("enumerates the whole pool: positions + creator/game/protocol shares + sponsored", () => {
+    const rewards = getDistributableRewards({
+      tournament: poolTournament,
+      prizes: [distributedPrize, singleNftPrize],
+      existingClaims: [],
+    });
+    const sources = rewards.map((r) => r.source);
+    // 3 entry-fee positions
+    expect(sources.filter((s) => s === "entry_fee_position").length).toBe(3);
+    // fixed shares (all non-zero)
+    expect(sources).toContain("entry_fee_tournament_creator");
+    expect(sources).toContain("entry_fee_game_creator");
+    expect(sources).toContain("entry_fee_protocol_fee");
+    // sponsored: 3 distributed slots + 1 single nft
+    expect(sources.filter((s) => s === "sponsor_distributed").length).toBe(3);
+    expect(sources.filter((s) => s === "sponsor_single").length).toBe(1);
+
+    // creator share = 10% of 10_000_000
+    const creator = rewards.find((r) => r.source === "entry_fee_tournament_creator");
+    expect(creator!.amount).toBe(1_000_000n);
+    expect(creator!.reward).toEqual({ kind: "entry_fee_tournament_creator" });
+  });
+
+  test("position payout reserves the protocol fee", () => {
+    const rewards = getDistributableRewards({
+      tournament: poolTournament,
+      prizes: [],
+      existingClaims: [],
+    });
+    // available = 10000 - 1000 - 500 - 500 - 300 = 7700 bps of 10_000_000 = 7_700_000
+    // uniform / 3 → ~2_566_666 for position 1 (dust to pos 1)
+    const pos1 = rewards.find(
+      (r) => r.source === "entry_fee_position" && r.position === 1,
+    );
+    expect(pos1!.amount! > 2_560_000n && pos1!.amount! < 2_570_000n).toBe(true);
+  });
+
+  test("excludes already-claimed pool rewards", () => {
+    const rewards = getDistributableRewards({
+      tournament: poolTournament,
+      prizes: [distributedPrize],
+      existingClaims: [
+        {
+          tournamentId: "10", claimKind: "entry_fee_protocol_fee",
+          prizeId: null, payoutIndex: null, position: null, refundTokenId: null,
+          extensionTokenId: null, extensionParams: null, claimed: true,
+        },
+        {
+          tournamentId: "10", claimKind: "prize_distributed", prizeId: "100",
+          payoutIndex: 1, position: null, refundTokenId: null,
+          extensionTokenId: null, extensionParams: null, claimed: true,
+        },
+      ],
+    });
+    expect(rewards.some((r) => r.source === "entry_fee_protocol_fee")).toBe(false);
+    // distributed slot 1 claimed; slots 2 and 3 remain
+    const dist = rewards.filter((r) => r.source === "sponsor_distributed");
+    expect(dist.map((r) => r.position).sort()).toEqual([2, 3]);
+  });
+
+  test("enumerates per-token refunds only when token ids are supplied", () => {
+    const without = getDistributableRewards({
+      tournament: poolTournament, prizes: [], existingClaims: [],
+    });
+    expect(without.some((r) => r.source === "entry_fee_refund")).toBe(false);
+
+    const withIds = getDistributableRewards({
+      tournament: poolTournament, prizes: [], existingClaims: [],
+      refundTokenIds: ["0x1", "0x2"],
+    });
+    const refunds = withIds.filter((r) => r.source === "entry_fee_refund");
+    expect(refunds.length).toBe(2);
+    // per-token refund = 5% of one entry fee (1_000_000) = 50_000
+    expect(refunds[0]!.amount).toBe(50_000n);
   });
 });
