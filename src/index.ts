@@ -149,6 +149,39 @@ export type {
   ReceiptWithEvents,
 } from "./calldata/index.js";
 
+// Distribution + entry-fee math (pure). Single source of truth for
+// per-position payouts and the entry-fee pool split (incl protocol fee).
+// See src/distribution/index.ts.
+export {
+  parseDistribution,
+  prizeDistribution,
+  distributionPercentages,
+  entryFeeSplit,
+  entryFeePositionPayout,
+  sponsorPrizePayout,
+} from "./distribution/index.js";
+export type {
+  DistributionKind,
+  ParsedDistribution,
+  EntryFeeSplitInput,
+  EntryFeeSplit,
+  EntryFeePositionInput,
+} from "./distribution/index.js";
+
+// Player reward resolution — which rewards a player can still claim + the
+// claim_reward Calls to claim them. See src/rewards/index.ts.
+export { getClaimableRewards, buildClaimCalls } from "./rewards/index.js";
+export type {
+  ClaimableReward,
+  ClaimableRewardSource,
+  GetClaimableRewardsInput,
+} from "./rewards/index.js";
+
+// Tournament lifecycle phase derivation (mirrors the contract). See
+// src/phase/index.ts.
+export { tournamentPhase } from "./phase/index.js";
+export type { PhaseInput } from "./phase/index.js";
+
 // Entry-requirement validator extension presets — address lookup +
 // `Span<felt252>` config builders for the four common validators
 // (merkle, erc20Balance, opusTroves, tournament). See

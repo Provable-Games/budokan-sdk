@@ -5,6 +5,7 @@ import type { PaginatedResult } from "../types/common.js";
 import { apiFetch, buildQueryString, extractPagination } from "./base.js";
 import type { ApiFetchOptions } from "./base.js";
 import { snakeToCamel } from "../utils/mappers.js";
+import { tournamentPhase } from "../phase/index.js";
 
 /** Normalize tournament: ensure both `id` and `tournamentId` exist */
 function normalizeTournament(raw: Record<string, unknown>): Tournament {
@@ -17,7 +18,9 @@ function normalizeTournament(raw: Record<string, unknown>): Tournament {
     t.protocolFeeShare ??
     (t.entryFee as { protocolFeeShare?: number } | null)?.protocolFeeShare ??
     null;
-  return { ...t, id, tournamentId: id, protocolFeeShare };
+  // Derive the lifecycle phase at read time (the API doesn't return it).
+  const phase = t.phase ?? tournamentPhase(t);
+  return { ...t, id, tournamentId: id, protocolFeeShare, phase };
 }
 
 interface ApiContext {
