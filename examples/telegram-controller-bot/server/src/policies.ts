@@ -53,9 +53,10 @@ export function buildSessionPolicies(
     },
   };
 
-  // Spending limits for the common entry-fee tokens. Authorizing `approve` with
-  // an `amount` makes the keychain show a spending-limit card and enforce the
-  // cumulative cap; the bot only ever approves the exact fee at /enter time.
+  // Spending limits for the common tokens. Authorizing `approve` with an
+  // `amount` makes the keychain show a spending-limit card and enforce the
+  // cumulative cap; the bot only ever approves the exact amount it needs at
+  // /enter (entry fee) or /add_prize (prize) time.
   for (const token of tokensForChain(chain)) {
     if (!token.spendLimit) continue;
     contracts[token.address] = {
@@ -64,7 +65,7 @@ export function buildSessionPolicies(
       methods: [
         {
           entrypoint: "approve",
-          description: `Pay entry fees in ${token.symbol} (up to your spending limit)`,
+          description: `Pay entry fees & sponsor prizes in ${token.symbol} (up to your spending limit)`,
           amount: token.spendLimit,
         },
       ],

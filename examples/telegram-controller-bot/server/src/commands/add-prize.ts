@@ -1,46 +1,46 @@
-// /add_prize [tournamentId] — direct the user to budokan.gg to sponsor an
-// ERC-20 prize on a tournament.
+// /add_prize [tournamentId] — sponsor an ERC-20 prize on a tournament.
 //
-// We used to walk the user through a long Q&A (pick token from Voyager
-// balances, amount, single vs distributed payout, distribution type,
-// weight) and then push approve + add_prize through a Mini App that
-// wrapped Cartridge's ControllerProvider. The Mini App turned out
-// unusable inside Telegram's in-app webview — Cartridge's keychain
-// can't get a connected account there ("Cartridge did not return a
-// connected account"), and @cartridge/controller@0.10.7 doesn't bundle
-// the JS for its TelegramProvider preset. See enter.ts for the same
-// rationale.
-//
-// budokan.gg has a working "Add Prizes" UI on the tournament page.
-// Sending the user a deeplink lets them complete the sponsorship in a
-// real browser. No Q&A in chat — the website prompts for the same
-// fields and shows accurate balances + USD values via the same Voyager
-// integration on the client side.
+// In-bot flow (pick tournament → pick token → amount → position → confirm):
+// the bot approves the prize token and calls add_prize in one in-session
+// multicall, using the same per-token spending limit authorized at /connect
+// (policies.ts + catalog/tokens.ts). Only the pre-authorized tokens, and only
+// up to the limit, are eligible — anything else (NFT prizes, exotic tokens,
+// amounts over the cap, distributed payouts) falls back to the budokan.gg
+// "Add Prizes" UI, which signs in a real browser.
 
-import { createBudokanClient } from "@provable-games/budokan-sdk";
+import {
+  buildAddPrizeCall,
+  buildErc20ApproveCall,
+  createBudokanClient,
+  CHAINS,
+} from "@provable-games/budokan-sdk";
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
 import type { HandshakeStore } from "../handshake.ts";
 import { TelegramApi } from "../telegram-api.ts";
+import { resolveAccount } from "../controller-account.ts";
 import { gamesForChain } from "../catalog/games.ts";
+import { tokensForChain, type Erc20Token } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
-import { tournamentPageUrl } from "@provable-games/budokan-sdk";
+import { explorerTxUrl, tournamentPageUrl } from "@provable-games/budokan-sdk";
 
-type Step = "tournamentPick";
+type Step = "tournamentPick" | "tokenPick" | "amount" | "position" | "confirm";
 
 interface State {
   step: Step;
   chain: Chain;
-  // Tournaments offered in the current picker render. Cleared once the
-  // user picks (or /cancels).
-  pickerTournaments: Array<{
-    id: string;
-    name: string;
-    gameAddress: string;
-    entryCount: number;
-  }>;
+  // tournamentPick
+  pickerTournaments: Array<{ id: string; name: string; gameAddress: string; entryCount: number }>;
   pickerGameNames: Map<string, string>;
+  // selection so far
+  tournamentId?: string;
+  tournamentName?: string;
+  tokens: Erc20Token[]; // eligible (spend-limit) tokens offered at tokenPick
+  token?: Erc20Token;
+  amountRaw?: string; // base units
+  amountDisplay?: string;
+  position?: number;
 }
 
 const states = new Map<string, State>();
@@ -53,11 +53,6 @@ export function cancel(chatId: string): boolean {
   return states.delete(chatId);
 }
 
-/**
- * Kick off /add_prize [tournamentId]. With an id we go straight to the
- * deeplink. Without, fetch non-finalized tournaments and let the user
- * pick one.
- */
 export async function start(
   api: TelegramApi,
   config: Config,
@@ -65,45 +60,41 @@ export async function start(
   chain: Chain,
   args: string[],
 ): Promise<void> {
-  // Explicit id: skip the picker.
+  const eligible = tokensForChain(chain).filter((t): t is Erc20Token & { spendLimit: string } => !!t.spendLimit);
+
+  // Explicit id: jump straight to token selection.
   if (args.length === 1 && args[0] && /^\d+$/.test(args[0])) {
-    return sendDeeplink(api, chatId, chain, args[0]);
+    states.set(chatId, {
+      step: "tokenPick",
+      chain,
+      pickerTournaments: [],
+      pickerGameNames: new Map(),
+      tournamentId: args[0],
+      tournamentName: `#${args[0]}`,
+      tokens: eligible,
+    });
+    await promptToken(api, chatId, eligible);
+    return;
   }
   if (args.length !== 0) {
-    await api.sendMessage(
-      chatId,
-      "Usage: /add_prize [tournamentId]\nWith no id I'll show a picker.",
-    );
+    await api.sendMessage(chatId, "Usage: /add_prize [tournamentId]\nWith no id I'll show a picker.");
     return;
   }
 
   // No-args: show picker of non-finalized tournaments.
   const sdk = sdkClient(config, chain);
-  const phasesToShow = [
-    "scheduled",
-    "registration",
-    "staging",
-    "live",
-    "submission",
-  ] as const;
+  const phasesToShow = ["scheduled", "registration", "staging", "live", "submission"] as const;
   let pool: State["pickerTournaments"];
   try {
     const lists = await Promise.all(
       phasesToShow.map((phase) =>
-        sdk
-          .getTournaments({ phase, limit: 25, sort: "created_at" })
-          .then((r) => r.data),
+        sdk.getTournaments({ phase, limit: 25, sort: "created_at" }).then((r) => r.data),
       ),
     );
     const byId = new Map<string, State["pickerTournaments"][number]>();
     for (const list of lists) {
       for (const t of list) {
-        byId.set(t.id, {
-          id: t.id,
-          name: t.name || "(unnamed)",
-          gameAddress: t.gameAddress,
-          entryCount: t.entryCount,
-        });
+        byId.set(t.id, { id: t.id, name: t.name || "(unnamed)", gameAddress: t.gameAddress, entryCount: t.entryCount });
       }
     }
     pool = Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
@@ -116,13 +107,7 @@ export async function start(
     return;
   }
   const gameNames = await buildGameNameMap(chain);
-
-  states.set(chatId, {
-    step: "tournamentPick",
-    chain,
-    pickerTournaments: pool,
-    pickerGameNames: gameNames,
-  });
+  states.set(chatId, { step: "tournamentPick", chain, pickerTournaments: pool, pickerGameNames: gameNames, tokens: eligible });
 
   const lines = [
     `Pick a tournament to sponsor on ${chain}:`,
@@ -137,63 +122,186 @@ export async function start(
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
-/**
- * Dispatcher entrypoint for plain-text replies. Signature mirrors the
- * other multi-turn commands so telegram.ts can call them uniformly;
- * `_handshakes` is unused — we don't mint Mini App handshakes anymore.
- */
 export async function handleAnswer(
   api: TelegramApi,
-  _config: Config,
+  config: Config,
   _handshakes: HandshakeStore,
   chatId: string,
   text: string,
 ): Promise<void> {
   const state = states.get(chatId);
   if (!state) return;
-  if (state.step !== "tournamentPick") return;
-
   const trimmed = text.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    await api.sendMessage(chatId, `Reply 1-${state.pickerTournaments.length}, or /cancel.`);
-    return;
+
+  switch (state.step) {
+    case "tournamentPick": {
+      const n = pickIndex(trimmed, state.pickerTournaments.length);
+      if (n === null) {
+        await api.sendMessage(chatId, `Reply 1-${state.pickerTournaments.length}, or /cancel.`);
+        return;
+      }
+      const chosen = state.pickerTournaments[n]!;
+      state.tournamentId = chosen.id;
+      state.tournamentName = chosen.name;
+      state.step = "tokenPick";
+      await promptToken(api, chatId, state.tokens);
+      return;
+    }
+
+    case "tokenPick": {
+      const n = pickIndex(trimmed, state.tokens.length);
+      if (n === null) {
+        await api.sendMessage(chatId, `Reply 1-${state.tokens.length}, or /cancel.`);
+        return;
+      }
+      state.token = state.tokens[n]!;
+      state.step = "amount";
+      await api.sendMessage(chatId, `Amount of ${state.token.symbol} to put up (e.g. 100 or 2.5):`);
+      return;
+    }
+
+    case "amount": {
+      const token = state.token!;
+      const raw = parseToBaseUnits(trimmed, token.decimals);
+      if (raw === null || BigInt(raw) <= 0n) {
+        await api.sendMessage(chatId, `Enter a positive ${token.symbol} amount (e.g. 100 or 2.5), or /cancel.`);
+        return;
+      }
+      // Over the per-token session cap → can't sign in chat; deeplink instead.
+      if (BigInt(raw) > BigInt(token.spendLimit!)) {
+        states.delete(chatId);
+        await api.sendMessage(
+          chatId,
+          [
+            `That's above your in-chat ${token.symbol} spending limit. Sponsor it on budokan.gg:`,
+            tournamentPageUrl(state.chain, state.tournamentId!),
+          ].join("\n"),
+        );
+        return;
+      }
+      state.amountRaw = raw;
+      state.amountDisplay = `${trimmed} ${token.symbol}`;
+      state.step = "position";
+      await api.sendMessage(chatId, "Which leaderboard position should win this prize? (1 = first place)");
+      return;
+    }
+
+    case "position": {
+      if (!/^\d+$/.test(trimmed) || Number(trimmed) < 1) {
+        await api.sendMessage(chatId, "Enter a position ≥ 1 (1 = first place), or /cancel.");
+        return;
+      }
+      state.position = Number(trimmed);
+      state.step = "confirm";
+      await api.sendMessage(
+        chatId,
+        [
+          `Sponsor ${state.amountDisplay} to ${ordinal(state.position)} place on ${state.tournamentName}?`,
+          "",
+          "Reply 'yes' to sign in chat, or /cancel.",
+        ].join("\n"),
+      );
+      return;
+    }
+
+    case "confirm": {
+      if (!/^y(es)?$/i.test(trimmed)) {
+        states.delete(chatId);
+        await api.sendMessage(chatId, "Cancelled.");
+        return;
+      }
+      states.delete(chatId);
+      await execute(api, config, chatId, state);
+      return;
+    }
   }
-  const n = Number(trimmed);
-  if (n < 1 || n > state.pickerTournaments.length) {
-    await api.sendMessage(chatId, `Out of range. Pick 1–${state.pickerTournaments.length}, or /cancel.`);
-    return;
-  }
-  const chosen = state.pickerTournaments[n - 1]!;
-  states.delete(chatId);
-  await sendDeeplink(api, chatId, state.chain, chosen.id, chosen.name);
 }
 
-/**
- * Send the budokan.gg deeplink + a one-line nudge. Optionally takes the
- * tournament name so the message reads naturally; if omitted (direct-id
- * path) we just print the id.
- */
-async function sendDeeplink(
-  api: TelegramApi,
-  chatId: string,
-  chain: Chain,
-  tournamentId: string,
-  tournamentName?: string,
-): Promise<void> {
-  const label = tournamentName
-    ? `tournament #${tournamentId} — ${tournamentName}`
-    : `tournament #${tournamentId}`;
+async function execute(api: TelegramApi, config: Config, chatId: string, state: State): Promise<void> {
+  const session = await resolveAccount(chatId, state.chain, config);
+  if (!session.ok) {
+    await api.sendMessage(chatId, sessionErrorMessage(session.reason, state.chain));
+    return;
+  }
+  const budokanAddress = config.budokanAddress ?? CHAINS[state.chain]?.budokanAddress;
+  if (!budokanAddress) {
+    await api.sendMessage(chatId, `Internal error: no Budokan address for ${state.chain}.`);
+    return;
+  }
+
+  const token = state.token!;
+  await api.sendMessage(chatId, `⏳ Sponsoring ${state.amountDisplay} on ${state.tournamentName}…`);
+  try {
+    const approveCall = buildErc20ApproveCall(token.address, budokanAddress, state.amountRaw!);
+    const addPrizeCall = buildAddPrizeCall(budokanAddress, {
+      tournamentId: state.tournamentId!,
+      prize: {
+        kind: "token",
+        tokenAddress: token.address,
+        tokenType: { kind: "erc20", amount: state.amountRaw! },
+        position: state.position!,
+      },
+    });
+    const tx = await session.data.account.execute([approveCall, addPrizeCall]);
+    await api.sendMessage(
+      chatId,
+      [
+        `✅ Sponsored ${state.amountDisplay} to ${ordinal(state.position!)} place on ${state.tournamentName}`,
+        `🔗 ${explorerTxUrl(state.chain, tx.transaction_hash)}`,
+      ].join("\n"),
+    );
+  } catch (error) {
+    await api.sendMessage(
+      chatId,
+      [
+        `Couldn't sponsor in chat: ${formatError(error)}`,
+        "",
+        "Add it on budokan.gg instead:",
+        tournamentPageUrl(state.chain, state.tournamentId!),
+      ].join("\n"),
+    );
+  }
+}
+
+async function promptToken(api: TelegramApi, chatId: string, tokens: Erc20Token[]): Promise<void> {
+  if (tokens.length === 0) {
+    await api.sendMessage(chatId, "No pre-authorized tokens for in-chat sponsorship on this chain.");
+    return;
+  }
   await api.sendMessage(
     chatId,
     [
-      `Sponsor a prize on ${label}:`,
-      tournamentPageUrl(chain, tournamentId),
+      "Which token? (only tokens you authorized a spending limit for can be signed in chat)",
       "",
-      "Open the link in your normal browser, then click 'Add Prize'. Cartridge",
-      "doesn't authenticate reliably inside Telegram's in-app browser, which is",
-      "why the chat doesn't sign it directly.",
+      ...tokens.map((t, i) => `  ${i + 1}. ${t.symbol} — ${t.name}`),
+      "",
+      "Reply with a number, or /cancel.",
     ].join("\n"),
   );
+}
+
+function pickIndex(text: string, len: number): number | null {
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
+  if (n < 1 || n > len) return null;
+  return n - 1;
+}
+
+// Decimal token amount → base-unit string. Returns null on parse failure.
+// Accepts "1", "0.5", "10.123456789" (truncates beyond `decimals`).
+function parseToBaseUnits(input: string, decimals: number): string | null {
+  const t = input.trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const [whole, frac = ""] = t.split(".");
+  const fracPadded = (frac + "0".repeat(decimals)).slice(0, decimals);
+  const combined = `${whole}${fracPadded}`.replace(/^0+(?=\d)/, "");
+  return combined === "" ? "0" : combined;
+}
+
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
 }
 
 function sdkClient(config: Config, chain: Chain) {
@@ -216,4 +324,10 @@ async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
 function shortAddr(addr: string): string {
   if (!addr || addr.length <= 18) return addr;
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
+}
+
+function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch", chain: Chain): string {
+  if (reason === "no_session") return `Not connected on ${chain} — run /connect first.`;
+  if (reason === "expired") return `Your session on ${chain} expired. Run /connect to authorize again.`;
+  return `Your session on ${chain} doesn't cover this action. Run /connect again.`;
 }

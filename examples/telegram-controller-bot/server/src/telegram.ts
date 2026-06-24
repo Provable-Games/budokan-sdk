@@ -340,7 +340,7 @@ export class TelegramBot {
         "  /claim <tournamentId> — claim everything your wallet is owed (or add a kind for one reward:",
         "    prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>)",
         "  /distribute <tournamentId> — claim every unclaimed reward in the pool (permissionless)",
-        "  /add_prize [tournamentId] — sponsor a prize (no id → picker; signs on budokan.gg)",
+        "  /add_prize [tournamentId] — sponsor an ERC-20 prize (no id → picker; signs in chat within your spending limit, else a budokan.gg link)",
         "  /cancel — abort an in-flight multi-turn flow",
         "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
       ].join("\n"),
