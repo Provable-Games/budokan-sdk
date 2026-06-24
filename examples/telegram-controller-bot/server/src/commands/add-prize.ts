@@ -62,9 +62,9 @@ export async function start(
 ): Promise<void> {
   const eligible = tokensForChain(chain).filter((t): t is Erc20Token & { spendLimit: string } => !!t.spendLimit);
 
-  // Explicit id: jump straight to token selection.
+  // Explicit id: jump straight to token selection (gated on an existing session).
   if (args.length === 1 && args[0] && /^\d+$/.test(args[0])) {
-    states.set(chatId, {
+    const state: State = {
       step: "tokenPick",
       chain,
       pickerTournaments: [],
@@ -72,8 +72,9 @@ export async function start(
       tournamentId: args[0],
       tournamentName: `#${args[0]}`,
       tokens: eligible,
-    });
-    await promptToken(api, chatId, eligible);
+    };
+    states.set(chatId, state);
+    await beginTokenPick(api, config, chatId, state);
     return;
   }
   if (args.length !== 0) {
@@ -143,8 +144,7 @@ export async function handleAnswer(
       const chosen = state.pickerTournaments[n]!;
       state.tournamentId = chosen.id;
       state.tournamentName = chosen.name;
-      state.step = "tokenPick";
-      await promptToken(api, chatId, state.tokens);
+      await beginTokenPick(api, config, chatId, state);
       return;
     }
 
@@ -220,7 +220,15 @@ export async function handleAnswer(
 async function execute(api: TelegramApi, config: Config, chatId: string, state: State): Promise<void> {
   const session = await resolveAccount(chatId, state.chain, config);
   if (!session.ok) {
-    await api.sendMessage(chatId, sessionErrorMessage(session.reason, state.chain));
+    // Lost the session between confirm and sign — don't prompt a registration
+    // for a one-off sponsor; send them to the page instead.
+    await api.sendMessage(
+      chatId,
+      [
+        "Couldn't sign in chat. Add your prize on the tournament page instead:",
+        tournamentPageUrl(state.chain, state.tournamentId!),
+      ].join("\n"),
+    );
     return;
   }
   const budokanAddress = config.budokanAddress ?? CHAINS[state.chain]?.budokanAddress;
@@ -263,19 +271,51 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
   }
 }
 
-async function promptToken(api: TelegramApi, chatId: string, tokens: Erc20Token[]): Promise<void> {
-  if (tokens.length === 0) {
-    await api.sendMessage(chatId, "No pre-authorized tokens for in-chat sponsorship on this chain.");
+// Enter the in-chat token flow only when a session already covers it. Adding a
+// prize is a one-off, so it isn't worth prompting a (gas-costing) session
+// registration: without a usable session — or for prizes that can't be signed
+// in chat (NFTs, unlisted tokens, amounts over the cap) — we just point the
+// user at the tournament page.
+async function beginTokenPick(
+  api: TelegramApi,
+  config: Config,
+  chatId: string,
+  state: State,
+): Promise<void> {
+  const session = await resolveAccount(chatId, state.chain, config);
+  if (!session.ok || state.tokens.length === 0) {
+    states.delete(chatId);
+    await api.sendMessage(
+      chatId,
+      [
+        `Sponsor a prize on ${state.tournamentName}:`,
+        tournamentPageUrl(state.chain, state.tournamentId!),
+        "",
+        "(Adding a prize is a one-off, so it's done on the tournament page — no need to register a session just for this.)",
+      ].join("\n"),
+    );
     return;
   }
+  state.step = "tokenPick";
+  await promptToken(api, chatId, state.tokens, state.chain, state.tournamentId!);
+}
+
+async function promptToken(
+  api: TelegramApi,
+  chatId: string,
+  tokens: Erc20Token[],
+  chain: Chain,
+  tournamentId: string,
+): Promise<void> {
   await api.sendMessage(
     chatId,
     [
-      "Which token? (only tokens you authorized a spending limit for can be signed in chat)",
+      "Which token? (only tokens with a spending limit can be signed in chat)",
       "",
       ...tokens.map((t, i) => `  ${i + 1}. ${t.symbol} — ${t.name}`),
       "",
       "Reply with a number, or /cancel.",
+      `For an NFT or a token not listed, add it on the tournament page: ${tournamentPageUrl(chain, tournamentId)}`,
     ].join("\n"),
   );
 }
@@ -324,10 +364,4 @@ async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
 function shortAddr(addr: string): string {
   if (!addr || addr.length <= 18) return addr;
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
-}
-
-function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch", chain: Chain): string {
-  if (reason === "no_session") return `Not connected on ${chain} — run /connect first.`;
-  if (reason === "expired") return `Your session on ${chain} expired. Run /connect to authorize again.`;
-  return `Your session on ${chain} doesn't cover this action. Run /connect again.`;
 }
