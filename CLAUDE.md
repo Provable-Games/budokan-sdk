@@ -13,3 +13,14 @@ bun run typecheck    # TypeScript type checking (tsc --noEmit)
 bun run dev          # Build in watch mode
 bun run clean        # Remove dist/
 ```
+
+## Reference Examples
+
+```
+examples/
+├── telegram-tournament-bot.mjs          # Dependency-free Telegram tournament bot reference
+├── telegram-tournament-bot.md           # End-to-end setup, testing, and deployment guide
+└── telegram-tournament-bot.env.example  # Optional environment variables
+```
+
+The Telegram bot is a reference implementation for downstream developers and AI agents. Keep it self-contained, readable, and documented. It demonstrates SDK usage through public APIs (`getTournament`, `getTournamentLeaderboard`, `getTournamentPrizes`, `getTournaments`) and WebSocket subscriptions filtered by `tournamentIds`, without changing SDK internals under `src/`. The Budokan SDK is read-only — actions that require signing (entering, submitting, claiming) are surfaced as deeplinks to the Budokan web app instead of being implemented inside the bot.

@@ -1,0 +1,15 @@
+# Railway service config for the bot server.
+# Docs: https://docs.railway.com/guides/config-as-code
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Bot recovers cleanly on restart (long-poll resumes, sessions persisted).
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# Liveness probe — bot exposes /healthz on PORT.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
