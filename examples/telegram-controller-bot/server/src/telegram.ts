@@ -11,7 +11,7 @@ import type { Chain, ChatStateStore } from "./chat-state.ts";
 import { isChain, SUPPORTED_CHAINS } from "./chat-state.ts";
 import type { HandshakeStore } from "./handshake.ts";
 import type { SessionStore } from "./session-store.ts";
-import { TelegramApi, urlButton, webAppButton } from "./telegram-api.ts";
+import { TelegramApi, urlButton } from "./telegram-api.ts";
 import { resolveAccount } from "./controller-account.ts";
 import {
   buildClaimRewardCall,
@@ -446,10 +446,6 @@ export class TelegramBot {
     );
   }
 
-  private miniAppUrl(token: string, mode: "connect" | "tx"): string {
-    const base = this.config.miniAppUrl;
-    return `${base}/?token=${encodeURIComponent(token)}&mode=${mode}`;
-  }
 }
 
 // Telegram's setMyCommands payload — descriptions show in the "/" autocomplete

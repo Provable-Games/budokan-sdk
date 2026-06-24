@@ -7,8 +7,7 @@ import { resolve } from "node:path";
 export interface Config {
   telegramBotToken: string;
   chain: "mainnet" | "sepolia";
-  botPublicUrl: string;     // public HTTPS URL for the Mini App to POST back to
-  miniAppUrl: string;       // public URL the Telegram web_app button opens
+  botPublicUrl: string;     // public HTTPS base URL for the Cartridge auth callback
   httpPort: number;
   dataDir: string;          // filesystem root for session storage
   apiUrl?: string;
@@ -38,15 +37,11 @@ export function loadConfig(): Config {
   if (!/^https?:\/\//.test(botPublicUrl)) {
     fail("BOT_PUBLIC_URL must include scheme (https:// or http://).");
   }
-  // Telegram requires HTTPS for production web_app buttons. We allow http://
-  // for local dev but warn so the misconfiguration is loud.
+  // Cartridge redirects the user's browser to
+  // BOT_PUBLIC_URL/api/connect/:token/callback after they authorize, so HTTPS
+  // is required in production (localhost is fine for dev).
   if (!botPublicUrl.startsWith("https://") && !botPublicUrl.includes("localhost") && !botPublicUrl.includes("127.0.0.1")) {
-    console.warn("Warning: BOT_PUBLIC_URL is not HTTPS. Telegram web_app buttons will fail except for localhost.");
-  }
-
-  const miniAppUrl = required("MINIAPP_URL").replace(/\/$/, "");
-  if (!/^https?:\/\//.test(miniAppUrl)) {
-    fail("MINIAPP_URL must include scheme (https:// or http://).");
+    console.warn("Warning: BOT_PUBLIC_URL is not HTTPS. The Cartridge auth callback will fail except on localhost.");
   }
 
   // Railway and most PaaS hosts inject PORT. Honor it first; BOT_HTTP_PORT
@@ -63,7 +58,6 @@ export function loadConfig(): Config {
     telegramBotToken,
     chain,
     botPublicUrl,
-    miniAppUrl,
     httpPort,
     dataDir,
     apiUrl: env("BUDOKAN_API_URL"),

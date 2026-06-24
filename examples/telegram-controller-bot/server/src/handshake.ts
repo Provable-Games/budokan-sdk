@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Chain } from "./chat-state.ts";
 
-export type HandshakeMode = "connect" | "tx";
+export type HandshakeMode = "connect";
 
 export interface HandshakeToken {
   token: string;
@@ -29,17 +29,6 @@ export interface HandshakeToken {
    * registration, this is what the bot needs to sign on the user's behalf.
    */
   signer?: { privKey: string; pubKey: string; sessionKeyGuid: string };
-  /** mode === "tx": the calls to authorize and a human summary. */
-  payload?: TxPayload;
-}
-
-export interface TxPayload {
-  calls: Array<{
-    contractAddress: string;
-    entrypoint: string;
-    calldata: string[];
-  }>;
-  summary: string;
 }
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
@@ -69,7 +58,7 @@ export class HandshakeStore {
     chatId: string,
     mode: HandshakeMode,
     chain: Chain,
-    options: { signer?: HandshakeToken["signer"]; payload?: TxPayload } = {},
+    options: { signer?: HandshakeToken["signer"] } = {},
   ): HandshakeToken {
     const token = randomUUID();
     const handshake: HandshakeToken = {
@@ -79,7 +68,6 @@ export class HandshakeStore {
       chain,
       expiresAt: Date.now() + this.ttlMs,
       signer: options.signer,
-      payload: options.payload,
     };
     this.tokens.set(token, handshake);
     return handshake;

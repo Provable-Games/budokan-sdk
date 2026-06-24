@@ -55,7 +55,6 @@ async function main() {
   await http.listen({ host: "0.0.0.0", port: config.httpPort });
   console.log(`HTTP listening on :${config.httpPort}`);
   console.log(`BOT_PUBLIC_URL=${config.botPublicUrl}`);
-  console.log(`MINIAPP_URL=${config.miniAppUrl}`);
   console.log(`Default chain: ${config.chain} (per-chat overrides via /chain)`);
 
   // Telegram long-poll runs until shutdown(); main() resolves only on exit.

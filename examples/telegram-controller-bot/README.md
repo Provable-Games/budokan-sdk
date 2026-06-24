@@ -18,7 +18,7 @@ All on-chain encoding and reward resolution go through `@provable-games/budokan-
 
 The dependency-free read-only example at `examples/telegram-tournament-bot.mjs` remains the simpler reference.
 
-> **Mini App caveat:** paid `/enter` and `/add_prize` currently deeplink to budokan.gg to sign, because Cartridge's keychain doesn't run reliably inside Telegram's in-app browser. The per-tx Mini App flow under `miniapp/` is therefore not exercised by any command today.
+> **Signing:** free `/enter` executes server-side via your Cartridge session. Paid `/enter` and `/add_prize` deeplink to budokan.gg to sign — Cartridge's keychain doesn't run reliably inside Telegram's in-app browser, so there's no in-Telegram per-tx flow.
 
 ## Layout
 
@@ -27,8 +27,7 @@ telegram-controller-bot/
 ├── ARCHITECTURE.md       Design doc — read first
 ├── README.md             This file
 ├── .env.example          Env vars
-├── server/               Node + Fastify bot server
-└── miniapp/              Vite + React Telegram Mini App
+└── server/               Node + Fastify bot server
 ```
 
 ## Setup

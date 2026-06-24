@@ -5,7 +5,6 @@ const TELEGRAM_CHUNK_LIMIT = 3900;
 
 export interface InlineKeyboardButton {
   text: string;
-  web_app?: { url: string };
   url?: string;
   callback_data?: string;
 }
@@ -92,13 +91,9 @@ export function splitForTelegram(text: string): string[] {
   return chunks;
 }
 
-export function webAppButton(text: string, url: string): { inline_keyboard: InlineKeyboardButton[][] } {
-  return { inline_keyboard: [[{ text, web_app: { url } }]] };
-}
-
 /**
  * Inline keyboard with a single regular URL button. Tapping it opens the URL
- * in the user's external browser (vs `web_app` which opens inside Telegram).
+ * in the user's external browser.
  * Used for the slot-pattern Cartridge auth flow where the redirect target is
  * an HTTPS URL Telegram itself never sees.
  */

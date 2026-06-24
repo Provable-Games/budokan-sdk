@@ -35,7 +35,6 @@ async function main() {
     telegramBotToken: "00000000:fake",
     chain: "mainnet",
     botPublicUrl: "http://localhost:0",
-    miniAppUrl: "http://localhost:5173",
     httpPort: 0,
     dataDir,
   };
