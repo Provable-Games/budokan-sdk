@@ -5,6 +5,12 @@
       "agent_name": "SDK Reviewer",
       "prompt_file": ".github/prompts/sdk-review.md",
       "diff_paths": ["src/", "tests/", "package.json", "tsconfig.json", "tsup.config.ts"]
+    },
+    {
+      "agent_id": "examples",
+      "agent_name": "Examples Reviewer",
+      "prompt_file": ".github/prompts/examples-review.md",
+      "diff_paths": ["examples/"]
     }
   ]
 }
