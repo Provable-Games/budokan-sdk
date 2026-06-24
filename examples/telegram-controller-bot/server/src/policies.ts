@@ -1,49 +1,39 @@
-// Static session policy bundle for Budokan. See ../../ARCHITECTURE.md
-// "Policy list" and "Hybrid auth model".
+// Session policy bundle for Budokan. See ../../ARCHITECTURE.md "Policy list".
 //
-// Free actions (create_tournament, claim_reward, submit_score) are sessioned
-// — listed here. Paid actions (enter_tournament with a fee) are NOT sessioned
-// — they go through the per-tx Mini App flow, so we deliberately do not
-// authorize approve() on any token here. The session can never spend the
-// user's funds.
+// Authorizes:
+//   - Budokan methods (create_tournament, enter_tournament, claim_reward,
+//     submit_score) — the actions the bot executes server-side.
+//   - `approve` on the common entry-fee tokens, each with a per-token SPENDING
+//     LIMIT (Cartridge enforces a cumulative cap the user sees + approves at
+//     /connect). This is what lets paid /enter run entirely in Telegram: the
+//     bot approves the exact fee and enters in one in-session multicall, no
+//     per-tx popup. The cap bounds what the session can ever spend.
 
 import { CHAINS } from "@provable-games/budokan-sdk";
 
+import type { Chain } from "./chat-state.ts";
+import { tokensForChain } from "./catalog/tokens.ts";
+
 export interface PolicyMethod {
   entrypoint: string;
-  description: string;
+  description?: string;
+  /** ERC20 `approve` policies only: per-token session spending cap (base units). */
+  amount?: string;
+}
+
+export interface PolicyContract {
+  name?: string;
+  /** ERC20 display metadata so the keychain renders a spending-limit card. */
+  meta?: { type: "ERC20"; name?: string };
+  methods: PolicyMethod[];
 }
 
 export interface PolicyBundle {
-  contracts: Record<string, { methods: PolicyMethod[] }>;
-}
-
-/**
- * Same content as buildSessionPolicies, but in the ParsedSessionPolicies
- * shape that @cartridge/controller's NodeBackend persists. Used so we can
- * write the policies file alongside session/signer when the Mini App POSTs
- * back; SessionProvider.probe() reads this to validate the session is
- * authorized for the methods we're about to call.
- *
- * Mirrors the output of @cartridge/controller's parsePolicies():
- *   - { verified: false, contracts: { [addr]: { methods: [{ entrypoint, description, authorized: true }] } } }
- */
-export function parsedPoliciesFor(
-  chain: "mainnet" | "sepolia",
-  budokanAddressOverride?: string,
-): { verified: boolean; contracts: Record<string, { methods: Array<{ entrypoint: string; description: string; authorized: boolean }> }> } {
-  const bundle = buildSessionPolicies(chain, budokanAddressOverride);
-  const contracts: Record<string, { methods: Array<{ entrypoint: string; description: string; authorized: boolean }> }> = {};
-  for (const [addr, group] of Object.entries(bundle.contracts)) {
-    contracts[addr] = {
-      methods: group.methods.map((m) => ({ ...m, authorized: true })),
-    };
-  }
-  return { verified: false, contracts };
+  contracts: Record<string, PolicyContract>;
 }
 
 export function buildSessionPolicies(
-  chain: "mainnet" | "sepolia",
+  chain: Chain,
   budokanAddressOverride?: string,
 ): PolicyBundle {
   const budokanAddress = budokanAddressOverride ?? CHAINS[chain]?.budokanAddress;
@@ -51,32 +41,57 @@ export function buildSessionPolicies(
     throw new Error(`No Budokan address configured for chain '${chain}'.`);
   }
 
-  return {
-    contracts: {
-      [budokanAddress]: {
-        methods: [
-          {
-            entrypoint: "create_tournament",
-            description: "Create a Budokan tournament",
-          },
-          {
-            entrypoint: "claim_reward",
-            description: "Claim a tournament reward",
-          },
-          {
-            entrypoint: "submit_score",
-            description: "Submit a tournament score",
-          },
-          // enter_tournament works for FREE-entry tournaments only via the
-          // session. Paid entries require ERC20 approve(), which is
-          // deliberately NOT in this list — those go through the per-tx
-          // Mini App flow in stage 5.
-          {
-            entrypoint: "enter_tournament",
-            description: "Enter a tournament (free-entry only)",
-          },
-        ],
-      },
+  const contracts: Record<string, PolicyContract> = {
+    [budokanAddress]: {
+      name: "Budokan",
+      methods: [
+        { entrypoint: "create_tournament", description: "Create a Budokan tournament" },
+        { entrypoint: "enter_tournament", description: "Enter a tournament" },
+        { entrypoint: "claim_reward", description: "Claim a tournament reward" },
+        { entrypoint: "submit_score", description: "Submit a tournament score" },
+      ],
     },
   };
+
+  // Spending limits for the common entry-fee tokens. Authorizing `approve` with
+  // an `amount` makes the keychain show a spending-limit card and enforce the
+  // cumulative cap; the bot only ever approves the exact fee at /enter time.
+  for (const token of tokensForChain(chain)) {
+    if (!token.spendLimit) continue;
+    contracts[token.address] = {
+      name: token.symbol,
+      meta: { type: "ERC20", name: token.name },
+      methods: [
+        {
+          entrypoint: "approve",
+          description: `Pay entry fees in ${token.symbol} (up to your spending limit)`,
+          amount: token.spendLimit,
+        },
+      ],
+    };
+  }
+
+  return { contracts };
+}
+
+type AuthorizedMethod = PolicyMethod & { authorized: boolean };
+type ParsedContract = Omit<PolicyContract, "methods"> & { methods: AuthorizedMethod[] };
+
+/**
+ * The bundle in the parsed shape @cartridge/controller persists / the keychain
+ * URL expects: every method gets `authorized: true`. Mirrors parsePolicies().
+ */
+export function parsedPoliciesFor(
+  chain: Chain,
+  budokanAddressOverride?: string,
+): { verified: boolean; contracts: Record<string, ParsedContract> } {
+  const bundle = buildSessionPolicies(chain, budokanAddressOverride);
+  const contracts: Record<string, ParsedContract> = {};
+  for (const [addr, group] of Object.entries(bundle.contracts)) {
+    contracts[addr] = {
+      ...group,
+      methods: group.methods.map((m) => ({ ...m, authorized: true })),
+    };
+  }
+  return { verified: false, contracts };
 }

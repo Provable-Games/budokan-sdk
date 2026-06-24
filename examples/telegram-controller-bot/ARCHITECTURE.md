@@ -2,7 +2,7 @@
 
 This document captures the design decisions for the Telegram bot that talks to Budokan via Cartridge Controller. **Read this before reviewing code.** It records every decision and its rationale so we can argue with the design before implementation deepens.
 
-> **Update — the per-tx Mini App was removed.** Auth now uses only the Cartridge slot-pattern callback (a regular browser redirect, not an in-Telegram `web_app`). Free actions execute via the persisted session; paid `/enter` and `/add_prize` deeplink to budokan.gg to sign. The `miniapp/` tree and `/api/tx/*` routes no longer exist. Sections below describing the Mini App / per-tx handshake are retained as historical design rationale.
+> **Update — the per-tx Mini App was removed.** Auth now uses only the Cartridge slot-pattern callback (a regular browser redirect, not an in-Telegram `web_app`). The per-tx approval problem is instead solved with **session spending limits**: `/connect` authorizes `approve` on the common entry-fee tokens up to a per-token cap (`policies.ts` + `catalog/tokens.ts`), so paid `/enter` approves the exact fee and enters in one in-session multicall — no popup. Fees above the cap, unknown fee tokens, and `/add_prize` deeplink to budokan.gg. The `miniapp/` tree and `/api/tx/*` routes no longer exist. Sections below describing the Mini App / per-tx handshake are retained as historical design rationale.
 
 ## Goals
 

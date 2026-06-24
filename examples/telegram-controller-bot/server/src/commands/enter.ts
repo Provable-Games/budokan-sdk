@@ -1,8 +1,9 @@
 // /enter [tournamentId]
 //
 // Two entry points:
-//   - With an id: free → sessioned execute; paid → budokan.gg deeplink;
-//     gated → budokan.gg deeplink.
+//   - With an id: free → sessioned execute; paid → sessioned execute when the
+//     fee token has an authorized spending limit and the fee fits under it,
+//     else budokan.gg deeplink; gated → budokan.gg deeplink.
 //   - Without an id: show a numbered picker of currently-enterable
 //     tournaments on the user's active chain, let them pick, then run the
 //     same logic with the resolved id.
@@ -13,10 +14,10 @@
 // phase entirely). We don't filter out tournaments the user is already
 // in — the contract handles the "already entered" case if relevant.
 //
-// Paid entries used to go through a Mini App that wrapped Cartridge's
-// ControllerProvider, but the keychain doesn't reliably authenticate
-// inside Telegram's in-app webview. Route paid txes to budokan.gg
-// instead — same tournament, same fee, Cartridge runs in a real browser.
+// Paid entries: /connect authorizes per-token spending limits (policies.ts +
+// catalog/tokens.ts), so the bot can approve the exact fee + enter in one
+// in-session multicall. Fees above the cap, or in tokens we didn't pre-approve,
+// fall back to budokan.gg — Cartridge runs in a real browser there.
 
 import { CHAINS, createBudokanClient, type Tournament } from "@provable-games/budokan-sdk";
 
@@ -25,7 +26,7 @@ import type { Chain } from "../chat-state.ts";
 import type { HandshakeStore } from "../handshake.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
-import { buildEnterTournamentCall } from "@provable-games/budokan-sdk";
+import { buildEnterTournamentCall, buildErc20ApproveCall } from "@provable-games/budokan-sdk";
 import { gamesForChain } from "../catalog/games.ts";
 import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
@@ -233,32 +234,56 @@ async function execute(
     return;
   }
 
-  // Paid entry — route to budokan.gg in the user's external browser.
-  //
-  // We used to push approve + enter_tournament through a Mini App that
-  // wrapped Cartridge's ControllerProvider, but Telegram's in-app webview
-  // doesn't reliably yield a connected Cartridge account (the keychain
-  // iframe trips on third-party storage / popup restrictions). Cartridge
-  // ships a TelegramProvider designed for this case but, as of
-  // @cartridge/controller@0.10.7, only its .d.ts is bundled — no JS — so
-  // we can't import it.
-  //
-  // budokan.gg handles the entry flow correctly in a real browser and is
-  // the canonical place to do this anyway. Keep the call summary in chat
-  // so the user can verify what they'll be asked to sign.
+  // Paid entry.
   const token = findKnownToken(chain, fee.token);
   const feeDisplay = token
     ? `${formatTokenAmount(fee.amount, token.decimals)} ${token.symbol}`
     : `${fee.amount} of ${shortAddr(fee.token)}`;
+
+  // In-session path: if the fee token carries an authorized spending limit and
+  // the fee fits under it, approve the exact fee + enter in one multicall — no
+  // browser round-trip. The session was authorized for `approve` on this token
+  // at /connect with a per-token cap (see policies.ts).
+  if (token?.spendLimit && BigInt(fee.amount) <= BigInt(token.spendLimit)) {
+    await api.sendMessage(chatId, `⏳ Entering #${tournamentId} — paying ${feeDisplay}…`);
+    try {
+      const approveCall = buildErc20ApproveCall(fee.token, budokanAddress, fee.amount);
+      const tx = await session.data.account.execute([approveCall, enterCall]);
+      await api.sendMessage(
+        chatId,
+        [
+          `✅ Entered tournament #${tournamentId} (paid ${feeDisplay})`,
+          `🔗 ${explorerTxUrl(chain, tx.transaction_hash)}`,
+          "",
+          `📊 /leaderboard ${tournamentId}`,
+        ].join("\n"),
+      );
+    } catch (error) {
+      // Spending limit exhausted, session expired, or (older session) no approve
+      // policy — fall back to budokan.gg.
+      await api.sendMessage(
+        chatId,
+        [
+          `Couldn't complete the in-chat entry: ${formatError(error)}`,
+          "",
+          "Finish it on budokan.gg instead:",
+          `🔗 ${tournamentPageUrl(chain, tournamentId)}`,
+        ].join("\n"),
+      );
+    }
+    return;
+  }
+
+  // Unknown token, or a fee above the per-token session limit — sign on budokan.gg.
   await api.sendMessage(
     chatId,
     [
       `🎯 Tournament #${tournamentId} — ${tournament.name || "(unnamed)"}`,
       `💰 Entry fee: ${feeDisplay}`,
       "",
-      "Paid entries are signed on budokan.gg — Cartridge's keychain doesn't",
-      "run reliably inside Telegram's in-app browser. Open the link below in",
-      "your normal browser to approve and enter:",
+      token
+        ? `This fee is above your in-chat ${token.symbol} spending limit — sign it on budokan.gg:`
+        : "This fee token isn't pre-authorized for in-chat signing — sign it on budokan.gg:",
       "",
       `🔗 ${tournamentPageUrl(chain, tournamentId)}`,
     ].join("\n"),

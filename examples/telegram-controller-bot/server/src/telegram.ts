@@ -335,7 +335,7 @@ export class TelegramBot {
         "",
         "Signed actions (require /connect first):",
         "  /create — multi-turn flow to create a tournament",
-        "  /enter [tournamentId] — enter a tournament (no id → picker; paid → budokan.gg link)",
+        "  /enter [tournamentId] — enter a tournament (no id → picker; paid entries use your session spending limit, or fall back to a budokan.gg link)",
         "  /submit_score <tournamentId> <tokenId> <position>",
         "  /claim <tournamentId> — claim everything your wallet is owed (or add a kind for one reward:",
         "    prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>)",

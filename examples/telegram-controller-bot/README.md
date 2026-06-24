@@ -18,7 +18,7 @@ All on-chain encoding and reward resolution go through `@provable-games/budokan-
 
 The dependency-free read-only example at `examples/telegram-tournament-bot.mjs` remains the simpler reference.
 
-> **Signing:** free `/enter` executes server-side via your Cartridge session. Paid `/enter` and `/add_prize` deeplink to budokan.gg to sign — Cartridge's keychain doesn't run reliably inside Telegram's in-app browser, so there's no in-Telegram per-tx flow.
+> **Signing:** `/connect` authorizes a Cartridge session that includes per-token **spending limits** for the common entry-fee tokens (ETH, STRK, USDC, …). With those, **paid `/enter` runs entirely in Telegram** — the bot approves the exact fee and enters in one multicall, no browser round-trip. Fees above your limit, unrecognized fee tokens, and `/add_prize` deeplink to budokan.gg to sign. Limits are per-token caps you see and approve in the keychain (tune them in `server/src/catalog/tokens.ts`).
 
 ## Layout
 

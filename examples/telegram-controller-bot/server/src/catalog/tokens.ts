@@ -15,13 +15,24 @@ export interface Erc20Token {
   symbol: string;
   name: string;
   decimals: number;
-}
+  /**
+   * Per-token session spending cap, in base units (decimal string). Authorized
+   * once at /connect as a Cartridge spending limit so paid /enter can run
+   * in-session without a per-tx popup. The keychain shows the user this cap and
+   * enforces it cumulatively across the session; the bot only ever approves the
+   * exact entry fee, so a normal user stays well under it. Tune to taste.
+   * Optional: tokens without it (ad-hoc prize tokens) aren't eligible for
+   * in-session paid entry.
+   */
+  spendLimit?: string;
+};
 
 const STRK: Erc20Token = {
   address: "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
   symbol: "STRK",
   name: "Starknet Token",
   decimals: 18,
+  spendLimit: "10000000000000000000000", // 10,000 STRK
 };
 
 const ETH: Erc20Token = {
@@ -29,6 +40,7 @@ const ETH: Erc20Token = {
   symbol: "ETH",
   name: "Ether",
   decimals: 18,
+  spendLimit: "1000000000000000000", // 1 ETH
 };
 
 const USDC: Erc20Token = {
@@ -36,6 +48,7 @@ const USDC: Erc20Token = {
   symbol: "USDC",
   name: "USD Coin",
   decimals: 6,
+  spendLimit: "5000000000", // 5,000 USDC
 };
 
 const USDT: Erc20Token = {
@@ -43,6 +56,7 @@ const USDT: Erc20Token = {
   symbol: "USDT",
   name: "Tether",
   decimals: 6,
+  spendLimit: "5000000000", // 5,000 USDT
 };
 
 const LORDS: Erc20Token = {
@@ -50,6 +64,7 @@ const LORDS: Erc20Token = {
   symbol: "LORDS",
   name: "Lords",
   decimals: 18,
+  spendLimit: "50000000000000000000000", // 50,000 LORDS
 };
 
 const DAI: Erc20Token = {
@@ -57,6 +72,7 @@ const DAI: Erc20Token = {
   symbol: "DAI",
   name: "Dai Stablecoin",
   decimals: 18,
+  spendLimit: "5000000000000000000000", // 5,000 DAI
 };
 
 const MAINNET_TOKENS: readonly Erc20Token[] = [STRK, ETH, USDC, LORDS, USDT, DAI];
