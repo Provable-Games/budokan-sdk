@@ -23,6 +23,7 @@ import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
 import * as listCmds from "./commands/list.ts";
 import { claimAll } from "./commands/claim.ts";
+import { distribute } from "./commands/distribute.ts";
 import * as leaderboardCmd from "./commands/leaderboard.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 import { formatError } from "./format-error.ts";
@@ -159,6 +160,10 @@ export class TelegramBot {
         return this.submitScore(chatId, args);
       case "/claim":
         return this.claim(chatId, args);
+      case "/distribute": {
+        const chain = await this.chatStates.getChain(chatId);
+        return distribute(this.api, this.config, chatId, chain, args);
+      }
       case "/enter": {
         const chain = await this.chatStates.getChain(chatId);
         return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, args);
@@ -332,8 +337,9 @@ export class TelegramBot {
         "  /create — multi-turn flow to create a tournament",
         "  /enter [tournamentId] — enter a tournament (no id → picker; paid → budokan.gg link)",
         "  /submit_score <tournamentId> <tokenId> <position>",
-        "  /claim <tournamentId> <kind> [args]",
-        "    kinds: prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
+        "  /claim <tournamentId> — claim everything your wallet is owed (or add a kind for one reward:",
+        "    prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>)",
+        "  /distribute <tournamentId> — claim every unclaimed reward in the pool (permissionless)",
         "  /add_prize [tournamentId] — sponsor a prize (no id → picker; signs on budokan.gg)",
         "  /cancel — abort an in-flight multi-turn flow",
         "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
