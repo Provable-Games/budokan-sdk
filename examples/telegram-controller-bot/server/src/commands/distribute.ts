@@ -26,10 +26,9 @@ import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
+import { executeBatched, DEFAULT_BATCH_SIZE } from "../execute-batched.ts";
 import { formatError } from "../format-error.ts";
 import { explorerTxUrl } from "../links.ts";
-
-const BATCH_SIZE = 25;
 
 export async function distribute(
   api: TelegramApi,
@@ -93,36 +92,24 @@ export async function distribute(
   }
 
   const calls = buildClaimCalls(rewards, budokanAddress);
-  const batches = chunk(calls, BATCH_SIZE);
   const noun = rewards.length === 1 ? "reward" : "rewards";
   await api.sendMessage(
     chatId,
     `Distributing ${rewards.length} ${noun} for #${tournamentId}` +
-      (batches.length > 1 ? ` in ${batches.length} batches…` : "…"),
+      (calls.length > DEFAULT_BATCH_SIZE ? " in batches…" : "…"),
   );
 
-  const account = session.data.account;
-  const hashes: string[] = [];
-  let done = 0;
-  for (const [i, batch] of batches.entries()) {
-    try {
-      const tx = await account.execute(batch);
-      hashes.push(tx.transaction_hash);
-      done += batch.length;
-      // Wait for acceptance before the next batch so the nonce doesn't race.
-      if (account.waitForTransaction && i < batches.length - 1) {
-        await account.waitForTransaction(tx.transaction_hash);
-      }
-      if (batches.length > 1) {
-        await api.sendMessage(chatId, `Batch ${i + 1}/${batches.length} ✓ (${done}/${rewards.length})`);
-      }
-    } catch (error) {
-      await api.sendMessage(
-        chatId,
-        `❌ Stopped after ${done}/${rewards.length}: ${formatError(error)}`,
-      );
-      return;
-    }
+  const { hashes, done, error } = await executeBatched(
+    session.data.account,
+    calls,
+    DEFAULT_BATCH_SIZE,
+    (p) => {
+      if (p.total > 1) api.sendMessage(chatId, `Batch ${p.index}/${p.total} ✓ (${p.done}/${rewards.length})`);
+    },
+  );
+  if (error) {
+    await api.sendMessage(chatId, `❌ Stopped after ${done}/${rewards.length}: ${formatError(error)}`);
+    return;
   }
 
   await api.sendMessage(
@@ -132,12 +119,6 @@ export async function distribute(
       ...hashes.map((h) => `🔗 ${explorerTxUrl(chain, h)}`),
     ].join("\n"),
   );
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
 }
 
 function sdkClient(config: Config, chain: Chain) {

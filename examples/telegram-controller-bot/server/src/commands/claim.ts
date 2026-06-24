@@ -29,6 +29,7 @@ import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
+import { executeBatched, DEFAULT_BATCH_SIZE } from "../execute-batched.ts";
 import { formatError } from "../format-error.ts";
 import { explorerTxUrl } from "../links.ts";
 
@@ -118,21 +119,35 @@ export async function claimAll(
     return;
   }
 
+  // Batched like /distribute: a wallet with many rewards can otherwise exceed
+  // the per-tx call limit / paymaster bounds.
   const calls = buildClaimCalls(rewards, budokanAddress);
   const noun = rewards.length === 1 ? "reward" : "rewards";
-  await api.sendMessage(chatId, `Claiming ${rewards.length} ${noun} for #${tournamentId}…`);
-  try {
-    const tx = await session.data.account.execute(calls);
-    await api.sendMessage(
-      chatId,
-      [
-        `✅ Claimed ${rewards.length} ${noun} for #${tournamentId}`,
-        `🔗 ${explorerTxUrl(chain, tx.transaction_hash)}`,
-      ].join("\n"),
-    );
-  } catch (error) {
-    await api.sendMessage(chatId, `❌ Claim failed: ${formatError(error)}`);
+  await api.sendMessage(
+    chatId,
+    `Claiming ${rewards.length} ${noun} for #${tournamentId}` +
+      (calls.length > DEFAULT_BATCH_SIZE ? " in batches…" : "…"),
+  );
+
+  const { hashes, done, error } = await executeBatched(
+    session.data.account,
+    calls,
+    DEFAULT_BATCH_SIZE,
+    (p) => {
+      if (p.total > 1) api.sendMessage(chatId, `Batch ${p.index}/${p.total} ✓ (${p.done}/${rewards.length})`);
+    },
+  );
+  if (error) {
+    await api.sendMessage(chatId, `❌ Stopped after ${done}/${rewards.length}: ${formatError(error)}`);
+    return;
   }
+  await api.sendMessage(
+    chatId,
+    [
+      `✅ Claimed ${rewards.length} ${noun} for #${tournamentId}`,
+      ...hashes.map((h) => `🔗 ${explorerTxUrl(chain, h)}`),
+    ].join("\n"),
+  );
 }
 
 // Token ids arrive as hex (viewer) or decimal (denshokan); compare by value.

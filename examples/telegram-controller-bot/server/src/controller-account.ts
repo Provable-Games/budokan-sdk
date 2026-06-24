@@ -34,8 +34,8 @@ export interface ExecutingAccount {
     calls: { contractAddress: string; entrypoint: string; calldata: string[] }[],
   ): Promise<{ transaction_hash: string }>;
   // Present on the underlying WalletAccount; used to sequence multi-tx flows
-  // (e.g. /distribute batches) so a later execute doesn't race the nonce.
-  waitForTransaction?(txHash: string): Promise<unknown>;
+  // (claim/distribute batches) so a later execute doesn't race the nonce.
+  waitForTransaction(txHash: string): Promise<unknown>;
 }
 
 export interface AccountResolution {
