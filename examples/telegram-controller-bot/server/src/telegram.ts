@@ -17,7 +17,7 @@ import {
   buildClaimRewardCall,
   buildSubmitScoreCall,
   type RewardType,
-} from "./budokan-calls.ts";
+} from "@provable-games/budokan-sdk";
 import * as create from "./commands/create.ts";
 import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
