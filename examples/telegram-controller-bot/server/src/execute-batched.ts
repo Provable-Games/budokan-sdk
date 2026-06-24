@@ -51,17 +51,18 @@ export async function executeBatched(
   const hashes: string[] = [];
   let done = 0;
   for (let i = 0; i < batches.length; i++) {
-    let tx: { transaction_hash: string };
     try {
-      tx = await account.execute(batches[i]!);
+      const tx = await account.execute(batches[i]!);
+      hashes.push(tx.transaction_hash); // record the submitted hash up front
+      // Wait for acceptance before the next batch so the nonce doesn't race —
+      // a wait failure (revert/timeout) is a batch failure too, so it's inside
+      // the try and `done` is only credited once acceptance succeeds.
+      if (i < batches.length - 1) {
+        await account.waitForTransaction(tx.transaction_hash);
+      }
+      done += batches[i]!.length;
     } catch (error) {
       return { hashes, done, error };
-    }
-    hashes.push(tx.transaction_hash);
-    done += batches[i]!.length;
-    // Wait for acceptance before the next batch so the nonce doesn't race.
-    if (i < batches.length - 1) {
-      await account.waitForTransaction(tx.transaction_hash);
     }
     if (onProgress) await onProgress({ index: i + 1, total: batches.length, done });
   }

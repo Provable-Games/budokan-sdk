@@ -71,6 +71,13 @@ export async function claimAll(
     return;
   }
 
+  // denshokan's contextId is a JS number; reject ids that would lose precision
+  // (u64 ids are small in practice, so this is just a guard).
+  if (!Number.isSafeInteger(Number(tournamentId))) {
+    await api.sendMessage(chatId, `Tournament #${tournamentId} id is out of range for an in-chat lookup.`);
+    return;
+  }
+
   // Which of this tournament's entered tokens does the connected wallet own?
   const denshokan = createDenshokanClient({ chain });
   let tokens: Token[];
@@ -109,6 +116,36 @@ export async function claimAll(
     prizes,
     existingClaims: claims,
   });
+
+  // getClaimableRewards is placement-scoped and excludes per-token entry-fee
+  // refunds. Add the wallet's own unclaimed refunds (each owned token gets
+  // refundShare% of one entry fee back) so a bare /claim doesn't miss them.
+  const ef = tournament.entryFee;
+  const refundBps = Number(ef?.refundShare ?? 0);
+  if (ef?.tokenAddress && refundBps > 0) {
+    const perToken = (BigInt(ef.amount ?? "0") * BigInt(refundBps)) / 10000n;
+    if (perToken > 0n) {
+      const claimedRefunds = new Set(
+        claims
+          .filter((c) => c.claimed && c.claimKind === "entry_fee_refund" && c.refundTokenId != null)
+          .map((c) => idKey(c.refundTokenId!)),
+      );
+      for (const tokenId of myTokenIds) {
+        if (claimedRefunds.has(tokenId)) continue;
+        rewards.push({
+          tournamentId,
+          tournamentName: tournament.name || `#${tournamentId}`,
+          source: "entry_fee_refund",
+          position: 0,
+          tokenAddress: ef.tokenAddress,
+          tokenType: "erc20",
+          amount: perToken,
+          tokenId,
+          reward: { kind: "entry_fee_refund", tokenId },
+        });
+      }
+    }
+  }
 
   if (rewards.length === 0) {
     await api.sendMessage(

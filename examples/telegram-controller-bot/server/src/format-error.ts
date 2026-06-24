@@ -11,14 +11,30 @@
 const SENSITIVE_KEY = /priv|secret|seed|mnemonic|password|passwd|signer|session|authorization|cookie|bearer|api[-_]?key|access[-_]?token/i;
 
 export function formatError(error: unknown): string {
-  // Always log first so the server has context regardless of what we return
-  // to the user — but redacted, never the raw object.
+  // Log (redacted) for the server, and redact the returned string too — an
+  // error *message* can embed an auth URL / token that the object-key
+  // redaction in `replacer` wouldn't catch.
   try {
-    console.error("formatError:", shortObject(error, 2000));
+    console.error("formatError:", redactString(shortObject(error, 2000)));
   } catch {
     // Some error objects throw on toString — ignore.
   }
+  return redactString(buildMessage(error));
+}
 
+// Free-text redaction: scrub secret-looking substrings (sensitive URL query
+// params, bearer tokens) before a message is logged or sent to chat. Leaves
+// revert reasons intact ("Budokan: …" + decoded hex).
+function redactString(s: string): string {
+  return s
+    .replace(
+      /([?&](?:startapp|code|token|access_token|authorization|api[-_]?key|key|secret|signature|sig)=)[^&\s"']+/gi,
+      "$1[redacted]",
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]");
+}
+
+function buildMessage(error: unknown): string {
   if (error === null || error === undefined) return String(error);
   if (typeof error === "string") return error;
   if (typeof error === "number" || typeof error === "boolean") return String(error);
