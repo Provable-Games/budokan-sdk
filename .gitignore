@@ -1,2 +1,5 @@
 node_modules/
 dist/
+.telegram-tournament-bot-registrations.json
+.telegram-tournament-bot-registrations.json.tmp
+.env
