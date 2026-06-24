@@ -65,6 +65,14 @@ export interface Tournament {
   entryFeeExtension: { address: string; config: string[] } | null;
   entryRequirement: EntryRequirement | null;
   leaderboardConfig: LeaderboardConfig | null;
+  /**
+   * Lifecycle phase derived from the schedule + on-chain creation time.
+   * Populated by `getTournament`/`getTournaments` (computed at read time via
+   * `tournamentPhase`); `null` when the creation time is unknown. Because it's
+   * time-derived, treat it as a snapshot for the moment it was read — call
+   * `tournamentPhase(t)` to re-evaluate later.
+   */
+  phase: Phase | null;
   // Counts
   entryCount: number;
   prizeCount: number;

@@ -8,6 +8,7 @@ import type { Prize } from "../types/prize.js";
 import type { PaginatedResult } from "../types/common.js";
 import type { Phase } from "../types/tournament.js";
 import { RpcError } from "../errors/index.js";
+import { tournamentPhase } from "../phase/index.js";
 import { num } from "starknet";
 
 // =========================================================================
@@ -250,6 +251,14 @@ function parseTournament(
     entryFeeExtension,
     entryRequirement,
     leaderboardConfig: { ascending, gameMustBeOver },
+    phase: tournamentPhase({
+      createdAtOnchain: createdAtStr,
+      registrationStartDelay,
+      registrationEndDelay,
+      gameStartDelay,
+      gameEndDelay,
+      submissionDuration,
+    }),
     entryCount,
     prizeCount: 0, // Not available from viewer
     submissionCount: 0, // Not available from viewer
