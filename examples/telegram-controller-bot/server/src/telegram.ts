@@ -387,11 +387,21 @@ export class TelegramBot {
       return;
     }
 
-    // Slot-pattern auth: bot mints the session keypair, sends the user to
-    // Cartridge's keychain page, and Cartridge redirects back to a callback
-    // URL on our server with the auth result encoded as ?startapp=<base64>.
-    // Mirrors cartridge-gg/slot's CLI login flow — see cartridge-link.ts.
-    const signer = generateSessionKeypair();
+    // Slot-pattern auth: bot mints (or reuses) the session keypair, sends the
+    // user to Cartridge's keychain page, and Cartridge redirects back to a
+    // callback URL on our server with the auth result encoded as
+    // ?startapp=<base64>. Mirrors cartridge-gg/slot's CLI login flow — see
+    // cartridge-link.ts.
+    //
+    // Reuse the persisted keypair when we have one: if Cartridge already has
+    // this key registered for the current policies and it hasn't expired, the
+    // keychain returns the existing session and skips the on-chain
+    // register_session step — so re-/connect costs no gas.
+    let signer = await this.sessions.getSigner(chatId, chain);
+    if (!signer) {
+      signer = generateSessionKeypair();
+      await this.sessions.setSigner(chatId, chain, signer);
+    }
     const handshake = this.handshakes.mint(chatId, "connect", chain, { signer });
 
     const callbackUrl = `${this.config.botPublicUrl}/api/connect/${handshake.token}/callback`;

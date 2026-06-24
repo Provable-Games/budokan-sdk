@@ -29,6 +29,17 @@ export interface SessionInfo {
   transactionHash?: string;
 }
 
+// The reusable session keypair for a chat+chain. Persisted SEPARATELY from the
+// session and kept across /disconnect: as long as Cartridge has this key
+// registered on-chain for the current policies and it hasn't expired, a
+// re-/connect reuses that registration and skips the (gas-costing)
+// register_session step. Regenerated only when none exists.
+export interface StoredSigner {
+  privKey: string;
+  pubKey: string;
+  sessionKeyGuid: string;
+}
+
 export interface StoredSession {
   signer: SessionSigner;
   session: SessionInfo;
@@ -84,6 +95,34 @@ export class SessionStore {
     const tmp = `${file}.tmp`;
     await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
     await rename(tmp, file);
+  }
+
+  // ---- Reusable session keypair (separate from the session) ----
+
+  async getSigner(chatId: string, chain: Chain): Promise<StoredSigner | null> {
+    const file = this.signerFileFor(chatId, chain);
+    if (!existsSync(file)) return null;
+    try {
+      const parsed = JSON.parse(await readFile(file, "utf8")) as StoredSigner;
+      if (!parsed?.privKey || !parsed?.pubKey || !parsed?.sessionKeyGuid) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  async setSigner(chatId: string, chain: Chain, signer: StoredSigner): Promise<void> {
+    const file = this.signerFileFor(chatId, chain);
+    // Holds a private key — same 0600/0700 treatment as the session file.
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.tmp`;
+    await writeFile(tmp, `${JSON.stringify(signer)}\n`, { mode: 0o600 });
+    await rename(tmp, file);
+  }
+
+  async deleteSigner(chatId: string, chain: Chain): Promise<void> {
+    const file = this.signerFileFor(chatId, chain);
+    if (existsSync(file)) await unlink(file).catch(() => {});
   }
 
   async delete(chatId: string, chain: Chain): Promise<void> {
@@ -172,5 +211,12 @@ export class SessionStore {
       throw new Error(`Invalid chatId for session storage: ${chatId}`);
     }
     return join(this.rootDir, "sessions", chain, chatId, "session.json");
+  }
+
+  private signerFileFor(chatId: string, chain: Chain): string {
+    if (!/^-?\d+$/.test(chatId)) {
+      throw new Error(`Invalid chatId for session storage: ${chatId}`);
+    }
+    return join(this.rootDir, "sessions", chain, chatId, "signer.json");
   }
 }
