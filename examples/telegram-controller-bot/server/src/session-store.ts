@@ -76,9 +76,13 @@ export class SessionStore {
 
   async set(chatId: string, data: StoredSession): Promise<void> {
     const file = this.fileFor(chatId, data.chain);
-    await mkdir(dirname(file), { recursive: true });
+    // The session file holds the session signer's private key. Restrict it to
+    // the owner (0600 file, 0700 dirs) so a shared host / loose volume perms
+    // don't expose it. (Not a substitute for encryption / a secret store, but
+    // the right floor for a reference bot.)
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
     const tmp = `${file}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`);
+    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
     await rename(tmp, file);
   }
 

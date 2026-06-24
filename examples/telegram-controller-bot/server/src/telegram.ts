@@ -505,12 +505,13 @@ function parseRewardType(kind: string, rest: string[]): RewardType | null {
     case "dist": {
       const [id, pos] = rest;
       if (!id || !/^\d+$/.test(id)) return null;
-      if (!pos || !/^\d+$/.test(pos)) return null;
+      // Payout positions are 1-indexed; 0 would always revert on-chain.
+      if (!pos || !/^\d+$/.test(pos) || Number(pos) < 1) return null;
       return { kind: "prize_distributed", prizeId: id, payoutPosition: Number(pos) };
     }
     case "position": {
       const [n] = rest;
-      if (!n || !/^\d+$/.test(n)) return null;
+      if (!n || !/^\d+$/.test(n) || Number(n) < 1) return null;
       return { kind: "entry_fee_position", position: Number(n) };
     }
     case "tournament_creator":

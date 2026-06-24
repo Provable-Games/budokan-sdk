@@ -247,7 +247,11 @@ async function execute(
   if (token?.spendLimit && BigInt(fee.amount) <= BigInt(token.spendLimit)) {
     await api.sendMessage(chatId, `⏳ Entering #${tournamentId} — paying ${feeDisplay}…`);
     try {
-      const approveCall = buildErc20ApproveCall(fee.token, budokanAddress, fee.amount);
+      // Approve against the catalog's canonical token address (padded), which
+      // is what the session spending-limit policy is keyed on — `fee.token`
+      // comes from the indexer with leading zeros stripped, so using it could
+      // miss the policy match.
+      const approveCall = buildErc20ApproveCall(token.address, budokanAddress, fee.amount);
       const tx = await session.data.account.execute([approveCall, enterCall]);
       await api.sendMessage(
         chatId,

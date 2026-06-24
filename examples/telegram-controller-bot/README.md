@@ -12,7 +12,7 @@ A Telegram bot that lets users create, enter, and claim Budokan tournaments enti
 - Manage: `/create`, `/add_prize`
 - Play: `/enter`, `/submit_score`
 - Settle: `/claim` (auto or by reward kind), `/distribute`
-- Browse: `/tournaments`, `/my_tournaments`, `/leaderboard`, `/prizes`, `/chain`
+- Browse: `/tournaments`, `/my_tournaments`, `/leaderboard`, `/chain`
 
 All on-chain encoding and reward resolution go through `@provable-games/budokan-sdk` — the example does not re-implement calldata.
 

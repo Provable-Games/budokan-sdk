@@ -32,6 +32,11 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
         ? { target: "pino-pretty", options: { translateTime: "HH:MM:ss" } }
         : undefined,
     },
+    // The /connect callback carries the connect token in the path and the
+    // session registration in `?startapp=`. Fastify's automatic per-request
+    // logging would write those URLs to stdout/Railway logs — disable it so
+    // auth material never lands in logs. We still log explicitly via app.log.
+    disableRequestLogging: true,
   });
 
   app.get("/healthz", async () => ({ ok: true, chain: config.chain }));

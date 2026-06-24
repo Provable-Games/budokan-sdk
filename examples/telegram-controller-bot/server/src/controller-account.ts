@@ -15,6 +15,8 @@
 //   }
 
 import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { constants } from "starknet";
 import SessionProvider from "@cartridge/controller/session/node";
 
@@ -83,13 +85,32 @@ export async function resolveAccount(chatId: string, chain: Chain, config: Confi
     basePath,
   });
 
+  // probe() returns undefined for all of: no session file, time-expired, and
+  // policy-mismatch (the persisted session was authorized for a narrower policy
+  // bundle than we now require — e.g. after a new entry-fee token was added to
+  // the spending-limit policies). Disambiguate so the user gets the right nudge.
+  const sessionFile = join(basePath, "session.json");
+  if (!existsSync(sessionFile)) {
+    return { ok: false, reason: "no_session" };
+  }
+
   const account = await provider.probe();
   if (!account) {
-    // probe returns undefined for both no-file and expired/policy-mismatch
-    // cases. We can't distinguish from probe alone; SessionStore handles the
-    // file-existence check upstream. If it returns undefined here it means
-    // the file existed but the session is no longer usable.
-    return { ok: false, reason: "expired" };
+    // The file exists. If it's still valid in time, the failure is a policy
+    // mismatch (re-/connect to widen consent); otherwise it's expired.
+    let reason: "expired" | "policy_mismatch" = "expired";
+    try {
+      const parsed = JSON.parse(await readFile(sessionFile, "utf8")) as {
+        session?: { expiresAt?: string };
+      };
+      const expiresAt = Number(parsed?.session?.expiresAt);
+      if (Number.isFinite(expiresAt) && Date.now() < expiresAt * 1000) {
+        reason = "policy_mismatch";
+      }
+    } catch {
+      // Unreadable/corrupt file — treat as expired.
+    }
+    return { ok: false, reason };
   }
 
   // SessionProvider stashes username on itself after probe(). It's not on the

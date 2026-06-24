@@ -22,7 +22,6 @@ import type { Chain } from "../chat-state.ts";
 import type { TelegramApi } from "../telegram-api.ts";
 import {
   buildCreateTournamentCall,
-  buildErc20ApproveCall,
   type Call,
   type CreateTournamentArgs,
   type DistributionSpec,
@@ -2001,13 +2000,6 @@ function parsePercent(s: string): number | null {
   const n = Number(t);
   if (!Number.isFinite(n) || n < 0 || n > 100) return null;
   return n;
-}
-
-function parseYesNo(s: string): boolean | null {
-  const t = s.trim().toLowerCase();
-  if (["y", "yes", "true"].includes(t)) return true;
-  if (["n", "no", "false"].includes(t)) return false;
-  return null;
 }
 
 // Parse a decimal token amount into raw u256 (string of decimal digits). Returns

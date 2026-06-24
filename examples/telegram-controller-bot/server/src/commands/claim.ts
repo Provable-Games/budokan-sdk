@@ -29,6 +29,7 @@ import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
+import { fetchAllRewardClaims } from "../reward-claims.ts";
 import { executeBatched, DEFAULT_BATCH_SIZE } from "../execute-batched.ts";
 import { formatError } from "../format-error.ts";
 import { explorerTxUrl } from "@provable-games/budokan-sdk";
@@ -59,7 +60,7 @@ export async function claimAll(
       client.getTournament(tournamentId),
       client.getTournamentPrizes(tournamentId),
       client.getTournamentLeaderboard(tournamentId),
-      client.getTournamentRewardClaims(tournamentId, { limit: 1000 }),
+      fetchAllRewardClaims(client, tournamentId),
     ]);
   } catch (error) {
     await api.sendMessage(chatId, `Couldn't load tournament data: ${formatError(error)}`);
@@ -106,7 +107,7 @@ export async function claimAll(
     placements,
     tournaments: [tournament],
     prizes,
-    existingClaims: claims.data,
+    existingClaims: claims,
   });
 
   if (rewards.length === 0) {
