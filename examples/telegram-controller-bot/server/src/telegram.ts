@@ -17,11 +17,12 @@ import {
   buildClaimRewardCall,
   buildSubmitScoreCall,
   type RewardType,
-} from "./budokan-calls.ts";
+} from "@provable-games/budokan-sdk";
 import * as create from "./commands/create.ts";
 import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
 import * as listCmds from "./commands/list.ts";
+import { claimAll } from "./commands/claim.ts";
 import * as leaderboardCmd from "./commands/leaderboard.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 import { formatError } from "./format-error.ts";
@@ -258,7 +259,7 @@ export class TelegramBot {
   //   /claim 42 game_creator             → RewardType::EntryFee(EntryFeeRewardType::GameCreator)
   //   /claim 42 refund 0xTOKEN           → RewardType::EntryFee(EntryFeeRewardType::Refund(token))
   private async claim(chatId: string, args: string[]): Promise<void> {
-    if (args.length < 2) {
+    if (args.length === 0) {
       await this.api.sendMessage(chatId, claimUsage());
       return;
     }
@@ -267,13 +268,22 @@ export class TelegramBot {
       await this.api.sendMessage(chatId, "tournamentId must be a positive integer.");
       return;
     }
+
+    const chain = await this.chatStates.getChain(chatId);
+
+    // Bare id → claim everything the connected wallet can (auto-resolves the
+    // wallet's placements). An explicit reward kind keeps the low-level path.
+    if (args.length === 1) {
+      await claimAll(this.api, this.config, chatId, chain, tournamentIdRaw!);
+      return;
+    }
+
     const reward = parseRewardType(kindRaw!.toLowerCase(), rest);
     if (!reward) {
       await this.api.sendMessage(chatId, claimUsage());
       return;
     }
 
-    const chain = await this.chatStates.getChain(chatId);
     const result = await resolveAccount(chatId, chain, this.config);
     if (!result.ok) {
       await this.api.sendMessage(chatId, sessionErrorMessage(result.reason, chain));
@@ -471,7 +481,9 @@ function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch
 
 function claimUsage(): string {
   return [
-    "Usage: /claim <tournamentId> <kind> [args]",
+    "Usage: /claim <tournamentId>          — claim everything your wallet is owed",
+    "",
+    "Or name a specific reward — /claim <tournamentId> <kind> [args]:",
     "  /claim 42 prize 7                 — single sponsored prize id 7",
     "  /claim 42 dist 7 2                — distributed prize 7, payout position 2",
     "  /claim 42 position 1              — entry-fee share for placement 1",

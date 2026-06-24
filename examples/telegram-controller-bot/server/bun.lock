@@ -8,7 +8,7 @@
         "@cartridge/controller": "^0.10.7",
         "@cartridge/controller-wasm": "^0.10.1",
         "@fastify/cors": "^10.0.0",
-        "@provable-games/budokan-sdk": "^0.1.23",
+        "@provable-games/budokan-sdk": "^0.1.27",
         "@provable-games/denshokan-sdk": "^0.1.33",
         "@provable-games/metagame-sdk": "^0.1.12",
         "fastify": "^5.0.0",
@@ -179,7 +179,7 @@
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
-    "@provable-games/budokan-sdk": ["@provable-games/budokan-sdk@0.1.23", "", { "dependencies": { "@provable-games/metagame-sdk": "^0.1.3" }, "peerDependencies": { "@provable-games/denshokan-sdk": ">=0.1.33", "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-0AmvzGZAzrtGxySRc0cv9knpW6eCTVv1BYwJFgwFJMB1mREXuSDLxz39G70RUcIa71R0FRAd8qdUP+TS+IG0fQ=="],
+    "@provable-games/budokan-sdk": ["@provable-games/budokan-sdk@0.1.27", "", { "dependencies": { "@provable-games/metagame-sdk": "0.1.13" }, "peerDependencies": { "@provable-games/denshokan-sdk": ">=0.1.33", "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-gm5Wjl47qSvrG/RMvSf3l7bfnL6q/U5wpeTotk/upJ4p7GQlL8B0zwakfrRsPSCXn907Gjh6D/ne6ALsYSzstw=="],
 
     "@provable-games/denshokan-sdk": ["@provable-games/denshokan-sdk@0.1.33", "", { "dependencies": { "@rollup/rollup-linux-arm64-gnu": "^4.59.0" }, "peerDependencies": { "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-Ld9nFE58LGSlyQYBWPlk7gDZd/qmyo0SJa9hP4A26Oxr44Njo2XkzeTTb+EafX83eYqoSWy4WyQZyCzIyEFEwA=="],
 
@@ -864,6 +864,8 @@
     "@ericnordelo/strk-merkle-tree/starknet": ["starknet@6.24.1", "", { "dependencies": { "@noble/curves": "1.7.0", "@noble/hashes": "1.6.0", "@scure/base": "1.2.1", "@scure/starknet": "1.1.0", "abi-wan-kanabi": "^2.2.3", "fetch-cookie": "~3.0.0", "isomorphic-fetch": "~3.0.0", "lossless-json": "^4.0.1", "pako": "^2.0.4", "starknet-types-07": "npm:@starknet-io/types-js@^0.7.10", "ts-mixer": "^6.0.3" } }, "sha512-g7tiCt73berhcNi41otlN3T3kxZnIvZhMi8WdC21Y6GC6zoQgbI2z1t7JAZF9c4xZiomlanwVnurcpyfEdyMpg=="],
 
     "@noble/curves/@noble/hashes": ["@noble/hashes@1.6.0", "", {}, "sha512-YUULf0Uk4/mAA89w+k3+yUYh6NrEvxZa5T6SY3wlMvE2chHkxFUUIDI8/XW1QSC357iA5pSnqt7XEhvFOqmDyQ=="],
+
+    "@provable-games/budokan-sdk/@provable-games/metagame-sdk": ["@provable-games/metagame-sdk@0.1.13", "", { "dependencies": { "@ericnordelo/strk-merkle-tree": "^1.0.1", "@rollup/rollup-linux-arm64-gnu": "^4.59.0" }, "peerDependencies": { "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-xXhm/VAuRD8f5h1dX4OUA5Rqy3S83NE8KI7T6Tlbse2O/B0E15fw5HPrtRgU0kbbK9bG5XKEJXhv6Pihtss28Q=="],
 
     "@reown/appkit/@walletconnect/universal-provider": ["@walletconnect/universal-provider@2.23.2", "", { "dependencies": { "@walletconnect/events": "1.0.1", "@walletconnect/jsonrpc-http-connection": "1.0.8", "@walletconnect/jsonrpc-provider": "1.0.14", "@walletconnect/jsonrpc-types": "1.0.4", "@walletconnect/jsonrpc-utils": "1.0.8", "@walletconnect/keyvaluestorage": "1.1.1", "@walletconnect/logger": "3.0.2", "@walletconnect/sign-client": "2.23.2", "@walletconnect/types": "2.23.2", "@walletconnect/utils": "2.23.2", "es-toolkit": "1.39.3", "events": "3.3.0" } }, "sha512-vs9iorPUAiVesFJ95O6XvLjmRgF+B2TspxJNL90ZULbrkRw4JFsmaRdb965PZKc+s182k1MkS/MQ0o964xRcEw=="],
 

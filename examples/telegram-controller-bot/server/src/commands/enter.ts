@@ -25,7 +25,7 @@ import type { Chain } from "../chat-state.ts";
 import type { HandshakeStore } from "../handshake.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
-import { buildEnterTournamentCall } from "../budokan-calls.ts";
+import { buildEnterTournamentCall } from "@provable-games/budokan-sdk";
 import { gamesForChain } from "../catalog/games.ts";
 import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";

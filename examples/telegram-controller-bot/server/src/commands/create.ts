@@ -28,7 +28,7 @@ import {
   type DistributionSpec,
   type EntryFeeArgs,
   type EntryRequirementArgs,
-} from "../budokan-calls.ts";
+} from "@provable-games/budokan-sdk";
 import { resolveAccount } from "../controller-account.ts";
 import { CHAINS } from "@provable-games/budokan-sdk";
 import { RpcProvider } from "starknet";
