@@ -78,10 +78,11 @@ describe("getClaimableRewards", () => {
     expect(bySource.entry_fee_position!.amount).toBeGreaterThan(0n);
 
     // distributed sponsor erc20: 900_000 * 33.33% ≈ 300_000
+    // payout index is 1-indexed = leaderboard position (contract asserts > 0).
     expect(bySource.sponsor_distributed!.reward).toEqual({
       kind: "prize_distributed",
       prizeId: "100",
-      payoutPosition: 0, // position - 1
+      payoutPosition: 1,
     });
     expect(bySource.sponsor_distributed!.amount).toBeGreaterThan(0n);
 
@@ -115,6 +116,30 @@ describe("getClaimableRewards", () => {
     expect(rewards.find((r) => r.source === "entry_fee_position")).toBeUndefined();
     // others still present
     expect(rewards.some((r) => r.source === "sponsor_distributed")).toBe(true);
+  });
+
+  test("excludes a claimed distributed prize keyed by 1-indexed payout index", () => {
+    // Claim record carries payoutIndex === position (1-indexed), as the
+    // contract emits and the indexer decodes it. The placement-side key must
+    // use the same 1-indexed value to dedupe correctly.
+    const claimed: RewardClaim = {
+      tournamentId: "10",
+      claimKind: "prize_distributed",
+      prizeId: "100",
+      payoutIndex: 1, // position 1, NOT 0
+      position: null,
+      refundTokenId: null,
+      extensionTokenId: null,
+      extensionParams: null,
+      claimed: true,
+    };
+    const rewards = getClaimableRewards({
+      placements,
+      tournaments: [tournament],
+      prizes: [distributedPrize, singleNftPrize],
+      existingClaims: [claimed],
+    });
+    expect(rewards.find((r) => r.source === "sponsor_distributed")).toBeUndefined();
   });
 
   test("skips placements with no matching tournament", () => {

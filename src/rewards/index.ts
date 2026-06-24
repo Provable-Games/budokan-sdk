@@ -159,7 +159,12 @@ export function getClaimableRewards(
       }
 
       // Distributed: ERC20 only (the contract only distributes fungibles).
-      const payoutIndex = pos - 1;
+      // The on-chain `payout_index` is 1-indexed and equals the leaderboard
+      // position: `_claim_distributed_prize` asserts `payout_index > 0` and
+      // reads leaderboard slot `payout_index - 1`. The indexer stores the same
+      // 1-indexed value on the claim record (decoder reads it verbatim), so the
+      // claim key matches on `pos`, not `pos - 1`.
+      const payoutIndex = pos;
       const claimKey = `${placement.tournamentId}:Prize.Distributed.${prize.prizeId}.${payoutIndex}`;
       if (claimedKeys.has(claimKey)) continue;
       const amount = sponsorPrizePayout(prize, pos);
