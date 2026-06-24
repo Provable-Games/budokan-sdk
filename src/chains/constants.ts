@@ -11,8 +11,8 @@ export const CHAINS: Record<string, ChainConfig> = {
     rpcUrl: "https://rpc.provable.games/rpc",
     apiBaseUrl: "https://budokan-api-production.up.railway.app",
     wsUrl: "wss://budokan-api-production.up.railway.app/ws",
-    budokanAddress: "0x0596ced030e74ebc37f33607f07ecd5a62eff22cdc4ae31fe2d724040c1bdc0b",
-    viewerAddress: "0x013c8239361fdbd7ec26db2c83f4ff270c5bba83a0bc105b4005b676ff57fdbe",
+    budokanAddress: "0x012eb6054aa269c3e60013693f650650d81952de60072f446406d2a89f0b518e",
+    viewerAddress: "0x0486819bbeca6b5f4a6a4700495beee1de0694a145678da412f64967ae8ed281",
   },
   sepolia: {
     rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
