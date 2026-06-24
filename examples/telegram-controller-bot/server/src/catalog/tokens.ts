@@ -75,7 +75,45 @@ const DAI: Erc20Token = {
   spendLimit: "5000000000000000000000", // 5,000 DAI
 };
 
-const MAINNET_TOKENS: readonly Erc20Token[] = [STRK, ETH, USDC, LORDS, USDT, DAI];
+// Provable / Death Mountain game tokens (mainnet). Addresses sourced from
+// death-mountain-client's networkConfig.ts / greed.ts / opusYieldConfig.ts.
+// All 18-decimal (greed cost_to_play = 10 SURVIVOR = 10e18; one dungeon ticket
+// = 1e18). Caps are generous starting points — tune to taste.
+const SURVIVOR: Erc20Token = {
+  address: "0x042dd777885ad2c116be96d4d634abc90a26a790ffb5871e037dd5ae7d2ec86b",
+  symbol: "SURVIVOR",
+  name: "Survivor",
+  decimals: 18,
+  spendLimit: "10000000000000000000000", // 10,000 SURVIVOR
+};
+
+const CASH: Erc20Token = {
+  address: "0x0498edfaf50ca5855666a700c25dd629d577eb9afccdf3b5977aec79aee55ada",
+  symbol: "CASH",
+  name: "Cash",
+  decimals: 18,
+  spendLimit: "5000000000000000000000", // 5,000 CASH
+};
+
+const DTICKET: Erc20Token = {
+  address: "0x0452810188c4cb3aebd63711a3b445755bc0d6c4f27b923fdd99b1a118858136",
+  symbol: "DTICKET",
+  name: "Dungeon Ticket",
+  decimals: 18,
+  spendLimit: "1000000000000000000000", // 1,000 tickets
+};
+
+const MAINNET_TOKENS: readonly Erc20Token[] = [
+  STRK,
+  ETH,
+  USDC,
+  LORDS,
+  USDT,
+  DAI,
+  SURVIVOR,
+  CASH,
+  DTICKET,
+];
 
 // Sepolia uses the same canonical addresses for the headline tokens — most
 // dapps don't issue separate sepolia ERC-20s.
