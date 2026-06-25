@@ -1,0 +1,393 @@
+// /submit_score [tournamentId]
+//
+// Submitting a score finalizes it onto the on-chain leaderboard. Players (or
+// anyone) submit the top scores in rank order; a token's `position` is its
+// 1-indexed rank by score among the tournament's game-over tokens, capped to
+// the number of paid prize positions. The raw entrypoint needs
+// (tournamentId, tokenId, position) — impossible to know by hand — so this
+// flow computes everything and offers "submit one" or "submit all in order".
+//
+// Position logic mirrors the Budokan web client's getSubmittableScores; it now
+// also lives in the SDK (budokan-sdk `getSubmittableScores`). Inlined here as
+// `submittableScores` until the bot bumps to the SDK release that ships it.
+
+import {
+  CHAINS,
+  createBudokanClient,
+  buildSubmitScoreCall,
+  type Tournament,
+} from "@provable-games/budokan-sdk";
+import { createDenshokanClient } from "@provable-games/denshokan-sdk";
+
+import type { Config } from "../config.ts";
+import type { Chain } from "../chat-state.ts";
+import { TelegramApi } from "../telegram-api.ts";
+import { resolveAccount } from "../controller-account.ts";
+import { formatError } from "../format-error.ts";
+
+interface RankedToken {
+  tokenId: string;
+  score: number;
+  position: number; // 1-indexed rank
+  submitted: boolean;
+  mine: boolean;
+}
+
+interface State {
+  step: "pickTournament" | "pickScore";
+  chain: Chain;
+  // pickTournament:
+  tournaments?: Tournament[];
+  // pickScore:
+  tournamentId?: string;
+  tournamentName?: string;
+  ranked?: RankedToken[];
+}
+
+const states = new Map<string, State>();
+
+export function isPending(chatId: string): boolean {
+  return states.has(chatId);
+}
+
+export function cancel(chatId: string): boolean {
+  return states.delete(chatId);
+}
+
+// ----- entrypoint -----
+
+export async function start(
+  api: TelegramApi,
+  config: Config,
+  chatId: string,
+  chain: Chain,
+  args: string[],
+): Promise<void> {
+  if (args.length === 1 && args[0] && /^\d+$/.test(args[0])) {
+    return showScores(api, config, chatId, chain, args[0]);
+  }
+  if (args.length !== 0) {
+    await api.sendMessage(chatId, "Usage: /submit_score [tournamentId]\nWith no id I'll show the tournaments you've entered.");
+    return;
+  }
+
+  // Picker: tournaments the user has entered (needs a session to know who).
+  const session = await resolveAccount(chatId, chain, config);
+  if (!session.ok) {
+    await api.sendMessage(chatId, sessionErrorMessage(session.reason, chain));
+    return;
+  }
+
+  let tournamentIds: string[];
+  try {
+    tournamentIds = await ownedTournamentIds(chain, session.data.address);
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't read your entries: ${formatError(error)}`);
+    return;
+  }
+  if (tournamentIds.length === 0) {
+    await api.sendMessage(chatId, `You haven't entered any tournaments on ${chain}. Run /enter first.`);
+    return;
+  }
+
+  let tournaments: Tournament[];
+  try {
+    const res = await sdk(config, chain).getTournaments({
+      tournamentIds,
+      limit: tournamentIds.length,
+      sort: "created_at",
+    });
+    tournaments = res.data.sort((a, b) => Number(b.id) - Number(a.id));
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't load your tournaments: ${formatError(error)}`);
+    return;
+  }
+  if (tournaments.length === 0) {
+    await api.sendMessage(chatId, `Couldn't resolve your entered tournaments on ${chain}.`);
+    return;
+  }
+
+  states.set(chatId, { step: "pickTournament", chain, tournaments });
+  const lines = [`🏅 Submit scores — pick a tournament on ${chain}:`, ""];
+  tournaments.forEach((t, i) => {
+    lines.push(`  ${i + 1}. 🎯 #${t.id} ${t.name || "(unnamed)"}`);
+  });
+  lines.push("", "Reply with a number, or send '/submit_score <id>'. /cancel to abort.");
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+export async function handleAnswer(
+  api: TelegramApi,
+  config: Config,
+  chatId: string,
+  text: string,
+): Promise<void> {
+  const state = states.get(chatId);
+  if (!state) return;
+  const trimmed = text.trim().toLowerCase();
+
+  if (state.step === "pickTournament") {
+    if (!/^\d+$/.test(trimmed)) {
+      await api.sendMessage(chatId, `Reply with a number 1–${state.tournaments!.length}, or /cancel.`);
+      return;
+    }
+    const n = Number(trimmed);
+    if (n < 1 || n > state.tournaments!.length) {
+      await api.sendMessage(chatId, `Out of range. Pick 1–${state.tournaments!.length}, or /cancel.`);
+      return;
+    }
+    const chosen = state.tournaments![n - 1]!;
+    states.delete(chatId);
+    return showScores(api, config, chatId, state.chain, chosen.id);
+  }
+
+  // step === "pickScore"
+  const ranked = state.ranked ?? [];
+  const tournamentId = state.tournamentId!;
+  const chain = state.chain;
+  const submittable = ranked.filter((r) => !r.submitted);
+
+  if (trimmed === "all") {
+    states.delete(chatId);
+    return submitMany(api, config, chatId, chain, tournamentId, submittable);
+  }
+  if (/^\d+$/.test(trimmed)) {
+    const pos = Number(trimmed);
+    const target = submittable.find((r) => r.position === pos);
+    if (!target) {
+      await api.sendMessage(
+        chatId,
+        `Position ${pos} isn't an unsubmitted entry. Reply one of: ${submittable.map((r) => r.position).join(", ") || "(none)"}, or 'all'.`,
+      );
+      return;
+    }
+    states.delete(chatId);
+    return submitMany(api, config, chatId, chain, tournamentId, [target]);
+  }
+  await api.sendMessage(chatId, "Reply a position number, 'all', or /cancel.");
+}
+
+// ----- core -----
+
+async function showScores(
+  api: TelegramApi,
+  config: Config,
+  chatId: string,
+  chain: Chain,
+  tournamentId: string,
+): Promise<void> {
+  const session = await resolveAccount(chatId, chain, config);
+  if (!session.ok) {
+    await api.sendMessage(chatId, sessionErrorMessage(session.reason, chain));
+    return;
+  }
+
+  const client = sdk(config, chain);
+  let tournament: Tournament | null;
+  try {
+    tournament = await client.getTournament(tournamentId);
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't load tournament: ${formatError(error)}`);
+    return;
+  }
+  if (!tournament) {
+    await api.sendMessage(chatId, `Tournament ${tournamentId} not found.`);
+    return;
+  }
+
+  // Leaderboard size = highest paid prize position (sponsored + entry-fee),
+  // matching the web client. Default to 3 when there are no positioned prizes.
+  let prizePositions = 3;
+  try {
+    const prizes = await client.getTournamentPrizes(tournamentId);
+    const max = prizes.reduce((m, p) => Math.max(m, p.payoutPosition ?? 0), 0);
+    if (max > 0) prizePositions = max;
+  } catch {
+    // keep default
+  }
+
+  // Ascending leaderboards rank lowest-score-first; mirror that in the sort.
+  const ascending = tournament.leaderboardConfig?.ascending === true;
+
+  const denshokan = createDenshokanClient({ chain });
+  let rankedTokens: { tokenId: string; score: number }[];
+  let mine: Set<string>;
+  try {
+    const [all, ours] = await Promise.all([
+      denshokan.getTokens({
+        contextId: Number(tournamentId),
+        gameOver: true,
+        sort: { field: "score", direction: ascending ? "asc" : "desc" },
+        limit: prizePositions,
+      }),
+      denshokan.getPlayerTokens(session.data.address, { limit: 200 }),
+    ]);
+    rankedTokens = all.data.map((t) => ({ tokenId: t.tokenId, score: t.score }));
+    mine = new Set(
+      ours.data
+        .filter((t) => t.contextId !== null && Number(t.contextId) === Number(tournamentId))
+        .map((t) => tokenKey(t.tokenId)),
+    );
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't read scores: ${formatError(error)}`);
+    return;
+  }
+
+  if (rankedTokens.length === 0) {
+    await api.sendMessage(
+      chatId,
+      `🏅 No game-over scores to submit yet for #${tournamentId} ${tournament.name ? `"${tournament.name}"` : ""}.\nPlay first, then come back.`,
+    );
+    return;
+  }
+
+  let submittedIds: Set<string>;
+  try {
+    const lb = await client.getTournamentLeaderboard(tournamentId);
+    submittedIds = new Set(lb.map((e) => tokenKey(e.tokenId)));
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't read the leaderboard: ${formatError(error)}`);
+    return;
+  }
+
+  const ranked: RankedToken[] = rankedTokens.map((t, i) => ({
+    tokenId: t.tokenId,
+    score: t.score,
+    position: i + 1,
+    submitted: submittedIds.has(tokenKey(t.tokenId)),
+    mine: mine.has(tokenKey(t.tokenId)),
+  }));
+
+  const unsubmitted = ranked.filter((r) => !r.submitted);
+
+  const lines = [
+    `🏅 #${tournamentId} ${tournament.name ? `"${tournament.name}"` : ""} — top ${prizePositions} prize positions:`,
+    "",
+  ];
+  for (const r of ranked) {
+    const who = r.mine ? "👤 you" : `🎮 ${shortId(r.tokenId)}`;
+    const status = r.submitted ? "✅ submitted" : "⬜ not submitted";
+    lines.push(`  🏆 #${r.position} · score ${r.score} · ${who} · ${status}`);
+  }
+  lines.push("");
+  if (unsubmitted.length === 0) {
+    states.delete(chatId);
+    lines.push("All prize-position scores are already submitted. 🎉");
+    await api.sendMessage(chatId, lines.join("\n"));
+    return;
+  }
+  lines.push(
+    `Reply 'all' to submit the ${unsubmitted.length} unsubmitted score${unsubmitted.length === 1 ? "" : "s"} in order,`,
+    `or a position number (${unsubmitted.map((r) => r.position).join(", ")}) to submit just that one. /cancel to abort.`,
+  );
+
+  states.set(chatId, {
+    step: "pickScore",
+    chain,
+    tournamentId,
+    tournamentName: tournament.name ?? "",
+    ranked,
+  });
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function submitMany(
+  api: TelegramApi,
+  config: Config,
+  chatId: string,
+  chain: Chain,
+  tournamentId: string,
+  entries: RankedToken[],
+): Promise<void> {
+  if (entries.length === 0) {
+    await api.sendMessage(chatId, "Nothing to submit.");
+    return;
+  }
+  const session = await resolveAccount(chatId, chain, config);
+  if (!session.ok) {
+    await api.sendMessage(chatId, sessionErrorMessage(session.reason, chain));
+    return;
+  }
+  const budokanAddress = config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
+  if (!budokanAddress) {
+    await api.sendMessage(chatId, `Internal error: no Budokan address for ${chain}.`);
+    return;
+  }
+
+  // Submit in rank order so the on-chain leaderboard fills without gaps.
+  const ordered = [...entries].sort((a, b) => a.position - b.position);
+  const calls = ordered.map((e) =>
+    buildSubmitScoreCall(budokanAddress, {
+      tournamentId,
+      tokenId: e.tokenId,
+      position: e.position,
+    }),
+  );
+
+  await api.sendMessage(
+    chatId,
+    `⏳ Submitting ${ordered.length} score${ordered.length === 1 ? "" : "s"} for #${tournamentId} (position${ordered.length === 1 ? "" : "s"} ${ordered.map((e) => e.position).join(", ")})…`,
+  );
+  try {
+    const tx = await session.data.account.execute(calls);
+    await api.sendMessage(
+      chatId,
+      [
+        `✅ Submitted ${ordered.length} score${ordered.length === 1 ? "" : "s"} for #${tournamentId}`,
+        `🔗 tx ${tx.transaction_hash}`,
+        "",
+        `📊 /leaderboard ${tournamentId}`,
+      ].join("\n"),
+    );
+  } catch (error) {
+    await api.sendMessage(
+      chatId,
+      [
+        `❌ Submission failed: ${formatError(error)}`,
+        "",
+        "If you submitted a single mid-ranked score, the positions above it must be submitted first — try 'all' via /submit_score instead.",
+      ].join("\n"),
+    );
+  }
+}
+
+// ----- helpers -----
+
+function sdk(config: Config, chain: Chain) {
+  return createBudokanClient({
+    chain,
+    ...(config.apiUrl ? { apiBaseUrl: config.apiUrl } : {}),
+    ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}),
+    ...(config.budokanAddress ? { budokanAddress: config.budokanAddress } : {}),
+    ...(config.viewerAddress ? { viewerAddress: config.viewerAddress } : {}),
+  } as Parameters<typeof createBudokanClient>[0]);
+}
+
+async function ownedTournamentIds(chain: Chain, address: string): Promise<string[]> {
+  const denshokan = createDenshokanClient({ chain });
+  const res = await denshokan.getPlayerTokens(address, { limit: 200 });
+  const ids = new Set<string>();
+  for (const token of res.data) {
+    if (token.hasContext && token.contextId !== null) ids.add(String(token.contextId));
+  }
+  return Array.from(ids);
+}
+
+function tokenKey(id: string): string {
+  try {
+    return BigInt(id).toString();
+  } catch {
+    return id;
+  }
+}
+
+function shortId(id: string): string {
+  if (!id || id.length <= 12) return id;
+  return `${id.slice(0, 6)}…${id.slice(-4)}`;
+}
+
+function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch", chain: Chain): string {
+  if (reason === "no_session") return `Not connected on ${chain} — run /connect first.`;
+  if (reason === "expired") return `Your session on ${chain} expired. Run /connect to authorize again.`;
+  return `Your session on ${chain} doesn't cover this action. Run /connect again.`;
+}

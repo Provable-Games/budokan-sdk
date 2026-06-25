@@ -15,12 +15,12 @@ import { TelegramApi, urlButton } from "./telegram-api.ts";
 import { resolveAccount } from "./controller-account.ts";
 import {
   buildClaimRewardCall,
-  buildSubmitScoreCall,
   type RewardType,
 } from "@provable-games/budokan-sdk";
 import * as create from "./commands/create.ts";
 import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
+import * as submitCmd from "./commands/submit.ts";
 import * as listCmds from "./commands/list.ts";
 import { claimAll } from "./commands/claim.ts";
 import { distribute } from "./commands/distribute.ts";
@@ -133,6 +133,9 @@ export class TelegramBot {
     if (!isCommand && enterCmd.isPending(chatId)) {
       return enterCmd.handleAnswer(this.api, this.config, this.handshakes, chatId, text);
     }
+    if (!isCommand && submitCmd.isPending(chatId)) {
+      return submitCmd.handleAnswer(this.api, this.config, chatId, text);
+    }
     if (!isCommand && leaderboardCmd.isPending(chatId)) {
       return leaderboardCmd.handleAnswer(this.api, this.config, this.chatStates, chatId, text);
     }
@@ -178,8 +181,10 @@ export class TelegramBot {
         }
         return this.api.sendMessage(chatId, "Nothing to go back to.");
       case "/submit_score":
-      case "/submitscore":
-        return this.submitScore(chatId, args);
+      case "/submitscore": {
+        const chain = await this.chatStates.getChain(chatId);
+        return submitCmd.start(this.api, this.config, chatId, chain, args);
+      }
       case "/claim":
         return this.claim(chatId, args);
       case "/distribute": {
@@ -234,59 +239,10 @@ export class TelegramBot {
       create.cancel(chatId),
       addPrize.cancel(chatId),
       enterCmd.cancel(chatId),
+      submitCmd.cancel(chatId),
       leaderboardCmd.cancel(chatId),
     ];
     return cancelled.some(Boolean);
-  }
-
-  private async submitScore(chatId: string, args: string[]): Promise<void> {
-    if (args.length !== 3) {
-      await this.api.sendMessage(
-        chatId,
-        "Usage: /submit_score <tournamentId> <tokenId> <position>",
-      );
-      return;
-    }
-    const [tournamentIdRaw, tokenIdRaw, positionRaw] = args;
-    if (!/^\d+$/.test(tournamentIdRaw!)) {
-      await this.api.sendMessage(chatId, "tournamentId must be a positive integer.");
-      return;
-    }
-    if (!/^(0x[0-9a-fA-F]+|\d+)$/.test(tokenIdRaw!)) {
-      await this.api.sendMessage(chatId, "tokenId must be a hex (0x…) or decimal integer.");
-      return;
-    }
-    if (!/^\d+$/.test(positionRaw!)) {
-      await this.api.sendMessage(chatId, "position must be a positive integer.");
-      return;
-    }
-
-    const chain = await this.chatStates.getChain(chatId);
-    const result = await resolveAccount(chatId, chain, this.config);
-    if (!result.ok) {
-      await this.api.sendMessage(chatId, sessionErrorMessage(result.reason, chain));
-      return;
-    }
-
-    const budokanAddress = this.config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
-    if (!budokanAddress) {
-      await this.api.sendMessage(chatId, `Internal error: no Budokan address configured for ${chain}.`);
-      return;
-    }
-
-    const call = buildSubmitScoreCall(budokanAddress, {
-      tournamentId: tournamentIdRaw!,
-      tokenId: tokenIdRaw!,
-      position: Number(positionRaw),
-    });
-
-    await this.api.sendMessage(chatId, `Submitting score for tournament ${tournamentIdRaw}…`);
-    try {
-      const tx = await result.data.account.execute([call]);
-      await this.api.sendMessage(chatId, `Score submitted ✓\ntx: ${tx.transaction_hash}`);
-    } catch (error) {
-      await this.api.sendMessage(chatId, `Submission failed: ${formatError(error)}`);
-    }
   }
 
   // /claim <tournamentId> <kind> [<kindArgs...>]
@@ -441,7 +397,7 @@ export class TelegramBot {
         "Signed actions (require /connect first):",
         "  /create — multi-turn flow to create a tournament",
         "  /enter [tournamentId] — enter a tournament (no id → picker; paid entries use your session spending limit, or fall back to a budokan.gg link)",
-        "  /submit_score <tournamentId> <tokenId> <position>",
+        "  /submit_score [tournamentId] — submit your scores to the leaderboard (no id → pick from your entries; then submit one or all)",
         "  /claim <tournamentId> — claim everything your wallet is owed (or add a kind for one reward:",
         "    prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>)",
         "  /distribute <tournamentId> — claim every unclaimed reward in the pool (permissionless)",
@@ -568,7 +524,7 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "leaderboard", description: "Show a tournament's scores ranking" },
   { command: "create", description: "Multi-turn flow to create a tournament" },
   { command: "enter", description: "Enter a tournament" },
-  { command: "submit_score", description: "Submit a score" },
+  { command: "submit_score", description: "Submit your scores to the leaderboard (one or all)" },
   { command: "claim", description: "Claim a reward" },
   { command: "add_prize", description: "Sponsor a prize for a tournament" },
   { command: "back", description: "Go back / edit the current section in /create" },
