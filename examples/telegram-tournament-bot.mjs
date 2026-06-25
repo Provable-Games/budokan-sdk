@@ -942,6 +942,7 @@ async function registerCommandMenu() {
     { command: "connect", description: "Connect your wallet to start playing (opens the play bot)" },
     { command: "play", description: playDesc },
     { command: "claim", description: claimDesc },
+    { command: "create", description: "Create a tournament (opens the play bot)" },
     { command: "follow", description: "Get live updates for a tournament" },
     { command: "unfollow", description: "Stop following a tournament" },
     { command: "following", description: "List followed tournaments" },
