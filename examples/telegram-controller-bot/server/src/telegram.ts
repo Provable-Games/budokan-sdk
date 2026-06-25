@@ -33,9 +33,16 @@ interface TelegramMessage {
   text?: string;
 }
 
+interface TelegramCallbackQuery {
+  id: string;
+  data?: string;
+  message?: TelegramMessage;
+}
+
 interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  callback_query?: TelegramCallbackQuery;
 }
 
 export class TelegramBot {
@@ -82,7 +89,7 @@ export class TelegramBot {
       try {
         const updates = await this.api.call<TelegramUpdate[]>(
           "getUpdates",
-          { timeout: 50, offset, allowed_updates: ["message"] },
+          { timeout: 50, offset, allowed_updates: ["message", "callback_query"] },
           { signal: this.abort.signal },
         );
         for (const update of updates) {
@@ -93,6 +100,10 @@ export class TelegramBot {
               this.api
                 .sendMessage(String(update.message!.chat.id), `Sorry, that command failed: ${formatError(error)}`)
                 .catch((err) => console.error("Failed to notify user of error:", formatError(err)));
+            });
+          } else if (update.callback_query) {
+            await this.handleCallback(update.callback_query).catch((error) => {
+              console.error("Callback handler failed:", formatError(error));
             });
           }
         }
@@ -325,6 +336,23 @@ export class TelegramBot {
    * The dispatched command prompts /connect when there's no session yet, so an
    * unconnected first-timer lands on a clear next step rather than a dead end.
    */
+  /**
+   * Inline-button taps. Currently only the /tournaments list "Enter" buttons,
+   * whose callback_data is `enter:<id>`. We ack the tap (stop the spinner) then
+   * dispatch to the same /enter path a typed command would take.
+   */
+  private async handleCallback(cb: TelegramCallbackQuery): Promise<void> {
+    await this.api.answerCallback(cb.id);
+    const chatId = cb.message ? String(cb.message.chat.id) : undefined;
+    if (!chatId) return;
+
+    const [action, arg] = (cb.data ?? "").split(":");
+    if (action === "enter" && arg && /^\d+$/.test(arg)) {
+      const chain = await this.chatStates.getChain(chatId);
+      return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, [arg]);
+    }
+  }
+
   private async handleStart(chatId: string, args: string[]): Promise<void> {
     const payload = args[0];
     if (!payload) return this.sendHelp(chatId);

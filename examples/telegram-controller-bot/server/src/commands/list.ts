@@ -12,10 +12,11 @@ import type { Config } from "../config.ts";
 import type { Chain, ChatStateStore } from "../chat-state.ts";
 import type { SessionStore } from "../session-store.ts";
 import { gamesForChain } from "../catalog/games.ts";
-import { TelegramApi } from "../telegram-api.ts";
+import { TelegramApi, type InlineKeyboardButton } from "../telegram-api.ts";
 import { formatError } from "../format-error.ts";
 import { tournamentPageUrl } from "@provable-games/budokan-sdk";
 import { formatTimeUntil, formatTopPrizes } from "../format.ts";
+import { isEnterable } from "./enter.ts";
 
 const PAGE_SIZE = 5;
 
@@ -102,7 +103,18 @@ export async function tournaments(
     if (page < totalPages) lines.push("", `Reply '/tournaments ${args}' for the next page.`);
   }
 
-  await api.sendMessage(chatId, lines.join("\n"));
+  // One "Enter" button per currently-enterable tournament on the page. Tapping
+  // it fires a callback the bot turns into /enter <id> (see telegram.ts
+  // handleCallback). Buttons only appear for registration/staging/live phases.
+  const enterButtons: InlineKeyboardButton[][] = result.data
+    .filter((t) => isEnterable(t))
+    .map((t) => [{ text: `▶ Enter #${t.id}`, callback_data: `enter:${t.id}` }]);
+
+  await api.sendMessage(
+    chatId,
+    lines.join("\n"),
+    enterButtons.length > 0 ? { replyMarkup: { inline_keyboard: enterButtons } } : {},
+  );
 }
 
 /**

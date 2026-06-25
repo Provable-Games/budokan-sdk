@@ -59,6 +59,18 @@ export class TelegramApi {
       await this.call("sendMessage", body);
     }
   }
+
+  /**
+   * Acknowledge an inline-button tap so Telegram stops showing the button's
+   * loading spinner. Best-effort — a failed ack shouldn't abort the action
+   * the button triggered.
+   */
+  async answerCallback(callbackQueryId: string, text?: string): Promise<void> {
+    await this.call("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text } : {}),
+    }).catch(() => {});
+  }
 }
 
 export function splitForTelegram(text: string): string[] {

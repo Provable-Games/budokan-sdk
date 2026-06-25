@@ -8,11 +8,16 @@
 //     tournaments on the user's active chain, let them pick, then run the
 //     same logic with the resolved id.
 //
-// Picker filter: phases that actually accept new entries. For fixed
-// tournaments that's Registration; for open tournaments it's Staging
-// or Live (`has_registration` is false → those skip the Registration
-// phase entirely). We don't filter out tournaments the user is already
-// in — the contract handles the "already entered" case if relevant.
+// Picker filter: tournaments that actually accept new entries — those with a
+// registration window during it, and open tournaments (no registration) until
+// the game ends. We compute this CLIENT-SIDE from the tournament's absolute
+// time fields (registration/game start+end). The indexer neither populates a
+// queryable `phase` column (so server-side phase filtering returns nothing —
+// why a picker showed "none open" while the tournament was clearly live in
+// /tournaments) nor `createdAtOnchain` (so the SDK's tournamentPhase() can't
+// derive it either). The absolute timestamps are always present, so we use
+// those. We don't filter out tournaments the user is already in — the contract
+// handles the "already entered" case if relevant.
 //
 // Paid entries: /connect authorizes per-token spending limits (policies.ts +
 // catalog/tokens.ts), so the bot can approve the exact fee + enter in one
@@ -70,24 +75,20 @@ export async function start(
     return;
   }
 
-  // Picker path: fetch enterable tournaments + build display.
+  // Picker path: fetch recent tournaments, then keep the enterable ones by
+  // computing each phase client-side (see the header note — the API can't
+  // filter by phase). Newest first.
   const sdk = sdkClient(config, chain);
-  const phasesToShow = ["registration", "staging", "live"] as const;
   let tournaments: Tournament[];
   try {
-    // Fetch each phase, dedupe, sort by id desc (newest first).
-    const results = await Promise.all(
-      phasesToShow.map((phase) =>
-        sdk
-          .getTournaments({ phase, limit: 25, sort: "created_at", includePrizeSummary: true })
-          .then((r) => r.data),
-      ),
-    );
-    const byId = new Map<string, Tournament>();
-    for (const list of results) {
-      for (const t of list) byId.set(t.id, t);
-    }
-    tournaments = Array.from(byId.values()).sort((a, b) => Number(b.id) - Number(a.id));
+    const recent = await sdk.getTournaments({
+      limit: 50,
+      sort: "created_at",
+      includePrizeSummary: true,
+    });
+    tournaments = recent.data
+      .filter((t) => isEnterable(t))
+      .sort((a, b) => Number(b.id) - Number(a.id));
   } catch (error) {
     await api.sendMessage(chatId, `Couldn't fetch tournaments: ${formatError(error)}`);
     return;
@@ -295,6 +296,30 @@ async function execute(
 }
 
 // ----- helpers -----
+
+// Whether a tournament currently accepts new entries, derived from its
+// absolute time fields (the indexer doesn't give us a phase or createdAtOnchain
+// to compute one). Tournaments with a registration window accept entries only
+// during it; open tournaments (no registration) accept entries until the game
+// ends. Shared with the /tournaments list so its "Enter" buttons match.
+export function isEnterable(t: Tournament): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const regStart = toUnixSeconds(t.registrationStartTime);
+  const regEnd = toUnixSeconds(t.registrationEndTime);
+  const gameEnd = toUnixSeconds(t.gameEndTime);
+  const hasRegistration = regStart > 0 || regEnd > 0;
+
+  if (hasRegistration) {
+    return now >= regStart && (regEnd === 0 || now < regEnd);
+  }
+  // Open tournament: enterable through staging and live, i.e. until game end.
+  return gameEnd === 0 || now < gameEnd;
+}
+
+function toUnixSeconds(value: string | null): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
 
 function sdkClient(config: Config, chain: Chain) {
   return createBudokanClient({
