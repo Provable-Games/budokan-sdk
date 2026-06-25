@@ -32,19 +32,26 @@ import type { HandshakeStore } from "../handshake.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { buildEnterTournamentCall, buildErc20ApproveCall } from "@provable-games/budokan-sdk";
-import { gamesForChain } from "../catalog/games.ts";
+import { gameInfoMap, type GameInfo } from "../catalog/games.ts";
 import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
 import { explorerTxUrl, tournamentPageUrl } from "@provable-games/budokan-sdk";
-import { formatDuration, formatTimeUntil, formatTopPrizes } from "../format.ts";
+import {
+  formatDuration,
+  formatGameLabel,
+  formatTimeUntil,
+  formatTokenAmount,
+  formatTopPrizes,
+  shortAddr,
+} from "../format.ts";
 
 type Step = "picker";
 
 interface State {
   step: Step;
   chain: Chain;
-  tournaments: Tournament[];      // snapshot at picker render time
-  gameNames: Map<string, string>; // lowercase address → name
+  tournaments: Tournament[];        // snapshot at picker render time
+  gameNames: Map<string, GameInfo>; // lowercase address → game info
 }
 
 const states = new Map<string, State>();
@@ -102,7 +109,7 @@ export async function start(
     return;
   }
 
-  const gameNames = await buildGameNameMap(chain);
+  const gameNames = await gameInfoMap(chain);
   states.set(chatId, { step: "picker", chain, tournaments, gameNames });
 
   const lines: string[] = [
@@ -110,7 +117,7 @@ export async function start(
     "",
   ];
   tournaments.forEach((t, i) => {
-    const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
+    const game = formatGameLabel(t.gameAddress, gameNames);
     const feeIcon = extractFee(t) ? "💰" : "🆓";
     const feeLabel = extractFee(t) ? "paid" : "free";
     const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
@@ -354,13 +361,6 @@ function sdkClient(config: Config, chain: Chain) {
   } as Parameters<typeof createBudokanClient>[0]);
 }
 
-async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
-  const games = await gamesForChain(chain);
-  const map = new Map<string, string>();
-  for (const g of games) map.set(g.contractAddress.toLowerCase(), g.name);
-  return map;
-}
-
 /**
  * Pull (token, amount) out of either the structured `entryFee` JSONB
  * blob or the flat `entryFeeAmount` / `entryFeeToken` summary fields.
@@ -384,30 +384,4 @@ function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch
   return `Your session on ${chain} doesn't cover this action. Run /connect again.`;
 }
 
-function shortAddr(addr: string): string {
-  if (!addr || addr.length <= 18) return addr;
-  return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
-}
-
-/**
- * Format a raw u128/u256 amount string into a human-readable decimal
- * string with no trailing zeros. Duplicated from create.ts — should
- * move to a shared formatters module if a third caller appears.
- */
-function formatTokenAmount(rawAmount: string, decimals: number): string {
-  let bi: bigint;
-  try {
-    bi = BigInt(rawAmount);
-  } catch {
-    return rawAmount;
-  }
-  if (decimals === 0) return bi.toString();
-  const divisor = 10n ** BigInt(decimals);
-  const whole = (bi / divisor).toString();
-  const frac = (bi % divisor)
-    .toString()
-    .padStart(decimals, "0")
-    .replace(/0+$/, "");
-  return frac.length === 0 ? whole : `${whole}.${frac}`;
-}
 

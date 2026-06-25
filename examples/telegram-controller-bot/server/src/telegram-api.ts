@@ -61,6 +61,35 @@ export class TelegramApi {
   }
 
   /**
+   * Send a photo by URL with an optional caption — used to surface a game's
+   * thumbnail above a leaderboard/detail view. Telegram fetches the image from
+   * `photoUrl` itself, so no upload is needed.
+   *
+   * Best-effort and graceful: a caption above Telegram's 1024-char photo limit
+   * is truncated, and any failure (dead image URL, unsupported format) is
+   * swallowed so the caller can fall back to a plain text message. Returns
+   * true when the photo was sent, false otherwise.
+   */
+  async sendPhoto(
+    chatId: string,
+    photoUrl: string,
+    caption?: string,
+  ): Promise<boolean> {
+    if (!photoUrl) return false;
+    const body: Record<string, unknown> = { chat_id: chatId, photo: photoUrl };
+    if (caption) {
+      // Telegram caps photo captions at 1024 chars (vs 4096 for messages).
+      body.caption = caption.length > 1024 ? `${caption.slice(0, 1023)}…` : caption;
+    }
+    try {
+      await this.call("sendPhoto", body);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Acknowledge an inline-button tap so Telegram stops showing the button's
    * loading spinner. Best-effort — a failed ack shouldn't abort the action
    * the button triggered.

@@ -557,14 +557,14 @@ async function sendLeaderboard(chatId, inputId) {
   try {
     const entries = await client.getTournamentLeaderboard(tournamentId);
     if (!entries.length) {
-      await sendMessage(chatId, `No leaderboard entries yet for ${tournamentId}.`);
+      await sendMessage(chatId, `📊 No leaderboard entries yet for #${tournamentId}.`);
       return;
     }
     const lines = entries
       .slice(0, 20)
-      .map((entry) => `${entry.position}. ${shortHex(entry.tokenId)}`);
-    if (entries.length > 20) lines.push(`...and ${entries.length - 20} more.`);
-    await sendMessage(chatId, [`Leaderboard for ${tournamentId}`, ...lines].join("\n"));
+      .map((entry) => `  ${rankPrefix(entry.position)} ${shortHex(entry.tokenId)}`);
+    if (entries.length > 20) lines.push(`  …and ${entries.length - 20} more.`);
+    await sendMessage(chatId, [`📊 Leaderboard — 🎯 #${tournamentId}`, "", ...lines].join("\n"));
   } catch (error) {
     await sendMessage(chatId, `Lookup failed: ${formatError(error)}`);
   }
@@ -595,13 +595,13 @@ async function sendPrizes(chatId, inputId) {
   }
 
   if (!prizes.length) {
-    await sendMessage(chatId, `No prizes posted yet for ${tournamentId}.`);
+    await sendMessage(chatId, `🏆 No prizes posted yet for #${tournamentId}.`);
     return;
   }
 
   const claimMap = buildClaimMap(claims);
   const sections = prizes.map((prize) => formatPrizeSection(prize, claimMap));
-  await sendMessage(chatId, [`Prizes for ${tournamentId}`, "", ...sections].join("\n\n"));
+  await sendMessage(chatId, [`🏆 Prizes — 🎯 #${tournamentId}`, "", ...sections].join("\n\n"));
 }
 
 // Build a lookup of (prizeId, payoutIndex) → claimed boolean. The indexer's
@@ -643,21 +643,21 @@ function formatPoolBlock(prize, claimMap) {
   const distType = String(prize.distributionType ?? "uniform").toLowerCase();
   const distCount = Number(prize.distributionCount ?? expanded.length);
   const totalLabel = formatErc20(prize.amount, prize.tokenAddress);
-  const header = `Pool: ${totalLabel} (${distType}, ${distCount} place${distCount === 1 ? "" : "s"})`;
+  const header = `🏆 Pool: ${totalLabel} (${distType}, ${distCount} place${distCount === 1 ? "" : "s"})`;
   const rows = expanded.map((row) => {
     const claimed = claimMap.get(`${prize.prizeId}:${row.payoutPosition}`);
-    const suffix = claimed ? " (claimed)" : "";
-    return `  ${row.payoutPosition}. ${formatErc20(row.amount, row.tokenAddress)}${suffix}`;
+    const suffix = claimed ? " ✅ claimed" : "";
+    return `  ${rankPrefix(row.payoutPosition)} ${formatErc20(row.amount, row.tokenAddress)}${suffix}`;
   });
   return [header, ...rows].join("\n");
 }
 
 function formatSinglePrizeLine(prize, claimed) {
-  const suffix = claimed ? " (claimed)" : "";
+  const suffix = claimed ? " ✅ claimed" : "";
   if (prize.tokenType === "erc721") {
-    return `Pos ${prize.payoutPosition}: NFT ${shortHex(prize.tokenId ?? "")} from ${shortHex(prize.tokenAddress)}${suffix}`;
+    return `🏆 ${ordinal(prize.payoutPosition)}: NFT ${shortHex(prize.tokenId ?? "")} from ${shortHex(prize.tokenAddress)}${suffix}`;
   }
-  return `Pos ${prize.payoutPosition}: ${formatErc20(prize.amount, prize.tokenAddress)}${suffix}`;
+  return `🏆 ${ordinal(prize.payoutPosition)}: ${formatErc20(prize.amount, prize.tokenAddress)}${suffix}`;
 }
 
 async function sendTournamentList(chatId, phaseArg) {
@@ -677,11 +677,16 @@ async function sendTournamentList(chatId, phaseArg) {
       await sendMessage(chatId, phase ? `No ${phase} tournaments.` : "No tournaments found.");
       return;
     }
-    const lines = result.data.map((t) => `${t.id} — ${t.name || "(unnamed)"} (entries: ${t.entryCount})`);
+    const lines = result.data.map((t) => {
+      const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
+      const ends = formatTimeUntil(t.gameEndTime);
+      const meta = [entries, ends].filter(Boolean).join(" · ");
+      return `🎯 #${t.id} ${t.name || "(unnamed)"}\n   ${meta}`;
+    });
     const header = phase
-      ? `Tournaments in phase '${phase}' (showing ${result.data.length}/${result.total}):`
-      : `Recent tournaments (showing ${result.data.length}/${result.total}):`;
-    await sendMessage(chatId, [header, ...lines].join("\n"));
+      ? `🏟️ Tournaments · ${phase} (showing ${result.data.length}/${result.total})`
+      : `🏟️ Recent tournaments (showing ${result.data.length}/${result.total})`;
+    await sendMessage(chatId, [header, "", ...lines].join("\n"));
   } catch (error) {
     await sendMessage(chatId, `Lookup failed: ${formatError(error)}`);
   }
@@ -762,19 +767,24 @@ function formatEvent(channel, event) {
 
 function formatTournament(tournament) {
   const lines = [
-    `Tournament ${tournament.id}`,
-    `Name: ${tournament.name || "(unnamed)"}`,
+    `🎯 #${tournament.id} ${tournament.name || "(unnamed)"}`,
   ];
-  if (tournament.description) lines.push(`Description: ${tournament.description}`);
-  lines.push(`Game: ${shortHex(tournament.gameAddress)}`);
-  lines.push(`Entries: ${tournament.entryCount}`);
-  lines.push(`Submissions: ${tournament.submissionCount}`);
-  lines.push(`Prizes posted: ${tournament.prizeCount}`);
-  if (tournament.registrationStartTime) lines.push(`Registration: ${formatTimeRange(tournament.registrationStartTime, tournament.registrationEndTime)}`);
-  if (tournament.gameStartTime) lines.push(`Live: ${formatTimeRange(tournament.gameStartTime, tournament.gameEndTime)}`);
-  if (tournament.submissionEndTime) lines.push(`Submissions close: ${formatTimestamp(tournament.submissionEndTime)}`);
-  if (tournament.entryFeeAmount) lines.push(`Entry fee: ${formatErc20(tournament.entryFeeAmount, tournament.entryFeeToken)}`);
-  lines.push(`Open: ${tournamentUrl(tournament.id)}`);
+  if (tournament.description) lines.push(`📝 ${tournament.description}`);
+  lines.push(`🎮 Game: ${shortHex(tournament.gameAddress)}`);
+  // Stat line: entries · submissions · prizes, plus time-to-end when known.
+  const stats = [
+    `👥 ${tournament.entryCount} ${tournament.entryCount === 1 ? "entry" : "entries"}`,
+    `📤 ${tournament.submissionCount} submitted`,
+    `🏆 ${tournament.prizeCount} ${tournament.prizeCount === 1 ? "prize" : "prizes"}`,
+  ];
+  lines.push(stats.join(" · "));
+  const endsIn = formatTimeUntil(tournament.gameEndTime);
+  if (endsIn) lines.push(endsIn);
+  if (tournament.registrationStartTime) lines.push(`📋 Registration: ${formatTimeRange(tournament.registrationStartTime, tournament.registrationEndTime)}`);
+  if (tournament.gameStartTime) lines.push(`⏱️ Live: ${formatTimeRange(tournament.gameStartTime, tournament.gameEndTime)}`);
+  if (tournament.submissionEndTime) lines.push(`📮 Submissions close: ${formatTimestamp(tournament.submissionEndTime)}`);
+  if (tournament.entryFeeAmount) lines.push(`💰 Entry fee: ${formatErc20(tournament.entryFeeAmount, tournament.entryFeeToken)}`);
+  lines.push(`🔗 ${tournamentUrl(tournament.id)}`);
   return lines.join("\n");
 }
 
@@ -1074,11 +1084,61 @@ function shortHex(value) {
   return `${value.slice(0, 10)}...${value.slice(-6)}`;
 }
 
+// English ordinal suffix: 1 → "1st", 2 → "2nd", 11 → "11th", 21 → "21st".
+function ordinal(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return String(n);
+  const s = ["th", "st", "nd", "rd"];
+  const v = num % 100;
+  return `${num}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
+}
+
+// Leaderboard rank prefix: a medal for the top 3, otherwise the ordinal
+// position. Keeps placements readable ("4th") instead of a bare "4.".
+function rankPrefix(rank) {
+  if (rank === 1) return "🥇";
+  if (rank === 2) return "🥈";
+  if (rank === 3) return "🥉";
+  return ordinal(rank);
+}
+
+// Compact UTC timestamp for chat — "2024-06-25 14:30 UTC". The previous
+// full ISO string (with seconds + milliseconds + "T") was noisy to read.
 function formatTimestamp(value) {
   if (!value) return "?";
   const seconds = Number(value);
   if (!Number.isFinite(seconds)) return String(value);
-  return new Date(seconds * 1000).toISOString();
+  const iso = new Date(seconds * 1000).toISOString(); // 2024-06-25T14:30:00.000Z
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+// Relative phrase with a clock emoji — "⏰ Ends in 2d 4h" / "⏰ Ended 1h ago".
+// Returns null when the timestamp is missing so callers can omit the line.
+function formatTimeUntil(value, { prefix = "Ends in", pastPrefix = "Ended" } = {}) {
+  if (value === null || value === undefined || value === "") return null;
+  const target = Number(value);
+  if (!Number.isFinite(target) || target === 0) return null;
+  const diff = target - Math.floor(Date.now() / 1000);
+  if (diff === 0) return `⏰ ${prefix} now`;
+  return diff > 0
+    ? `⏰ ${prefix} ${formatDuration(diff)}`
+    : `⏰ ${pastPrefix} ${formatDuration(-diff)} ago`;
+}
+
+// Compact duration — at most two units, biggest first ("2d 4h", "45m").
+function formatDuration(totalSeconds) {
+  const s = Math.floor(Math.abs(Number(totalSeconds) || 0));
+  if (s <= 0) return "0s";
+  const days = Math.floor(s / 86400);
+  const hours = Math.floor((s % 86400) / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const seconds = s % 60;
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (parts.length < 2 && hours > 0) parts.push(`${hours}h`);
+  if (parts.length < 2 && minutes > 0) parts.push(`${minutes}m`);
+  if (parts.length < 2 && seconds > 0 && days === 0 && hours === 0) parts.push(`${seconds}s`);
+  return parts.length === 0 ? "0s" : parts.join(" ");
 }
 
 function formatTimeRange(start, end) {

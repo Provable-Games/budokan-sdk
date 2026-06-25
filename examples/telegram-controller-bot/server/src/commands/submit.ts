@@ -24,6 +24,7 @@ import type { Chain } from "../chat-state.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { formatError } from "../format-error.ts";
+import { rankPrefix } from "../format.ts";
 
 interface RankedToken {
   tokenId: string;
@@ -146,10 +147,25 @@ export async function handleAnswer(
   const tournamentId = state.tournamentId!;
   const chain = state.chain;
   const submittable = ranked.filter((r) => !r.submitted);
+  // The connected wallet's own unsubmitted prize-position scores.
+  const mine = submittable.filter((r) => r.mine);
 
   if (trimmed === "all") {
     states.delete(chatId);
     return submitMany(api, config, chatId, chain, tournamentId, submittable);
+  }
+  if (trimmed === "mine") {
+    if (mine.length === 0) {
+      await api.sendMessage(
+        chatId,
+        "You don't have any unsubmitted prize-position scores. Reply 'all' to submit everyone's, a position number, or /cancel.",
+      );
+      return;
+    }
+    states.delete(chatId);
+    // submitMany sorts by position and submits in one execute; its failure
+    // hint already covers the case where a higher position is still missing.
+    return submitMany(api, config, chatId, chain, tournamentId, mine);
   }
   if (/^\d+$/.test(trimmed)) {
     const pos = Number(trimmed);
@@ -164,7 +180,12 @@ export async function handleAnswer(
     states.delete(chatId);
     return submitMany(api, config, chatId, chain, tournamentId, [target]);
   }
-  await api.sendMessage(chatId, "Reply a position number, 'all', or /cancel.");
+  await api.sendMessage(
+    chatId,
+    mine.length > 0
+      ? "Reply 'mine', 'all', a position number, or /cancel."
+      : "Reply a position number, 'all', or /cancel.",
+  );
 }
 
 // ----- core -----
@@ -284,7 +305,7 @@ async function showScores(
   for (const r of ranked) {
     const who = r.mine ? "👤 you" : `🎮 ${shortId(r.tokenId)}`;
     const status = r.submitted ? "✅ submitted" : "⬜ not submitted";
-    lines.push(`  🏆 #${r.position} · score ${r.score} · ${who} · ${status}`);
+    lines.push(`  ${rankPrefix(r.position)} score ${r.score} · ${who} · ${status}`);
   }
   lines.push("");
   if (unsubmitted.length === 0) {
@@ -293,10 +314,21 @@ async function showScores(
     await api.sendMessage(chatId, lines.join("\n"));
     return;
   }
-  lines.push(
-    `Reply 'all' to submit the ${unsubmitted.length} unsubmitted score${unsubmitted.length === 1 ? "" : "s"} in order,`,
-    `or a position number (${unsubmitted.map((r) => r.position).join(", ")}) to submit just that one. /cancel to abort.`,
-  );
+  // Distinguish "submit just mine" from "submit everyone's" when the connected
+  // wallet has its own unsubmitted prize-position scores.
+  const minePositions = unsubmitted.filter((r) => r.mine).map((r) => r.position);
+  if (minePositions.length > 0) {
+    lines.push(
+      `👤 You're in position${minePositions.length === 1 ? "" : "s"} ${minePositions.join(", ")}.`,
+      `Reply 'mine' to submit just your score${minePositions.length === 1 ? "" : "s"}, 'all' to submit everyone's ${unsubmitted.length} unsubmitted score${unsubmitted.length === 1 ? "" : "s"} in order,`,
+      `or a position number (${unsubmitted.map((r) => r.position).join(", ")}) to submit just that one. /cancel to abort.`,
+    );
+  } else {
+    lines.push(
+      `Reply 'all' to submit the ${unsubmitted.length} unsubmitted score${unsubmitted.length === 1 ? "" : "s"} in order,`,
+      `or a position number (${unsubmitted.map((r) => r.position).join(", ")}) to submit just that one. /cancel to abort.`,
+    );
+  }
 
   states.set(chatId, {
     step: "pickScore",

@@ -86,11 +86,20 @@ export interface Game {
   name: string;
   description?: string;
   imageUrl?: string;
+  /** Game homepage / client URL from the denshokan registry, when present. */
+  clientUrl?: string;
   defaultEntryFeeToken?: string;
   defaultGameFeePercentage?: number;
   controllerOnly?: boolean;
   leaderboardAscending?: boolean;
   leaderboardGameMustBeOver?: boolean;
+}
+
+/** Friendly display fields for a game — name plus optional thumbnail/link. */
+export interface GameInfo {
+  name: string;
+  imageUrl?: string;
+  clientUrl?: string;
 }
 
 const clients = new Map<Chain, DenshokanClient>();
@@ -129,10 +138,32 @@ export async function gamesForChain(chain: Chain): Promise<Game[]> {
       name: g.name,
       description: g.description,
       imageUrl: g.imageUrl,
+      clientUrl: g.clientUrl,
       ...meta,
     });
   }
   return games.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * One-shot map of lowercase contractAddress → friendly game info (name +
+ * optional thumbnail/link) for a chain. Replaces the per-command
+ * `buildGameNameMap` helpers so every listing can surface real game names
+ * (and, where available, logos) instead of raw 0x… addresses, without N+1
+ * denshokan lookups. Returns an empty map on indexer failure — callers fall
+ * back to a shortened address.
+ */
+export async function gameInfoMap(chain: Chain): Promise<Map<string, GameInfo>> {
+  const games = await gamesForChain(chain);
+  const map = new Map<string, GameInfo>();
+  for (const g of games) {
+    map.set(g.contractAddress.toLowerCase(), {
+      name: g.name,
+      imageUrl: g.imageUrl,
+      clientUrl: g.clientUrl,
+    });
+  }
+  return map;
 }
 
 /** Look up a game by contract address. Used by /enter and /tournament displays. */
