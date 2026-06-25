@@ -36,7 +36,7 @@ import { gamesForChain } from "../catalog/games.ts";
 import { findKnownToken } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
 import { explorerTxUrl, tournamentPageUrl } from "@provable-games/budokan-sdk";
-import { formatTimeUntil, formatTopPrizes } from "../format.ts";
+import { formatDuration, formatTimeUntil, formatTopPrizes } from "../format.ts";
 
 type Step = "picker";
 
@@ -225,6 +225,7 @@ async function execute(
         [
           `✅ Entered tournament #${tournamentId}`,
           `🔗 ${explorerTxUrl(chain, tx.transaction_hash)}`,
+          ...playStatusLines(tournament, chain, tournamentId),
           "",
           `📊 /leaderboard ${tournamentId}`,
         ].join("\n"),
@@ -259,6 +260,7 @@ async function execute(
         [
           `✅ Entered tournament #${tournamentId} (paid ${feeDisplay})`,
           `🔗 ${explorerTxUrl(chain, tx.transaction_hash)}`,
+          ...playStatusLines(tournament, chain, tournamentId),
           "",
           `📊 /leaderboard ${tournamentId}`,
         ].join("\n"),
@@ -319,6 +321,26 @@ export function isEnterable(t: Tournament): boolean {
 function toUnixSeconds(value: string | null): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+// Post-entry "how to play" line. Once the game is live, link straight to the
+// budokan.gg tournament page (which launches the underlying game). While it's
+// still staging — you can enter before the game opens — tell the user when it
+// becomes playable instead. Nothing once the game has ended.
+function playStatusLines(t: Tournament, chain: Chain, tournamentId: string): string[] {
+  const now = Math.floor(Date.now() / 1000);
+  const gameStart = toUnixSeconds(t.gameStartTime);
+  const gameEnd = toUnixSeconds(t.gameEndTime);
+  const url = tournamentPageUrl(chain, tournamentId);
+
+  const live = gameStart > 0 && now >= gameStart && (gameEnd === 0 || now < gameEnd);
+  if (live) {
+    return [`🎮 It's live — play now: ${url}`];
+  }
+  if (gameStart > now) {
+    return [`🎮 Playable in ${formatDuration(gameStart - now)}: ${url}`];
+  }
+  return [];
 }
 
 function sdkClient(config: Config, chain: Chain) {
