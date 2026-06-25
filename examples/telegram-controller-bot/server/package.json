@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cartridge/controller": "^0.10.7",
-    "@cartridge/controller-wasm": "^0.10.1",
+    "@cartridge/controller": "^0.13.12",
+    "@cartridge/controller-wasm": "0.10.0",
     "@provable-games/budokan-sdk": "^0.1.29",
     "@provable-games/denshokan-sdk": "^0.1.33",
     "@provable-games/metagame-sdk": "^0.1.12",
