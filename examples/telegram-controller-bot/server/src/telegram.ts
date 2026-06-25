@@ -22,7 +22,7 @@ import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
 import * as submitCmd from "./commands/submit.ts";
 import * as listCmds from "./commands/list.ts";
-import { claimAll } from "./commands/claim.ts";
+import * as claimCmd from "./commands/claim.ts";
 import { distribute } from "./commands/distribute.ts";
 import * as leaderboardCmd from "./commands/leaderboard.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
@@ -136,6 +136,9 @@ export class TelegramBot {
     if (!isCommand && submitCmd.isPending(chatId)) {
       return submitCmd.handleAnswer(this.api, this.config, chatId, text);
     }
+    if (!isCommand && claimCmd.isPending(chatId)) {
+      return claimCmd.handleAnswer(this.api, this.config, chatId, text);
+    }
     if (!isCommand && leaderboardCmd.isPending(chatId)) {
       return leaderboardCmd.handleAnswer(this.api, this.config, this.chatStates, chatId, text);
     }
@@ -185,8 +188,18 @@ export class TelegramBot {
         const chain = await this.chatStates.getChain(chatId);
         return submitCmd.start(this.api, this.config, chatId, chain, args);
       }
-      case "/claim":
+      case "/claim": {
+        const chain = await this.chatStates.getChain(chatId);
+        // No id → pick a tournament; bare id → prize overview + mine/all.
+        // <id> <kind> … stays the power-user direct-claim path.
+        if (args.length === 0) {
+          return claimCmd.startPicker(this.api, this.config, chatId, chain);
+        }
+        if (args.length === 1 && /^\d+$/.test(args[0]!)) {
+          return claimCmd.showClaimView(this.api, this.config, chatId, chain, args[0]!);
+        }
         return this.claim(chatId, args);
+      }
       case "/distribute": {
         const chain = await this.chatStates.getChain(chatId);
         return distribute(this.api, this.config, chatId, chain, args);
@@ -240,6 +253,7 @@ export class TelegramBot {
       addPrize.cancel(chatId),
       enterCmd.cancel(chatId),
       submitCmd.cancel(chatId),
+      claimCmd.cancel(chatId),
       leaderboardCmd.cancel(chatId),
     ];
     return cancelled.some(Boolean);
@@ -268,7 +282,7 @@ export class TelegramBot {
     // Bare id → claim everything the connected wallet can (auto-resolves the
     // wallet's placements). An explicit reward kind keeps the low-level path.
     if (args.length === 1) {
-      await claimAll(this.api, this.config, chatId, chain, tournamentIdRaw!);
+      await claimCmd.claimAll(this.api, this.config, chatId, chain, tournamentIdRaw!);
       return;
     }
 
@@ -398,9 +412,9 @@ export class TelegramBot {
         "  /create — multi-turn flow to create a tournament",
         "  /enter [tournamentId] — enter a tournament (no id → picker; paid entries use your session spending limit, or fall back to a budokan.gg link)",
         "  /submit_score [tournamentId] — submit your scores to the leaderboard (no id → pick from your entries; then submit one or all)",
-        "  /claim <tournamentId> — claim everything your wallet is owed (or add a kind for one reward:",
-        "    prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>)",
-        "  /distribute <tournamentId> — claim every unclaimed reward in the pool (permissionless)",
+        "  /claim [tournamentId] — see the prizes up for grabs, then claim your rewards ('mine') or pay out everyone ('all'). No id → pick from your entries.",
+        "    Power-user: /claim <tournamentId> <kind> — prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
+        "  /distribute <tournamentId> — pay out every unclaimed reward to all winners (permissionless; same as /claim → 'all')",
         "  /add_prize [tournamentId] — sponsor an ERC-20 prize (no id → picker; signs in chat within your spending limit, else a budokan.gg link)",
         "  /cancel — abort an in-flight multi-turn flow",
         "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
