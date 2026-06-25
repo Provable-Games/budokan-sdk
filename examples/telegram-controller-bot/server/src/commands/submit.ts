@@ -233,23 +233,32 @@ async function showScores(
   }
 
   // Scores for the entered tokens (denshokan), and which tokens are the user's.
+  // Both are best-effort: a scores/ownership read failure shouldn't blank the
+  // whole view — we still show entries (with unknown scores) and submit status.
   const denshokan = createDenshokanClient({ chain });
   const scoreById = new Map<string, number>();
-  let mine: Set<string>;
+  let mine = new Set<string>();
+
   try {
-    const [ranks, ours] = await Promise.all([
-      denshokan.getTokenRanks(entries.map((e) => e.tokenId), {}),
-      denshokan.getPlayerTokens(session.data.address, { limit: 200 }),
-    ]);
+    // Scope the rank query to this tournament's context — the ranks endpoint
+    // 500s on an empty scope, and the explicit token-id list keeps it bounded.
+    const ranks = await denshokan.getTokenRanks(entries.map((e) => e.tokenId), {
+      contextId: Number(tournamentId),
+    });
     for (const r of ranks.data) scoreById.set(tokenKey(r.tokenId), r.score);
+  } catch (error) {
+    console.error("submit: getTokenRanks failed:", formatError(error));
+  }
+
+  try {
+    const ours = await denshokan.getPlayerTokens(session.data.address, { limit: 200 });
     mine = new Set(
       ours.data
         .filter((t) => t.contextId !== null && Number(t.contextId) === Number(tournamentId))
         .map((t) => tokenKey(t.tokenId)),
     );
   } catch (error) {
-    await api.sendMessage(chatId, `Couldn't read scores: ${formatError(error)}`);
-    return;
+    console.error("submit: getPlayerTokens failed:", formatError(error));
   }
 
   // Sort by score (direction per leaderboard), assign 1-indexed rank positions,
