@@ -323,11 +323,12 @@ function toUnixSeconds(value: string | null): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Post-entry "how to play" line. Once the game is live, link straight to the
+// "How to play" line, shared by the post-entry confirmation and the
+// /my_tournaments listing. Once the game is live, link straight to the
 // budokan.gg tournament page (which launches the underlying game). While it's
 // still staging — you can enter before the game opens — tell the user when it
 // becomes playable instead. Nothing once the game has ended.
-function playStatusLines(t: Tournament, chain: Chain, tournamentId: string): string[] {
+export function playStatusLines(t: Tournament, chain: Chain, tournamentId: string): string[] {
   const now = Math.floor(Date.now() / 1000);
   const gameStart = toUnixSeconds(t.gameStartTime);
   const gameEnd = toUnixSeconds(t.gameEndTime);

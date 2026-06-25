@@ -16,7 +16,7 @@ import { TelegramApi, type InlineKeyboardButton } from "../telegram-api.ts";
 import { formatError } from "../format-error.ts";
 import { tournamentPageUrl } from "@provable-games/budokan-sdk";
 import { formatTimeUntil, formatTopPrizes } from "../format.ts";
-import { isEnterable } from "./enter.ts";
+import { isEnterable, playStatusLines } from "./enter.ts";
 
 const PAGE_SIZE = 5;
 
@@ -209,7 +209,7 @@ export async function myTournaments(
   const lines = [
     `🏟️ Your tournaments — ${session.session.username} on ${chain} · page ${page}/${totalPages} · ${total} total`,
     "",
-    ...pageData.flatMap((t) => formatTournamentBlock(t, gameNames, chain)),
+    ...pageData.flatMap((t) => formatTournamentBlock(t, gameNames, chain, { play: true })),
   ];
   if (totalPages > 1 && page < totalPages) {
     lines.push("", `Reply '/my_tournaments ${page + 1}' for the next page.`);
@@ -248,6 +248,7 @@ function formatTournamentBlock(
   t: Tournament,
   gameNames: Map<string, string>,
   chain: Chain,
+  options: { play?: boolean } = {},
 ): string[] {
   const gameLabel = gameNames.get(t.gameAddress.toLowerCase()) ?? shortHex(t.gameAddress);
   const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
@@ -265,7 +266,16 @@ function formatTournamentBlock(
   if (prizes) {
     lines.push(`   🏆 ${prizes}`);
   }
-  lines.push(`   ${tournamentPageUrl(chain, t.id)}`);
+  // For listings of tournaments the user has entered (/my_tournaments), show a
+  // "Play now" / "Playable in X" line for live/upcoming ones; that line already
+  // carries the link, so it replaces the bare page URL. Otherwise fall back to
+  // the plain tournament-page link.
+  const play = options.play ? playStatusLines(t, chain, t.id) : [];
+  if (play.length > 0) {
+    for (const line of play) lines.push(`   ${line}`);
+  } else {
+    lines.push(`   ${tournamentPageUrl(chain, t.id)}`);
+  }
   lines.push("");
   return lines;
 }
