@@ -15,7 +15,11 @@ export function formatError(error: unknown): string {
   // error *message* can embed an auth URL / token that the object-key
   // redaction in `replacer` wouldn't catch.
   try {
-    console.error("formatError:", redactString(shortObject(error, 2000)));
+    // Log both the structured dump and toString() — wasm-bindgen errors are
+    // {"__wbg_ptr":N} in the dump but carry their message via toString().
+    const dump = redactString(shortObject(error, 2000));
+    const str = redactString(safeToString(error));
+    console.error("formatError:", str && str !== dump ? `${str} | ${dump}` : dump);
   } catch {
     // Some error objects throw on toString — ignore.
   }
@@ -72,10 +76,33 @@ function buildMessage(error: unknown): string {
     }
 
     if (parts.length > 0) return parts.join(": ");
+
+    // wasm-bindgen errors (e.g. @cartridge/controller-wasm CartridgeSessionAccount)
+    // serialize to {"__wbg_ptr":N} under JSON.stringify — useless — but their
+    // toString() carries the real message. Prefer it before the raw dump.
+    const str = safeToString(error);
+    if (str && str !== "[object Object]" && !/^\{"?__wbg_ptr/.test(str)) {
+      return str;
+    }
     return shortObject(error);
   }
 
   return String(error);
+}
+
+// error.toString() / String(error) without letting a throwing toString crash us.
+function safeToString(error: unknown): string {
+  try {
+    const s = (error as { toString?: () => string })?.toString?.();
+    if (typeof s === "string" && s.length > 0) return s;
+  } catch {
+    // fall through
+  }
+  try {
+    return String(error);
+  } catch {
+    return "";
+  }
 }
 
 /**
