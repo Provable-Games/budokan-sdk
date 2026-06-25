@@ -149,6 +149,11 @@ export type {
   ReceiptWithEvents,
 } from "./calldata/index.js";
 
+// Leaderboard score-submission helpers (compute submit_score positions the way
+// the Budokan web client does). See src/leaderboard/index.ts.
+export { getSubmittableScores, buildSubmitScoreCalls } from "./leaderboard/index.js";
+export type { SubmittableScore } from "./leaderboard/index.js";
+
 // Distribution + entry-fee math (pure). Single source of truth for
 // per-position payouts and the entry-fee pool split (incl protocol fee).
 // See src/distribution/index.ts.
