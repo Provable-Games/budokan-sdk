@@ -149,6 +149,16 @@ export class TelegramBot {
       return;
     }
 
+    // A new command issued mid-flow means the user abandoned the flow they were
+    // in (e.g. typing /enter while /create was still asking for a name). Clear
+    // the stale flow state first so its leftover prompts can't capture this
+    // command's follow-up replies — otherwise the two flows interleave and the
+    // wrong handler eats the answer. /cancel and /back operate ON the active
+    // flow, so they're exempt.
+    if (command !== "/cancel" && command !== "/back" && this.clearPendingFlows(chatId)) {
+      await this.api.sendMessage(chatId, "(Abandoning what we were in the middle of.)");
+    }
+
     switch (command) {
       case "/start":
         return this.handleStart(chatId, args);
@@ -206,16 +216,27 @@ export class TelegramBot {
   }
 
   private async cancel(chatId: string): Promise<void> {
-    const cancelled =
-      create.cancel(chatId) ||
-      addPrize.cancel(chatId) ||
-      enterCmd.cancel(chatId) ||
-      leaderboardCmd.cancel(chatId);
-    if (cancelled) {
+    if (this.clearPendingFlows(chatId)) {
       await this.api.sendMessage(chatId, "Cancelled.");
     } else {
       await this.api.sendMessage(chatId, "Nothing to cancel.");
     }
+  }
+
+  /**
+   * Cancel every in-progress multi-turn flow for a chat. Returns true if any
+   * was active. Cancels ALL of them (not short-circuited) so a chat can't be
+   * left with a second flow still pending — which is exactly how /create and
+   * /enter previously got tangled.
+   */
+  private clearPendingFlows(chatId: string): boolean {
+    const cancelled = [
+      create.cancel(chatId),
+      addPrize.cancel(chatId),
+      enterCmd.cancel(chatId),
+      leaderboardCmd.cancel(chatId),
+    ];
+    return cancelled.some(Boolean);
   }
 
   private async submitScore(chatId: string, args: string[]): Promise<void> {
@@ -348,6 +369,11 @@ export class TelegramBot {
 
     const [action, arg] = (cb.data ?? "").split(":");
     if (action === "enter" && arg && /^\d+$/.test(arg)) {
+      // Tapping Enter abandons any half-finished flow, same as issuing the
+      // command would (see handleMessage).
+      if (this.clearPendingFlows(chatId)) {
+        await this.api.sendMessage(chatId, "(Abandoning what we were in the middle of.)");
+      }
       const chain = await this.chatStates.getChain(chatId);
       return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, [arg]);
     }
