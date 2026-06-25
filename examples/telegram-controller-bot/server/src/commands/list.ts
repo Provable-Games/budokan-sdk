@@ -11,11 +11,11 @@ import { createDenshokanClient } from "@provable-games/denshokan-sdk";
 import type { Config } from "../config.ts";
 import type { Chain, ChatStateStore } from "../chat-state.ts";
 import type { SessionStore } from "../session-store.ts";
-import { gamesForChain } from "../catalog/games.ts";
+import { gameInfoMap, type GameInfo } from "../catalog/games.ts";
 import { TelegramApi, type InlineKeyboardButton } from "../telegram-api.ts";
 import { formatError } from "../format-error.ts";
 import { tournamentPageUrl } from "@provable-games/budokan-sdk";
-import { formatTimeUntil, formatTopPrizes } from "../format.ts";
+import { formatGameLabel, formatTimeUntil, formatTopPrizes } from "../format.ts";
 import { isEnterable, playStatusLines } from "./enter.ts";
 
 const PAGE_SIZE = 5;
@@ -87,7 +87,7 @@ export async function tournaments(
     return;
   }
 
-  const gameNames = await buildGameNameMap(chain);
+  const gameNames = await gameInfoMap(chain);
   const total = result.total ?? result.data.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const header = [
@@ -205,7 +205,7 @@ export async function myTournaments(
   }
   const pageData = resolved.slice(offset, offset + PAGE_SIZE);
 
-  const gameNames = await buildGameNameMap(chain);
+  const gameNames = await gameInfoMap(chain);
   const lines = [
     `🏟️ Your tournaments — ${session.session.username} on ${chain} · page ${page}/${totalPages} · ${total} total`,
     "",
@@ -246,11 +246,11 @@ async function fetchOwnedTournamentIds(chain: Chain, address: string): Promise<s
  */
 function formatTournamentBlock(
   t: Tournament,
-  gameNames: Map<string, string>,
+  gameNames: Map<string, GameInfo>,
   chain: Chain,
   options: { play?: boolean } = {},
 ): string[] {
-  const gameLabel = gameNames.get(t.gameAddress.toLowerCase()) ?? shortHex(t.gameAddress);
+  const gameLabel = formatGameLabel(t.gameAddress, gameNames);
   const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
   // Prefer gameEndTime — when the tournament's competitive window
   // closes. Tournaments past that point are in their submission window
@@ -280,20 +280,6 @@ function formatTournamentBlock(
   return lines;
 }
 
-/**
- * One-shot map of contractAddress → game name for the chain. Avoids N
- * denshokan lookups when rendering a page of tournaments. Reuses
- * gamesForChain (which already intersects denshokan registry ∩ whitelist).
- */
-async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
-  const games = await gamesForChain(chain);
-  const map = new Map<string, string>();
-  for (const g of games) {
-    map.set(g.contractAddress.toLowerCase(), g.name);
-  }
-  return map;
-}
-
 function parseListArgs(args: string[]): { phase?: Phase; page: number } | { phase: "invalid"; page: number } {
   let phase: Phase | undefined;
   let page = 1;
@@ -310,9 +296,3 @@ function parseListArgs(args: string[]): { phase?: Phase; page: number } | { phas
   }
   return { phase, page };
 }
-
-function shortHex(value: string): string {
-  if (!value || value.length <= 18) return value;
-  return `${value.slice(0, 10)}…${value.slice(-6)}`;
-}
-

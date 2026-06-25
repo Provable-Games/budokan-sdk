@@ -20,10 +20,11 @@ import type { Chain } from "../chat-state.ts";
 import type { HandshakeStore } from "../handshake.ts";
 import { TelegramApi } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
-import { gamesForChain } from "../catalog/games.ts";
+import { gameInfoMap, type GameInfo } from "../catalog/games.ts";
 import { tokensForChain, type Erc20Token } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
 import { explorerTxUrl, tournamentPageUrl } from "@provable-games/budokan-sdk";
+import { formatGameLabel, ordinal, shortAddr } from "../format.ts";
 
 type Step = "tournamentPick" | "tokenPick" | "amount" | "position" | "confirm";
 
@@ -32,7 +33,7 @@ interface State {
   chain: Chain;
   // tournamentPick
   pickerTournaments: Array<{ id: string; name: string; gameAddress: string; entryCount: number }>;
-  pickerGameNames: Map<string, string>;
+  pickerGameNames: Map<string, GameInfo>;
   // selection so far
   tournamentId?: string;
   tournamentName?: string;
@@ -106,15 +107,15 @@ export async function start(
     await api.sendMessage(chatId, `No active tournaments on ${chain} to sponsor.`);
     return;
   }
-  const gameNames = await buildGameNameMap(chain);
+  const gameNames = await gameInfoMap(chain);
   states.set(chatId, { step: "tournamentPick", chain, pickerTournaments: pool, pickerGameNames: gameNames, tokens: eligible });
 
   const lines = [
-    `Pick a tournament to sponsor on ${chain}:`,
+    `🏟️ Pick a tournament to sponsor on ${chain}:`,
     "",
     ...pool.map((t, i) => {
-      const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
-      return `  ${i + 1}. #${t.id} ${t.name} — ${game} · ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
+      const game = formatGameLabel(t.gameAddress, gameNames);
+      return `  ${i + 1}. 🎯 #${t.id} ${t.name} — 🎮 ${game} · 👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
     }),
     "",
     "Reply with a number, or /cancel.",
@@ -298,12 +299,6 @@ function parseToBaseUnits(input: string, decimals: number): string | null {
   return combined === "" ? "0" : combined;
 }
 
-function ordinal(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
-}
-
 function sdkClient(config: Config, chain: Chain) {
   return createBudokanClient({
     chain,
@@ -312,18 +307,6 @@ function sdkClient(config: Config, chain: Chain) {
     ...(config.budokanAddress ? { budokanAddress: config.budokanAddress } : {}),
     ...(config.viewerAddress ? { viewerAddress: config.viewerAddress } : {}),
   } as Parameters<typeof createBudokanClient>[0]);
-}
-
-async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
-  const games = await gamesForChain(chain);
-  const map = new Map<string, string>();
-  for (const g of games) map.set(g.contractAddress.toLowerCase(), g.name);
-  return map;
-}
-
-function shortAddr(addr: string): string {
-  if (!addr || addr.length <= 18) return addr;
-  return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
 
 function sessionErrorMessage(reason: "no_session" | "expired" | "policy_mismatch", chain: Chain): string {

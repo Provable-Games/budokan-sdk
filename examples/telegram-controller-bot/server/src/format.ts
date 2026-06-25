@@ -134,7 +134,12 @@ function safeBigInt(value: string | null | undefined): bigint {
   }
 }
 
-function shortAddr(addr: string): string {
+/**
+ * Shortened hex form for inline display of long addresses / token ids,
+ * "0x07ae26ee…c89202831". Exported so every command renders the fallback
+ * the same way instead of each redefining its own shortAddr/shortHex.
+ */
+export function shortAddr(addr: string): string {
   if (!addr || addr.length <= 18) return addr;
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
@@ -148,4 +153,40 @@ export function rankMedal(rank: number): string | null {
   if (rank === 2) return "🥈";
   if (rank === 3) return "🥉";
   return null;
+}
+
+/**
+ * English ordinal suffix for a position — 1 → "1st", 2 → "2nd", 3 → "3rd",
+ * 11 → "11th", 21 → "21st". Used for prize positions and leaderboard ranks
+ * beyond the top-3 medals so placements read naturally ("4th") rather than
+ * as a bare "4.".
+ */
+export function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
+}
+
+/**
+ * Rank prefix used by leaderboard rows: a medal for the top 3, otherwise the
+ * ordinal position ("4th", "12th"). Keeps the visual treatment consistent
+ * across every listing that ranks entries.
+ */
+export function rankPrefix(rank: number): string {
+  return rankMedal(rank) ?? `${ordinal(rank)}`;
+}
+
+/**
+ * Friendly game label for chat output: the real game name when we have it,
+ * otherwise a shortened contract address. Centralizes the "name ?? shortAddr"
+ * fallback that every listing was repeating, so games consistently show as
+ * "Death Mountain" rather than "0x4de0351c…".
+ */
+export function formatGameLabel(
+  gameAddress: string,
+  names: Map<string, { name: string }> | Map<string, string>,
+): string {
+  const entry = names.get(gameAddress.toLowerCase());
+  if (typeof entry === "string") return entry || shortAddr(gameAddress);
+  return entry?.name ?? shortAddr(gameAddress);
 }

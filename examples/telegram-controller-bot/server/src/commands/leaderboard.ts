@@ -31,10 +31,16 @@ import { createDenshokanClient, type Token } from "@provable-games/denshokan-sdk
 import type { Config } from "../config.ts";
 import type { Chain, ChatStateStore } from "../chat-state.ts";
 import { TelegramApi } from "../telegram-api.ts";
-import { gamesForChain } from "../catalog/games.ts";
+import { gameInfoMap, type GameInfo } from "../catalog/games.ts";
 import { formatError } from "../format-error.ts";
 import { tournamentPageUrl } from "@provable-games/budokan-sdk";
-import { formatTimeUntil, formatTopPrizes, rankMedal } from "../format.ts";
+import {
+  formatGameLabel,
+  formatTimeUntil,
+  formatTopPrizes,
+  rankPrefix,
+  shortAddr,
+} from "../format.ts";
 
 const PAGE_SIZE = 10;
 // Picker fetches a window of the most-recently-created tournaments
@@ -50,7 +56,7 @@ interface PickerState {
     gameAddress: string;
     entryCount: number;
   }>;
-  gameNames: Map<string, string>;
+  gameNames: Map<string, GameInfo>;
 }
 
 const pickerStates = new Map<string, PickerState>();
@@ -117,7 +123,7 @@ export async function leaderboard(
     await api.sendMessage(chatId, `🎯 No tournaments on ${chain} yet.`);
     return;
   }
-  const gameNames = await buildGameNameMap(chain);
+  const gameNames = await gameInfoMap(chain);
   const snapshot: PickerState["tournaments"] = tournaments.map((t) => ({
     id: t.id,
     name: t.name || "(unnamed)",
@@ -131,7 +137,7 @@ export async function leaderboard(
     "",
   ];
   tournaments.forEach((t, i) => {
-    const game = gameNames.get(t.gameAddress.toLowerCase()) ?? shortAddr(t.gameAddress);
+    const game = formatGameLabel(t.gameAddress, gameNames);
     const entries = `👥 ${t.entryCount} ${t.entryCount === 1 ? "entry" : "entries"}`;
     const ends = formatTimeUntil(t.gameEndTime);
     const meta = [entries, ends].filter(Boolean).join(" · ");
@@ -289,12 +295,18 @@ async function renderLeaderboard(
   const slice = competitors.slice(start, start + PAGE_SIZE);
   const rankFor = (i: number) => start + i + 1;
 
+  // Resolve the game so we can name it (and show its thumbnail) instead of a
+  // raw address. Best-effort — a registry miss just means no game line/photo.
+  const game = (await gameInfoMap(chain)).get(tournament.gameAddress.toLowerCase());
+
   const header = `📊 Leaderboard — 🎯 #${tournamentId}${tournament.name ? ` (${tournament.name})` : ""} on ${chain}`;
+  const gameLine = game ? `🎮 ${game.name}` : null;
   const sortLine = ascending ? "🔻 Lower scores win" : "🔺 Higher scores win";
   const ends = formatTimeUntil(tournament.gameEndTime);
   const prizes = formatTopPrizes(tournament, chain);
 
   const lines: string[] = [header];
+  if (gameLine) lines.push(gameLine);
   const meta = [sortLine, ends].filter(Boolean).join(" · ");
   if (meta) lines.push(meta);
   if (prizes) lines.push(`🏆 ${prizes}`);
@@ -311,6 +323,13 @@ async function renderLeaderboard(
   }
   lines.push("", `🔗 ${tournamentPageUrl(chain, tournamentId)}`);
 
+  // On the first page, lead with the game's thumbnail when one exists — a
+  // single sendPhoto with the header as caption. sendPhoto degrades to false
+  // on any failure (no image, dead URL), so fall through to the text message.
+  if (page === 1 && game?.imageUrl) {
+    const sent = await api.sendPhoto(chatId, game.imageUrl, lines.join("\n"));
+    if (sent) return;
+  }
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
@@ -322,11 +341,11 @@ async function renderLeaderboard(
 function formatRow(rank: number, t: Token): string {
   const name = t.playerName?.trim() || `(anon ${shortAddr(t.owner)})`;
   const finished = t.gameOver ? " ✅" : "";
-  const medal = rankMedal(rank);
-  // Medal takes the rank's place for top 3; for the rest fall back to
-  // a numeric prefix. Token IDs on this chain are packed felts ~66
-  // chars long — show a short head/tail so rows fit on one line.
-  const prefix = medal ? `${medal} ` : `${rank}. `;
+  // Medal takes the rank's place for the top 3; for the rest show an ordinal
+  // ("4th", "12th") so placements read naturally instead of as a bare "4.".
+  // Token IDs on this chain are packed felts ~66 chars long — show a short
+  // head/tail so rows fit on one line.
+  const prefix = `${rankPrefix(rank)} `;
   return `  ${prefix}${t.score} · ${name} (${shortTokenId(t.tokenId)})${finished}`;
 }
 
@@ -345,14 +364,3 @@ function sdkClient(config: Config, chain: Chain) {
   } as Parameters<typeof createBudokanClient>[0]);
 }
 
-async function buildGameNameMap(chain: Chain): Promise<Map<string, string>> {
-  const games = await gamesForChain(chain);
-  const map = new Map<string, string>();
-  for (const g of games) map.set(g.contractAddress.toLowerCase(), g.name);
-  return map;
-}
-
-function shortAddr(addr: string): string {
-  if (!addr || addr.length <= 18) return addr;
-  return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
-}
