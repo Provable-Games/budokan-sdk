@@ -317,41 +317,53 @@ export class TelegramBot {
   }
 
   /**
-   * /start [payload]. A bare /start shows help. A deep-link payload of the
-   * form `<action>_<id>_<chain>` (minted by the read-only tournament bot's
-   * /play and /claim handoff) resumes that action in this DM: set the chain,
-   * then dispatch to the matching command. The command itself prompts
-   * /connect when there's no session yet, so an unconnected first-timer lands
-   * on a clear next step rather than a dead end.
+   * /start [payload]. A bare /start shows help. A deep-link payload minted by
+   * the read-only tournament bot's handoff resumes that action in this DM: set
+   * the chain, then dispatch to the matching command. Two payload shapes:
+   *   - `<action>_<id>_<chain>`  → enter / claim (need a tournament id)
+   *   - `<action>_<chain>`       → connect / create (no id)
+   * The dispatched command prompts /connect when there's no session yet, so an
+   * unconnected first-timer lands on a clear next step rather than a dead end.
    */
   private async handleStart(chatId: string, args: string[]): Promise<void> {
     const payload = args[0];
     if (!payload) return this.sendHelp(chatId);
 
     // Payload chars are restricted to [A-Za-z0-9_-] by Telegram, so a simple
-    // split is safe. Shape: action_id_chain (e.g. "enter_42_mainnet").
-    const [action, id, chain] = payload.split("_");
-    const validShape =
-      (action === "enter" || action === "claim") &&
-      !!id &&
-      /^\d+$/.test(id) &&
-      !!chain &&
-      isChain(chain);
+    // split is safe.
+    const parts = payload.split("_");
+    const action = parts[0];
 
-    if (!validShape) {
-      // Unknown/garbled payload — fall back to a normal welcome.
-      return this.sendHelp(chatId);
+    // Action-only handoffs: connect / create. Shape: action_chain.
+    if (action === "connect" || action === "create") {
+      const maybeChain = parts[1];
+      if (maybeChain && isChain(maybeChain)) {
+        await this.chatStates.setChain(chatId, maybeChain);
+      }
+      if (action === "connect") return this.connect(chatId);
+      const chain = await this.chatStates.getChain(chatId);
+      return create.start(this.api, chatId, chain);
     }
 
-    await this.chatStates.setChain(chatId, chain);
+    // Tournament-scoped handoffs: enter / claim. Shape: action_id_chain.
+    if (action === "enter" || action === "claim") {
+      const id = parts[1];
+      const chain = parts[2];
+      if (!id || !/^\d+$/.test(id) || !chain || !isChain(chain)) {
+        return this.sendHelp(chatId);
+      }
+      await this.chatStates.setChain(chatId, chain);
 
-    if (action === "enter") {
-      await this.api.sendMessage(chatId, `🎮 Let's get you into tournament #${id} on ${chain}.`);
-      return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, [id]);
+      if (action === "enter") {
+        await this.api.sendMessage(chatId, `🎮 Let's get you into tournament #${id} on ${chain}.`);
+        return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, [id]);
+      }
+      await this.api.sendMessage(chatId, `🏆 Let's claim your rewards for tournament #${id} on ${chain}.`);
+      return this.claim(chatId, [id]);
     }
-    // action === "claim"
-    await this.api.sendMessage(chatId, `🏆 Let's claim your rewards for tournament #${id} on ${chain}.`);
-    return this.claim(chatId, [id]);
+
+    // Unknown/garbled payload — fall back to a normal welcome.
+    return this.sendHelp(chatId);
   }
 
   private async sendHelp(chatId: string): Promise<void> {

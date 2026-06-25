@@ -389,6 +389,19 @@ async function handleTelegramMessage(message) {
     return;
   }
 
+  // Signing actions don't live in this read-only bot — redirect to the DM
+  // signer bot rather than silently ignoring the command. These are the
+  // commands users most often try here out of habit.
+  if (command === "/connect") {
+    await sendConnectLink(chatId);
+    return;
+  }
+
+  if (command === "/create") {
+    await sendCreateLink(chatId);
+    return;
+  }
+
   if (command === "/chain") {
     await handleChainCommand(chatId, args[0]);
   }
@@ -878,21 +891,36 @@ function formatTokenAmount(rawAmount, decimals) {
 }
 
 function helpText() {
-  return [
+  const lines = [
     `Budokan tournament bot (chain: ${currentChain})`,
     "",
+    "This bot shows tournaments and posts live updates. To actually play —",
+    "connect, enter, submit scores, claim — you sign in a private chat with",
+    config.playBotUsername
+      ? `@${config.playBotUsername}. Use /connect to open it.`
+      : "the Budokan web app (this bot is read-only).",
+    "",
+    "Browse:",
+    "/tournaments [phase] - list recent tournaments (optional phase filter)",
+    "/tournament <id> - show tournament details",
+    "/leaderboard <id> - show leaderboard (top 20)",
+    "/prizes <id> - show prizes grouped by pool, with claim status",
+    "",
+    "Follow:",
     "/follow <tournamentId> - subscribe this chat to live updates for a tournament",
     "/unfollow <tournamentId> - stop one tournament",
     "/unfollow - stop all tournaments in this chat",
     "/following - list followed tournaments on the current chain",
-    "/tournament <id> - show tournament details",
-    "/leaderboard <id> - show leaderboard (top 20)",
-    "/prizes <id> - show prizes grouped by pool, with claim status",
-    "/tournaments [phase] - list recent tournaments (optional phase filter)",
-    "/play <id> - get options to enter or play (in Telegram via the play bot, or in browser)",
-    "/claim <id> - get options to claim rewards (in Telegram via the play bot, or in browser)",
+    "",
+    "Play (hands off to the play bot in DM):",
+    "/connect - connect your wallet to start playing",
+    "/play <id> - get options to enter or play (in Telegram or browser)",
+    "/claim <id> - get options to claim rewards (in Telegram or browser)",
+    "/create - create a tournament",
+    "",
     `/chain [${SUPPORTED_CHAINS.join("|")}] - show or switch the active chain`,
-  ].join("\n");
+  ];
+  return lines.join("\n");
 }
 
 // Register the "/" autocomplete menu so users see the available commands.
@@ -911,6 +939,7 @@ async function registerCommandMenu() {
     { command: "tournament", description: "Show tournament details" },
     { command: "leaderboard", description: "Show the top 20 leaderboard" },
     { command: "prizes", description: "List posted prizes" },
+    { command: "connect", description: "Connect your wallet to start playing (opens the play bot)" },
     { command: "play", description: playDesc },
     { command: "claim", description: claimDesc },
     { command: "follow", description: "Get live updates for a tournament" },
@@ -932,11 +961,17 @@ function tournamentUrl(tournamentId) {
 }
 
 // Telegram deep link into a 1:1 chat with the companion controller bot.
-// Tapping it opens that bot and sends `/start <action>_<id>_<chain>`, which the
-// controller bot parses to resume the flow (see its telegram.ts handleStart()).
-// The start payload is restricted to [A-Za-z0-9_-]; action/id/chain all qualify.
+// Tapping it opens that bot and sends `/start <payload>`, which the controller
+// bot parses to resume the flow (see its telegram.ts handleStart()). The start
+// payload is restricted to [A-Za-z0-9_-]; action/id/chain all qualify.
+//   - with an id:    `<action>_<id>_<chain>`  (enter / claim)
+//   - without an id: `<action>_<chain>`       (connect / create)
 function playBotDeepLink(action, tournamentId) {
-  return `https://t.me/${config.playBotUsername}?start=${action}_${tournamentId}_${currentChain}`;
+  const payload =
+    tournamentId === undefined || tournamentId === null
+      ? `${action}_${currentChain}`
+      : `${action}_${tournamentId}_${currentChain}`;
+  return `https://t.me/${config.playBotUsername}?start=${payload}`;
 }
 
 // Build the /play and /claim response. Presents both paths when a play bot is
@@ -963,6 +998,49 @@ function handoffMessage(action, tournamentId) {
     "🌐 In your browser",
     webLine,
   ].join("\n");
+}
+
+// /connect in this read-only bot can't sign anything — point the user at the
+// DM signer bot, where connecting actually happens. Without a play bot wired
+// up, fall back to the Budokan web app.
+async function sendConnectLink(chatId) {
+  if (!config.playBotUsername) {
+    await sendMessage(
+      chatId,
+      `This bot is read-only and can't connect a wallet.\nConnect and play on Budokan instead:\n${config.webUrl}`,
+    );
+    return;
+  }
+  await sendMessage(
+    chatId,
+    [
+      "🔑 Connecting happens in a private chat with the play bot, where your wallet stays secure.",
+      `Tap to open @${config.playBotUsername} and connect:`,
+      playBotDeepLink("connect"),
+      "",
+      "Once connected there, you can enter, submit scores, and claim — all in chat.",
+    ].join("\n"),
+  );
+}
+
+// /create likewise redirects to the DM signer bot (creating a tournament is a
+// signed action this read-only bot can't perform).
+async function sendCreateLink(chatId) {
+  if (!config.playBotUsername) {
+    await sendMessage(
+      chatId,
+      `This bot is read-only and can't create tournaments.\nCreate one on Budokan instead:\n${config.webUrl}`,
+    );
+    return;
+  }
+  await sendMessage(
+    chatId,
+    [
+      "🏗️ Creating a tournament is a signed action — it happens in a private chat with the play bot.",
+      `Tap to open @${config.playBotUsername} and start:`,
+      playBotDeepLink("create"),
+    ].join("\n"),
+  );
 }
 
 function normalizeTournamentId(value) {
