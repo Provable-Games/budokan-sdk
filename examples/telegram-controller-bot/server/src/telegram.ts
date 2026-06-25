@@ -140,6 +140,7 @@ export class TelegramBot {
 
     switch (command) {
       case "/start":
+        return this.handleStart(chatId, args);
       case "/help":
         return this.sendHelp(chatId);
       case "/connect":
@@ -313,6 +314,44 @@ export class TelegramBot {
     } catch (error) {
       await this.api.sendMessage(chatId, `Claim failed: ${formatError(error)}`);
     }
+  }
+
+  /**
+   * /start [payload]. A bare /start shows help. A deep-link payload of the
+   * form `<action>_<id>_<chain>` (minted by the read-only tournament bot's
+   * /play and /claim handoff) resumes that action in this DM: set the chain,
+   * then dispatch to the matching command. The command itself prompts
+   * /connect when there's no session yet, so an unconnected first-timer lands
+   * on a clear next step rather than a dead end.
+   */
+  private async handleStart(chatId: string, args: string[]): Promise<void> {
+    const payload = args[0];
+    if (!payload) return this.sendHelp(chatId);
+
+    // Payload chars are restricted to [A-Za-z0-9_-] by Telegram, so a simple
+    // split is safe. Shape: action_id_chain (e.g. "enter_42_mainnet").
+    const [action, id, chain] = payload.split("_");
+    const validShape =
+      (action === "enter" || action === "claim") &&
+      !!id &&
+      /^\d+$/.test(id) &&
+      !!chain &&
+      isChain(chain);
+
+    if (!validShape) {
+      // Unknown/garbled payload — fall back to a normal welcome.
+      return this.sendHelp(chatId);
+    }
+
+    await this.chatStates.setChain(chatId, chain);
+
+    if (action === "enter") {
+      await this.api.sendMessage(chatId, `🎮 Let's get you into tournament #${id} on ${chain}.`);
+      return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, [id]);
+    }
+    // action === "claim"
+    await this.api.sendMessage(chatId, `🏆 Let's claim your rewards for tournament #${id} on ${chain}.`);
+    return this.claim(chatId, [id]);
   }
 
   private async sendHelp(chatId: string): Promise<void> {

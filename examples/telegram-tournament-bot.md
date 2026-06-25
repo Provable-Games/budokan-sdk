@@ -70,35 +70,53 @@ You can also add the bot to a group and run `/follow 42` in that group. If BotFa
 | `/leaderboard <id>` | Show top 20 leaderboard entries |
 | `/prizes <id>` | List posted prizes |
 | `/tournaments [phase]` | List recent tournaments, optionally filtered by phase (`scheduled`, `registration`, `staging`, `live`, `submission`, `finalized`) |
-| `/play <id>` | Return a deeplink to enter or play (signs in browser) |
-| `/claim <id>` | Return a deeplink to claim rewards (signs in browser) |
+| `/play <id>` | Show options to enter or play: in Telegram (via the play bot) or in browser |
+| `/claim <id>` | Show options to claim rewards: in Telegram (via the play bot) or in browser |
 
 ## Why deeplinks for actions?
 
-Budokan tournament actions (entering, submitting a score, claiming a prize) require Starknet transactions signed by the player's wallet. The browser app uses [Cartridge Controller](https://docs.cartridge.gg/controller) to manage keys; a Telegram bot does not have access to that wallet. `/play` and `/claim` therefore return URLs to `https://budokan.gg/tournament/<id>` so the user can complete the action in their browser session.
+Budokan tournament actions (entering, submitting a score, claiming a prize) require Starknet transactions signed by the player's wallet. The browser app uses [Cartridge Controller](https://docs.cartridge.gg/controller) to manage keys; a read-only Telegram bot does not have access to that wallet. `/play` and `/claim` therefore return a URL to `https://budokan.gg/tournament/<id>` so the user can complete the action in their browser session.
+
+This bot stays read-only on purpose, which makes it safe to run in a **public channel** — it holds no keys and signs nothing. See the architecture note below for why signing belongs in a private chat.
+
+## Optional: hand off to the in-Telegram play bot
+
+The companion [`telegram-controller-bot`](./telegram-controller-bot) signs Budokan actions inside Telegram using a scoped, spend-capped [Cartridge Controller](https://docs.cartridge.gg/controller) session that the user authorizes once. Because it holds session keys and keys everything off the chat id, it is **DM-only** — do not put it in a public channel.
+
+Set `PLAY_BOT_USERNAME` to that bot's username (without `@`) to bridge the two. `/play` and `/claim` then present two options:
+
+- **In Telegram (recommended)** — a `https://t.me/<PLAY_BOT_USERNAME>?start=<action>_<id>_<chain>` deep link. Tapping it opens a private chat with the play bot and resumes the flow there (the play bot's `/start` handler parses the payload). The user runs `/connect` once, then enters/claims in chat — no browser.
+- **In your browser** — the `https://budokan.gg/tournament/<id>` link, which works with no extra setup.
+
+When `PLAY_BOT_USERNAME` is unset, `/play` and `/claim` return only the browser link, so this bot is fully useful deployed on its own. This split — public read-only bot for discovery, DM controller bot for signing — is the recommended Telegram deployment.
 
 If you need server-side signing for an automated workflow (for example, an admin script that distributes refunds), use `starknet.js` with a dedicated account directly — outside this bot.
 
-## Optional command menu
+## Command menu
 
-Telegram can show these commands in the bot menu:
+The bot registers its `/` autocomplete menu automatically on startup via
+`setMyCommands`, so the commands (and the play/claim wording, which adapts to
+whether `PLAY_BOT_USERNAME` is set) appear in Telegram with no manual step.
+
+If you ever want to set it by hand — for example from a deploy script — the
+equivalent call is:
 
 ```bash
 curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setMyCommands" \
   -H "Content-Type: application/json" \
   -d '{
     "commands": [
-      {"command":"start","description":"Show help"},
-      {"command":"help","description":"Show help"},
-      {"command":"follow","description":"Follow a tournament"},
+      {"command":"help","description":"Show command list"},
+      {"command":"tournaments","description":"List recent tournaments"},
+      {"command":"tournament","description":"Show tournament details"},
+      {"command":"leaderboard","description":"Show the top 20 leaderboard"},
+      {"command":"prizes","description":"List posted prizes"},
+      {"command":"play","description":"Enter or play (in Telegram or browser)"},
+      {"command":"claim","description":"Claim rewards (in Telegram or browser)"},
+      {"command":"follow","description":"Get live updates for a tournament"},
       {"command":"unfollow","description":"Stop following a tournament"},
       {"command":"following","description":"List followed tournaments"},
-      {"command":"tournament","description":"Show tournament details"},
-      {"command":"leaderboard","description":"Show leaderboard"},
-      {"command":"prizes","description":"Show prizes"},
-      {"command":"tournaments","description":"List recent tournaments"},
-      {"command":"play","description":"Open Budokan to play"},
-      {"command":"claim","description":"Open Budokan to claim"}
+      {"command":"chain","description":"Show or switch the active chain"}
     ]
   }'
 ```

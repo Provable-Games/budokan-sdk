@@ -48,6 +48,11 @@ function loadConfig() {
     budokanAddress: env("BUDOKAN_ADDRESS"),
     viewerAddress: env("BUDOKAN_VIEWER_ADDRESS"),
     webUrl: (env("BUDOKAN_WEB_URL") ?? "https://budokan.gg").replace(/\/$/, ""),
+    // Username (without the leading @) of the companion controller bot that
+    // signs in DM. When set, /play and /claim offer an "in Telegram" option
+    // that deep-links into a private chat with that bot. When unset, those
+    // commands fall back to the budokan.gg browser link only.
+    playBotUsername: env("PLAY_BOT_USERNAME")?.replace(/^@/, ""),
   };
 }
 
@@ -112,6 +117,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 await telegram("deleteWebhook", { drop_pending_updates: false });
+await registerCommandMenu();
 refreshBudokanSubscription();
 console.log("Telegram tournament bot is running.");
 await pollTelegram();
@@ -674,10 +680,7 @@ async function sendPlayLink(chatId, inputId) {
     await sendMessage(chatId, "Usage: /play <tournamentId>");
     return;
   }
-  await sendMessage(
-    chatId,
-    `Open Budokan to enter or play this tournament:\n${tournamentUrl(tournamentId)}\n\nYou'll connect a Cartridge wallet in the browser to sign transactions.`,
-  );
+  await sendMessage(chatId, handoffMessage("enter", tournamentId));
 }
 
 async function sendClaimLink(chatId, inputId) {
@@ -686,10 +689,7 @@ async function sendClaimLink(chatId, inputId) {
     await sendMessage(chatId, "Usage: /claim <tournamentId>");
     return;
   }
-  await sendMessage(
-    chatId,
-    `Open Budokan to claim rewards for this tournament:\n${tournamentUrl(tournamentId)}\n\nClaims must be signed in the browser with your Cartridge wallet.`,
-  );
+  await sendMessage(chatId, handoffMessage("claim", tournamentId));
 }
 
 function chatTournamentIds(chatId) {
@@ -889,16 +889,80 @@ function helpText() {
     "/leaderboard <id> - show leaderboard (top 20)",
     "/prizes <id> - show prizes grouped by pool, with claim status",
     "/tournaments [phase] - list recent tournaments (optional phase filter)",
-    "/play <id> - get a deeplink to enter or play (signs in browser)",
-    "/claim <id> - get a deeplink to claim rewards (signs in browser)",
+    "/play <id> - get options to enter or play (in Telegram via the play bot, or in browser)",
+    "/claim <id> - get options to claim rewards (in Telegram via the play bot, or in browser)",
     `/chain [${SUPPORTED_CHAINS.join("|")}] - show or switch the active chain`,
   ].join("\n");
+}
+
+// Register the "/" autocomplete menu so users see the available commands.
+// Best-effort: a failure here (e.g. transient Telegram error) should not stop
+// the bot from running. Descriptions adapt to whether a play bot is wired up.
+async function registerCommandMenu() {
+  const playDesc = config.playBotUsername
+    ? "Enter or play (in Telegram or browser)"
+    : "Get a link to enter or play";
+  const claimDesc = config.playBotUsername
+    ? "Claim rewards (in Telegram or browser)"
+    : "Get a link to claim rewards";
+  const commands = [
+    { command: "help", description: "Show command list" },
+    { command: "tournaments", description: "List recent tournaments" },
+    { command: "tournament", description: "Show tournament details" },
+    { command: "leaderboard", description: "Show the top 20 leaderboard" },
+    { command: "prizes", description: "List posted prizes" },
+    { command: "play", description: playDesc },
+    { command: "claim", description: claimDesc },
+    { command: "follow", description: "Get live updates for a tournament" },
+    { command: "unfollow", description: "Stop following a tournament" },
+    { command: "following", description: "List followed tournaments" },
+    { command: "chain", description: "Show or switch the active chain" },
+  ];
+  try {
+    await telegram("setMyCommands", { commands });
+  } catch (error) {
+    console.error("setMyCommands failed:", formatError(error));
+  }
 }
 
 function tournamentUrl(tournamentId) {
   // Include the active chain — without ?network the site defaults to mainnet,
   // sending sepolia users to the wrong (or nonexistent) tournament.
   return `${config.webUrl}/tournament/${tournamentId}?network=${currentChain}`;
+}
+
+// Telegram deep link into a 1:1 chat with the companion controller bot.
+// Tapping it opens that bot and sends `/start <action>_<id>_<chain>`, which the
+// controller bot parses to resume the flow (see its telegram.ts handleStart()).
+// The start payload is restricted to [A-Za-z0-9_-]; action/id/chain all qualify.
+function playBotDeepLink(action, tournamentId) {
+  return `https://t.me/${config.playBotUsername}?start=${action}_${tournamentId}_${currentChain}`;
+}
+
+// Build the /play and /claim response. Presents both paths when a play bot is
+// configured (in-Telegram first, since it's the nicer UX), otherwise just the
+// browser link — so the bot is still useful deployed on its own.
+function handoffMessage(action, tournamentId) {
+  const webLine =
+    action === "claim"
+      ? `Claim rewards on Budokan, signing in the browser with your Cartridge wallet:\n${tournamentUrl(tournamentId)}`
+      : `Enter or play on Budokan, signing in the browser with your Cartridge wallet:\n${tournamentUrl(tournamentId)}`;
+
+  if (!config.playBotUsername) {
+    return webLine;
+  }
+
+  const verb = action === "claim" ? "claim rewards for" : "enter or play";
+  return [
+    `🎮 Tournament #${tournamentId} — two ways to ${action === "claim" ? "claim" : "play"}:`,
+    "",
+    "▶ In Telegram (recommended)",
+    `Connect once with @${config.playBotUsername}, then ${verb} right here in chat — no browser:`,
+    playBotDeepLink(action, tournamentId),
+    "",
+    "🌐 In your browser",
+    webLine,
+  ].join("\n");
 }
 
 function normalizeTournamentId(value) {
