@@ -209,20 +209,39 @@ async function showScores(
   // Ascending leaderboards rank lowest-score-first; mirror that in the sort.
   const ascending = tournament.leaderboardConfig?.ascending === true;
 
+  // Entries come from the tournament's REGISTRATIONS — the authoritative list
+  // of tokens actually entered in this tournament, with each token's submitted
+  // status. (A denshokan `contextId` query is NOT safe here: contextId is a
+  // generic per-game field, so `contextId == 1` collides with context #1 of
+  // other games and would surface tokens that never entered this tournament.)
+  let entries: { tokenId: string; hasSubmitted: boolean }[];
+  try {
+    const res = await client.getTournamentRegistrations(tournamentId, { isBanned: false, limit: 500 });
+    entries = res.data
+      .filter((r) => !r.isBanned)
+      .map((r) => ({ tokenId: r.gameTokenId, hasSubmitted: r.hasSubmitted }));
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't read entries: ${formatError(error)}`);
+    return;
+  }
+  if (entries.length === 0) {
+    await api.sendMessage(
+      chatId,
+      `🏅 No entries yet for #${tournamentId} ${tournament.name ? `"${tournament.name}"` : ""}.`,
+    );
+    return;
+  }
+
+  // Scores for the entered tokens (denshokan), and which tokens are the user's.
   const denshokan = createDenshokanClient({ chain });
-  let rankedTokens: { tokenId: string; score: number }[];
+  const scoreById = new Map<string, number>();
   let mine: Set<string>;
   try {
-    const [all, ours] = await Promise.all([
-      denshokan.getTokens({
-        contextId: Number(tournamentId),
-        gameOver: true,
-        sort: { field: "score", direction: ascending ? "asc" : "desc" },
-        limit: prizePositions,
-      }),
+    const [ranks, ours] = await Promise.all([
+      denshokan.getTokenRanks(entries.map((e) => e.tokenId), {}),
       denshokan.getPlayerTokens(session.data.address, { limit: 200 }),
     ]);
-    rankedTokens = all.data.map((t) => ({ tokenId: t.tokenId, score: t.score }));
+    for (const r of ranks.data) scoreById.set(tokenKey(r.tokenId), r.score);
     mine = new Set(
       ours.data
         .filter((t) => t.contextId !== null && Number(t.contextId) === Number(tournamentId))
@@ -233,30 +252,19 @@ async function showScores(
     return;
   }
 
-  if (rankedTokens.length === 0) {
-    await api.sendMessage(
-      chatId,
-      `🏅 No game-over scores to submit yet for #${tournamentId} ${tournament.name ? `"${tournament.name}"` : ""}.\nPlay first, then come back.`,
-    );
-    return;
-  }
-
-  let submittedIds: Set<string>;
-  try {
-    const lb = await client.getTournamentLeaderboard(tournamentId);
-    submittedIds = new Set(lb.map((e) => tokenKey(e.tokenId)));
-  } catch (error) {
-    await api.sendMessage(chatId, `Couldn't read the leaderboard: ${formatError(error)}`);
-    return;
-  }
-
-  const ranked: RankedToken[] = rankedTokens.map((t, i) => ({
-    tokenId: t.tokenId,
-    score: t.score,
-    position: i + 1,
-    submitted: submittedIds.has(tokenKey(t.tokenId)),
-    mine: mine.has(tokenKey(t.tokenId)),
-  }));
+  // Sort by score (direction per leaderboard), assign 1-indexed rank positions,
+  // and cap to the paid prize positions.
+  const ranked: RankedToken[] = entries
+    .map((e) => ({
+      tokenId: e.tokenId,
+      score: scoreById.get(tokenKey(e.tokenId)) ?? 0,
+      submitted: e.hasSubmitted,
+      mine: mine.has(tokenKey(e.tokenId)),
+      position: 0,
+    }))
+    .sort((a, b) => (ascending ? a.score - b.score : b.score - a.score))
+    .slice(0, prizePositions)
+    .map((r, i) => ({ ...r, position: i + 1 }));
 
   const unsubmitted = ranked.filter((r) => !r.submitted);
 
