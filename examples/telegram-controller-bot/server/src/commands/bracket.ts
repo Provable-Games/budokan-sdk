@@ -275,7 +275,7 @@ export async function handleAnswer(
       await sendFeeTokenPrompt(api, d.chain, chatId);
       return;
     }
-    const tokens = tokensForChain(d.chain);
+    const tokens = spendableTokens(d.chain);
     const n = Number(t);
     if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
       await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no seed, or /cancel.`);
@@ -308,7 +308,7 @@ export async function handleAnswer(
       await api.sendMessage(chatId, confirmText(d));
       return;
     }
-    const tokens = tokensForChain(d.chain);
+    const tokens = spendableTokens(d.chain);
     const n = Number(t);
     if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
       await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no prize, or /cancel.`);
@@ -384,7 +384,7 @@ export async function handleAnswer(
       }
       return;
     }
-    const tokens = tokensForChain(d.chain);
+    const tokens = spendableTokens(d.chain);
     const n = Number(t);
     if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
       await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no entry fee, or /cancel.`);
@@ -1302,12 +1302,21 @@ async function sendTokenList(
   header: string,
   zeroLabel: string,
 ): Promise<void> {
-  const tokens = tokensForChain(chain);
+  const tokens = spendableTokens(chain);
   const lines = [header, ""];
   tokens.forEach((tk, i) => lines.push(`  ${i + 1}. ${tk.symbol}`));
   lines.push(`  0. ${zeroLabel}`);
   lines.push("", "Reply with a number. /cancel to abort.");
   await api.sendMessage(chatId, lines.join("\n"));
+}
+
+/**
+ * Tokens the /connect session can actually escrow — i.e. those with an `approve`
+ * spend cap in the session policy (see policies.ts). Seed / entry-fee / prize
+ * must come from here, or the in-session escrow would be unauthorized.
+ */
+function spendableTokens(chain: Chain): readonly Erc20Token[] {
+  return tokensForChain(chain).filter((t) => t.spendLimit);
 }
 
 async function sendFeeTokenPrompt(api: TelegramApi, chain: Chain, chatId: string): Promise<void> {
