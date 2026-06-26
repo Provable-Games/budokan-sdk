@@ -224,6 +224,20 @@ export class TelegramBot {
         if (!id) return this.api.sendMessage(chatId, "Usage: /bracket_view <id>");
         return bracketCmd.view(this.api, this.brackets, chatId, id);
       }
+      case "/bracket_join":
+      case "/bracketjoin":
+      case "/join": {
+        const id = args[0];
+        if (!id) return this.api.sendMessage(chatId, "Usage: /bracket_join <id>");
+        const chain = await this.chatStates.getChain(chatId);
+        return bracketCmd.join(this.api, this.config, this.brackets, chatId, chain, id);
+      }
+      case "/bracket_start":
+      case "/bracketstart": {
+        const id = args[0];
+        if (!id) return this.api.sendMessage(chatId, "Usage: /bracket_start <id>");
+        return bracketCmd.startNow(this.api, this.config, this.brackets, chatId, id);
+      }
       case "/enter": {
         const chain = await this.chatStates.getChain(chatId);
         return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, args);
@@ -461,7 +475,8 @@ export class TelegramBot {
         "  /add_prize [tournamentId] — sponsor an ERC-20 prize (no id → picker; signs in chat within your spending limit, else a budokan.gg link)",
         "",
         "Brackets (1v1 single-elim, gated):",
-        "  /bracket — create a bracket (pick game, players, length, prize); deploys the whole gated tree and enters round 1 for the players",
+        "  /bracket — create a bracket: closed (paste players), open (people join till full), or mix. Players can be 0x addresses or Cartridge usernames.",
+        "  /bracket_join <id> — join an open bracket (after /connect); /bracket_start <id> — organizer force-start",
         "  /brackets — list brackets; /bracket_view <id> — show the tree",
         "",
         "  /cancel — abort an in-flight multi-turn flow",
@@ -591,6 +606,7 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "distribute", description: "Pay out every unclaimed reward to all winners (permissionless)" },
   { command: "bracket", description: "Create a 1v1 single-elim bracket (organizer)" },
   { command: "brackets", description: "List brackets on this chain" },
+  { command: "bracket_join", description: "Join an open bracket: /bracket_join <id>" },
   { command: "add_prize", description: "Sponsor a prize for a tournament" },
   { command: "back", description: "Go back / edit the current section in /create" },
   { command: "cancel", description: "Abort the current multi-turn flow" },
