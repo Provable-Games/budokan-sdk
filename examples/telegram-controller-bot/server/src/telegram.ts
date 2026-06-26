@@ -233,6 +233,15 @@ export class TelegramBot {
         const chain = await this.chatStates.getChain(chatId);
         return bracketCmd.join(this.api, this.config, this.brackets, chatId, chain, id);
       }
+      case "/bracket_sponsor":
+      case "/bracketsponsor": {
+        const id = args[0];
+        const target = args[1];
+        if (!id || !target) {
+          return this.api.sendMessage(chatId, "Usage: /bracket_sponsor <id> <address or Cartridge username>");
+        }
+        return bracketCmd.sponsorPaid(this.api, this.config, this.brackets, chatId, id, target);
+      }
       case "/bracket_channel":
       case "/bracketchannel":
         // Run in the target group to make bracket cards post there.
@@ -403,6 +412,10 @@ export class TelegramBot {
     if (action === "bjoin" && arg) {
       return bracketCmd.joinViaButton(this.api, this.config, this.brackets, cb.id, cb.from?.id, arg);
     }
+    // Sponsor button: needs a target, so point the tapper to the DM command.
+    if (action === "bspon" && arg) {
+      return bracketCmd.sponsorViaButton(this.api, cb.id, arg);
+    }
 
     await this.api.answerCallback(cb.id);
     const chatId = cb.message ? String(cb.message.chat.id) : undefined;
@@ -490,6 +503,7 @@ export class TelegramBot {
         "Brackets (1v1 single-elim, gated):",
         "  /bracket — create a bracket: closed (paste players), open (people join till full), or mix. Players can be 0x addresses or Cartridge usernames.",
         "  /bracket_join <id> — join an open bracket (after /connect); /bracket_start <id> — organizer force-start",
+        "  /bracket_sponsor <id> <address|username> — pay another player's entry into a paid bracket",
         "  /bracket_channel — run in a public group to post bracket cards + updates there (no env var needed)",
         "  /brackets — list brackets; /bracket_view <id> — show the tree",
         "",
@@ -621,6 +635,7 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "bracket", description: "Create a 1v1 single-elim bracket (organizer)" },
   { command: "brackets", description: "List brackets on this chain" },
   { command: "bracket_join", description: "Join an open bracket: /bracket_join <id>" },
+  { command: "bracket_sponsor", description: "Pay a player's paid-bracket entry: /bracket_sponsor <id> <addr>" },
   { command: "bracket_channel", description: "Run in a group to post bracket cards there" },
   { command: "add_prize", description: "Sponsor a prize for a tournament" },
   { command: "back", description: "Go back / edit the current section in /create" },

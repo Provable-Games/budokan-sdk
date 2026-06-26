@@ -798,44 +798,52 @@ async function deployPaidUpfront(
 }
 
 /**
- * Tap-to-join a paid up-front bracket: assign the next slot, then run the
- * player's own session to enter their round-1 match + escrow their fee as
- * placement prizes — one multicall, non-custodial. Returns a toast string.
+ * Core of a paid entry: assign the next slot and run `payerChatId`'s session to
+ * enter the round-1 match + escrow the fee — one multicall, non-custodial. By
+ * default the entry mints to the payer (self-join). Pass `opts.playerAddress`
+ * to pay on someone else's behalf (sponsorship): the entry token mints to that
+ * address while the payer funds the fee + prize escrow. Returns a toast string.
  */
-async function paidJoin(
+async function enterPaidSlot(
   api: TelegramApi,
   config: Config,
   store: BracketStore,
   b: StoredBracket,
-  joinerChatId: string,
+  payerChatId: string,
+  opts: { playerAddress?: string; playerName?: string } = {},
 ): Promise<string> {
   if (b.phase !== "filling" || !b.paid || b.filled === undefined || b.capacity === undefined) {
     return "This bracket isn't open for joins.";
   }
   // Capture so narrowing survives the awaits below.
   const paid = b.paid;
+  const sponsoring = !!opts.playerAddress;
   if (b.filled >= b.capacity) return "Sorry — it just filled up.";
   const chain = b.state.chain as Chain;
-  const session = await resolveAccount(joinerChatId, chain, config);
-  if (!session.ok) return "DM me first: open the bot, /connect, then tap Join.";
-  const addr = session.data.address.toLowerCase();
+  const session = await resolveAccount(payerChatId, chain, config);
+  if (!session.ok) return "DM me first: open the bot, /connect, then try again.";
+
+  const playerAddress = opts.playerAddress ?? session.data.address;
+  const playerName =
+    opts.playerName ??
+    (session.data.username && session.data.username !== "unknown" ? session.data.username : undefined);
+  const addr = playerAddress.toLowerCase();
   if (b.state.matches.some((m) => m.round === 1 && (m.playerA?.address.toLowerCase() === addr || m.playerB?.address.toLowerCase() === addr))) {
-    return `You're already in (${b.filled}/${b.capacity}).`;
+    return `${sponsoring ? "That player is" : "You're"} already in (${b.filled}/${b.capacity}).`;
   }
 
   const seed = b.filled + 1;
   const match = b.state.matches.find((m) => m.round === 1 && (m.playerA?.seed === seed || m.playerB?.seed === seed));
   if (!match) return "No open slot — try again.";
-  const name = session.data.username && session.data.username !== "unknown" ? session.data.username : undefined;
-  const realPlayer = { address: session.data.address, name, seed };
+  const player = { address: playerAddress, name: playerName, seed };
   const slotA = match.playerA?.seed === seed;
-  if (slotA) match.playerA = realPlayer;
-  else match.playerB = realPlayer;
-  b.state.players[seed - 1] = realPlayer;
+  if (slotA) match.playerA = player;
+  else match.playerB = player;
+  b.state.players[seed - 1] = player;
 
   try {
     await session.data.account.execute([
-      ...bracketEntryCalls(b.state, match.id, realPlayer.address),
+      ...bracketEntryCalls(b.state, match.id, playerAddress),
       ...bracketFeePrizeCalls(b.state, {
         tokenAddress: paid.tokenAddress,
         fee: paid.fee,
@@ -847,16 +855,59 @@ async function paidJoin(
     if (slotA) match.playerA = placeholder(seed);
     else match.playerB = placeholder(seed);
     b.state.players[seed - 1] = placeholder(seed);
-    return `Couldn't join: ${formatError(error)}`;
+    return `Couldn't ${sponsoring ? "sponsor" : "join"}: ${formatError(error)}`;
   }
 
   b.filled += 1;
   if (b.filled >= b.capacity) b.phase = "live";
   await store.save(b);
   await updatePaidCard(api, b);
-  return b.phase === "live"
-    ? `✅ Paid & in — the bracket is starting!`
-    : `✅ Paid ${b.paid.label} — you're in! (${b.filled}/${b.capacity})`;
+  if (b.phase === "live") {
+    return `✅ Paid — ${sponsoring ? "sponsored entry added" : "you're in"}; the bracket is starting!`;
+  }
+  const who = sponsoring ? `${playerName ?? short(playerAddress)} is in (sponsored)` : "you're in";
+  return `✅ Paid ${paid.label} — ${who}! (${b.filled}/${b.capacity})`;
+}
+
+/** Tap-to-join a paid bracket: the tapping player pays their own entry. */
+async function paidJoin(
+  api: TelegramApi,
+  config: Config,
+  store: BracketStore,
+  b: StoredBracket,
+  joinerChatId: string,
+): Promise<string> {
+  return enterPaidSlot(api, config, store, b, joinerChatId);
+}
+
+/**
+ * /bracket_sponsor <id> <address|username> — pay another player's entry into a
+ * paid bracket from your own session (run in DM, where your session lives).
+ */
+export async function sponsorPaid(
+  api: TelegramApi,
+  config: Config,
+  store: BracketStore,
+  chatId: string,
+  id: string,
+  target: string,
+): Promise<void> {
+  const b = await store.get(id);
+  if (!b || b.phase !== "filling" || !b.paid) {
+    await api.sendMessage(chatId, `No paid bracket ${id} is open for sponsorship.`);
+    return;
+  }
+  const { players, unresolved } = await resolvePlayers(b.state.chain as Chain, target);
+  if (players.length === 0) {
+    await api.sendMessage(
+      chatId,
+      `Couldn't resolve "${target}"${unresolved.length ? ` (${unresolved.join(", ")})` : ""}. Use a 0x address or a Cartridge username.`,
+    );
+    return;
+  }
+  const p = players[0]!;
+  const toast = await enterPaidSlot(api, config, store, b, chatId, { playerAddress: p.address, playerName: p.name });
+  await api.sendMessage(chatId, toast);
 }
 
 function paidCard(b: StoredBracket): string {
@@ -893,8 +944,22 @@ function paidJoinKeyboard(b: StoredBracket): { inline_keyboard: InlineKeyboardBu
   return {
     inline_keyboard: [
       [{ text: `🎮 Join — ${b.paid?.label ?? "play"} (${b.filled ?? 0}/${b.capacity ?? 0})`, callback_data: `bjoin:${b.state.id}` }],
+      [{ text: `🎁 Sponsor a player`, callback_data: `bspon:${b.state.id}` }],
     ],
   };
+}
+
+/** A Sponsor-button tap: point the user to the DM command (it needs a target). */
+export async function sponsorViaButton(
+  api: TelegramApi,
+  callbackQueryId: string,
+  id: string,
+): Promise<void> {
+  await api.answerCallback(
+    callbackQueryId,
+    `To sponsor a player, DM me:  /bracket_sponsor ${id} <address or Cartridge username>`,
+    true,
+  );
 }
 
 async function updatePaidCard(api: TelegramApi, b: StoredBracket): Promise<void> {
