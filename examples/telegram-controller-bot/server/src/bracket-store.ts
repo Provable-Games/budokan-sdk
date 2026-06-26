@@ -32,6 +32,8 @@ export interface BracketRegistration {
   /** Per-match schedule durations (seconds). */
   length: { reg: number; game: number; sub: number };
   prize?: { tokenAddress: string; amount: string; label: string };
+  /** Sponsored-prize placement split (bps per tier); default champion-takes-all. */
+  prizeTiersBps?: number[];
   /** Game settings (denshokan) chosen at create time; defaults to 0. */
   settingsId?: number;
   settingsName?: string;

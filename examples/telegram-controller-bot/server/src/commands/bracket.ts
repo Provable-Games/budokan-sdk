@@ -20,7 +20,6 @@ import {
   advanceBracket,
   attachMatchTournament,
   bracketEntryCalls,
-  bracketFinalPrizeCalls,
   bracketFeePrizeCalls,
   bracketRounds,
   bracketSummary,
@@ -71,6 +70,8 @@ interface Draft {
     | "length"
     | "prizeToken"
     | "prizeAmount"
+    | "prizeSplit"
+    | "prizeCustom"
     | "feeToken"
     | "feeAmount"
     | "feeSplit"
@@ -88,6 +89,8 @@ interface Draft {
   length?: (typeof LENGTH_PRESETS)[number];
   prizeToken?: Erc20Token;
   prize?: { tokenAddress: string; amount: string; label: string };
+  /** Sponsored-prize placement split (bps per tier); default champion-takes-all. */
+  prizeTiersBps?: number[];
   // Paid (open mode only): players pay this fee on tap; it escrows into
   // placement prizes per tiersBps (basis points per tier). Collected over the
   // feeToken → feeAmount → feeSplit sub-flow.
@@ -287,6 +290,42 @@ export async function handleAnswer(
       amount: toRawAmount(t, d.prizeToken!.decimals),
       label: `${t} ${d.prizeToken!.symbol}`,
     };
+    d.step = "prizeSplit";
+    await sendFeeSplitPrompt(api, chatId);
+    return;
+  }
+
+  if (d.step === "prizeSplit") {
+    if (/^custom$/i.test(t) || Number(t) === FEE_SPLITS.length + 1) {
+      d.step = "prizeCustom";
+      await api.sendMessage(
+        chatId,
+        "Enter the split as whole % summing to 100 — 1st, then 2nd, then semifinalists, then quarterfinalists. E.g. `60 30 10`. /cancel to abort.",
+      );
+      return;
+    }
+    const n = Number(t);
+    if (!/^\d+$/.test(t) || n < 1 || n > FEE_SPLITS.length) {
+      await api.sendMessage(chatId, `Reply 1–${FEE_SPLITS.length + 1}, or /cancel.`);
+      return;
+    }
+    d.prizeTiersBps = [...FEE_SPLITS[n - 1]!.bps];
+    d.step = "confirm";
+    await api.sendMessage(chatId, confirmText(d));
+    return;
+  }
+
+  if (d.step === "prizeCustom") {
+    const places = t.split(/\s+/).map(Number);
+    if (
+      places.length === 0 ||
+      places.some((p) => !Number.isFinite(p) || p < 0) ||
+      places.reduce((a, b) => a + b, 0) !== 100
+    ) {
+      await api.sendMessage(chatId, "Whole percentages summing to 100 (e.g. `60 30 10`). Try again, or /cancel.");
+      return;
+    }
+    d.prizeTiersBps = places.map((p) => Math.round(p * 100));
     d.step = "confirm";
     await api.sendMessage(chatId, confirmText(d));
     return;
@@ -380,6 +419,7 @@ export async function handleAnswer(
         settingsId: d.settingsId,
         length: d.length!,
         prize: d.prize,
+        prizeTiersBps: d.prizeTiersBps,
         players: d.players!,
       });
       return;
@@ -405,6 +445,7 @@ export async function handleAnswer(
       },
       length: { reg: d.length!.reg, game: d.length!.game, sub: d.length!.sub },
       prize: d.prize,
+      prizeTiersBps: d.prizeTiersBps,
       settingsId: d.settingsId,
       settingsName: d.settingsName,
       capacity: d.capacity!,
@@ -595,6 +636,7 @@ async function deployFromRegistration(
     settingsId: reg.settingsId,
     length: reg.length,
     prize: reg.prize,
+    prizeTiersBps: reg.prizeTiersBps,
     players: reg.players,
   });
   if (ok) await store.deleteRegistration(reg.id);
@@ -610,6 +652,7 @@ interface DeployParams {
   settingsId?: number;
   length: { reg: number; game: number; sub: number };
   prize?: { tokenAddress: string; amount: string; label: string };
+  prizeTiersBps?: number[];
   players: Player[];
 }
 
@@ -656,7 +699,8 @@ async function deployResolved(
     },
     players,
     gated: true,
-    finalPrize: p.prize ? { tokenAddress: p.prize.tokenAddress, amount: p.prize.amount } : undefined,
+    // Sponsored prize is escrowed below via bracketFeePrizeCalls (supports a
+    // placement split), not the single-position finalPrize path.
   });
 
   const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
@@ -680,8 +724,16 @@ async function deployResolved(
         await session.data.account.execute(bracketEntryCalls(state, m.id, player.address));
       }
     }
-    const prizeCalls = bracketFinalPrizeCalls(state);
-    if (prizeCalls.length > 0) await session.data.account.execute(prizeCalls);
+    // Sponsored prize: the organizer's session escrows it across the placement
+    // tiers (default champion-takes-all) now that every match exists.
+    if (p.prize) {
+      const prizeCalls = bracketFeePrizeCalls(state, {
+        tokenAddress: p.prize.tokenAddress,
+        fee: p.prize.amount,
+        tiersBps: p.prizeTiersBps ?? [10000],
+      });
+      if (prizeCalls.length > 0) await session.data.account.execute(prizeCalls);
+    }
   } catch (error) {
     await store.save({ state, organizerChatId, announceChatId }).catch(() => {});
     await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /brackets shows what's live.`);
@@ -1101,7 +1153,7 @@ function registrationCard(reg: BracketRegistration): string {
     "📊 Registration",
     `👥 Players: ${reg.players.length}/${reg.capacity}`,
   ];
-  if (reg.prize) lines.push(`🏆 Champion prize: ${reg.prize.label}`);
+  if (reg.prize) lines.push(`🏆 Prize: ${reg.prize.label}${splitSuffix(reg.prizeTiersBps)}`);
   lines.push("", "Registered:");
   if (reg.players.length === 0) {
     lines.push("  (be the first!)");
@@ -1196,6 +1248,12 @@ async function sendFeeSplitPrompt(api: TelegramApi, chatId: string): Promise<voi
   lines.push(`  ${FEE_SPLITS.length + 1}. Custom — enter percentages`);
   lines.push("", "Reply with a number. /cancel to abort.");
   await api.sendMessage(chatId, lines.join("\n"));
+}
+
+/** " → 60/30/10%" for a multi-tier split; "" for champion-takes-all. */
+function splitSuffix(tiersBps?: number[]): string {
+  if (!tiersBps || tiersBps.length <= 1) return "";
+  return ` → ${tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`;
 }
 
 async function sendModePrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
@@ -1295,7 +1353,7 @@ function confirmText(d: Draft): string {
     `  • Settings: ${d.settingsName ?? "(default)"}`,
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
-    `  • Champion prize: ${d.prize ? d.prize.label : "none"}`,
+    `  • Prize: ${d.prize ? `${d.prize.label}${splitSuffix(d.prizeTiersBps)}` : "none"}`,
     ...(d.entryFee
       ? [`  • Entry fee: ${d.entryFee.label} → places ${(d.tiersBps ?? []).map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`]
       : []),
