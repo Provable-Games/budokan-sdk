@@ -56,10 +56,13 @@ export interface StoredBracket {
   /** Match ids whose winners the bot has already auto-entered into the next round. */
   entered?: string[];
   /**
-   * Paid "open" brackets are deployed up front (placeholder slots) and players
-   * pay on tap. Present only for paid brackets that are still gathering players.
+   * Up-front "open" brackets are deployed with placeholder slots before joins.
+   * `paid` is the per-entry fee players add on join (absent ⇒ free entry);
+   * `seed` is the sponsor amount escrowed at deploy (before anyone joins, so the
+   * prize is trustlessly locked). At least one is present on a filling bracket.
    */
   paid?: { tokenAddress: string; fee: string; tiersBps: number[]; label: string };
+  seed?: { tokenAddress: string; amount: string; tiersBps: number[]; label: string };
   /** Target roster size for a paid up-front bracket (power of two). */
   capacity?: number;
   /** Round-1 slots assigned so far (paid up-front brackets). */

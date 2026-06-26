@@ -72,6 +72,8 @@ interface Draft {
     | "prizeAmount"
     | "prizeSplit"
     | "prizeCustom"
+    | "seedToken"
+    | "seedAmount"
     | "feeToken"
     | "feeAmount"
     | "feeSplit"
@@ -83,6 +85,10 @@ interface Draft {
   settingsId?: number;
   settingsName?: string;
   settingsPage?: SettingsPage;
+  // Open prize pool: an up-front sponsor seed (escrowed at deploy, before joins)
+  // and/or a per-entry fee (added on join). Both optional; one shared split.
+  seedToken?: Erc20Token;
+  seed?: { tokenAddress: string; amount: string; label: string };
   mode?: (typeof MODES)[number]["key"];
   capacity?: number;
   players?: Player[]; // closed: everyone; mix: seeds; open: undefined
@@ -250,15 +256,49 @@ export async function handleAnswer(
       return;
     }
     d.length = LENGTH_PRESETS[n - 1];
-    // Open brackets fund prizes from entry fees (the pool) — go straight to the
-    // fee flow. Closed/mix have no pool, so offer an optional sponsored prize.
+    // Open brackets fund a pool from a sponsor seed (locked up front) and/or
+    // per-entry fees → start with the seed. Closed/mix have no per-entry pool,
+    // so offer an optional sponsored prize.
     if (d.mode === "open") {
-      d.step = "feeToken";
-      await sendFeeTokenPrompt(api, d.chain, chatId);
+      d.step = "seedToken";
+      await sendTokenList(api, d.chain, chatId, "💰 Seed the prize pool up front? Pick a token:", "No seed");
       return;
     }
     d.step = "prizeToken";
     await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
+    return;
+  }
+
+  if (d.step === "seedToken") {
+    if (/^(0|skip|none|no)$/i.test(t)) {
+      d.step = "feeToken";
+      await sendFeeTokenPrompt(api, d.chain, chatId);
+      return;
+    }
+    const tokens = tokensForChain(d.chain);
+    const n = Number(t);
+    if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
+      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no seed, or /cancel.`);
+      return;
+    }
+    d.seedToken = tokens[n - 1];
+    d.step = "seedAmount";
+    await api.sendMessage(chatId, `💰 Seed amount in ${d.seedToken!.symbol}? (escrowed up front) /cancel to abort.`);
+    return;
+  }
+
+  if (d.step === "seedAmount") {
+    if (!/^\d+(\.\d+)?$/.test(t)) {
+      await api.sendMessage(chatId, `Enter a number in ${d.seedToken!.symbol} (e.g. 100), or /cancel.`);
+      return;
+    }
+    d.seed = {
+      tokenAddress: d.seedToken!.address,
+      amount: toRawAmount(t, d.seedToken!.decimals),
+      label: `${t} ${d.seedToken!.symbol}`,
+    };
+    d.step = "feeToken";
+    await sendFeeTokenPrompt(api, d.chain, chatId);
     return;
   }
 
@@ -333,20 +373,26 @@ export async function handleAnswer(
 
   if (d.step === "feeToken") {
     if (/^(0|skip|none|no)$/i.test(t)) {
-      // No entry fee → offer an optional sponsored champion prize instead.
-      d.step = "prizeToken";
-      await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
+      // No per-entry fee. If there's a seed, pick how it pays out; else this is
+      // a truly free, no-prize bracket → straight to confirm.
+      if (d.seed) {
+        d.step = "feeSplit";
+        await sendFeeSplitPrompt(api, chatId);
+      } else {
+        d.step = "confirm";
+        await api.sendMessage(chatId, confirmText(d));
+      }
       return;
     }
     const tokens = tokensForChain(d.chain);
     const n = Number(t);
     if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
-      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for a free bracket, or /cancel.`);
+      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no entry fee, or /cancel.`);
       return;
     }
     d.feeToken = tokens[n - 1];
     d.step = "feeAmount";
-    await api.sendMessage(chatId, `💸 Entry fee amount in ${d.feeToken!.symbol}? (e.g. 100) /cancel to abort.`);
+    await api.sendMessage(chatId, `💸 Entry fee amount in ${d.feeToken!.symbol}? (each entrant adds this to the pool) /cancel to abort.`);
     return;
   }
 
@@ -377,7 +423,10 @@ export async function handleAnswer(
       return;
     }
     d.tiersBps = [...FEE_SPLITS[n - 1]!.bps];
-    d.entryFee = { tokenAddress: d.feeToken!.address, amount: d.feeAmountRaw!, label: d.feeAmountLabel! };
+    // Only set an entry fee if one was actually chosen (seed-only skips it).
+    if (d.feeAmountRaw && d.feeToken) {
+      d.entryFee = { tokenAddress: d.feeToken.address, amount: d.feeAmountRaw, label: d.feeAmountLabel! };
+    }
     d.step = "confirm";
     await api.sendMessage(chatId, confirmText(d));
     return;
@@ -394,7 +443,9 @@ export async function handleAnswer(
       return;
     }
     d.tiersBps = places.map((p) => Math.round(p * 100));
-    d.entryFee = { tokenAddress: d.feeToken!.address, amount: d.feeAmountRaw!, label: d.feeAmountLabel! };
+    if (d.feeAmountRaw && d.feeToken) {
+      d.entryFee = { tokenAddress: d.feeToken.address, amount: d.feeAmountRaw, label: d.feeAmountLabel! };
+    }
     d.step = "confirm";
     await api.sendMessage(chatId, confirmText(d));
     return;
@@ -425,13 +476,14 @@ export async function handleAnswer(
       return;
     }
 
-    // open + entry fee → deploy the tree up front so taps can pay on the spot.
-    if (d.mode === "open" && d.entryFee) {
+    // open + a prize pool (seed and/or entry fee) → deploy the tree up front so
+    // the seed is escrowed before anyone joins (trustless) and taps can pay.
+    if (d.mode === "open" && (d.entryFee || d.seed)) {
       await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
       return;
     }
 
-    // free open / mix → create a registration that fills before it deploys.
+    // free, no-prize open / mix → register, fill, then deploy (nothing to lock).
     const reg: BracketRegistration = {
       id: `b${Date.now().toString(36)}`,
       chain: d.chain,
@@ -803,8 +855,9 @@ async function deployPaidUpfront(
     gated: true,
   });
 
+  const tiersBps = d.tiersBps ?? [10000];
   const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
-  await api.sendMessage(organizerChatId, `⏳ Deploying ${bracketRounds(state)} rounds for a ${capacity}-player paid bracket…`);
+  await api.sendMessage(organizerChatId, `⏳ Deploying ${bracketRounds(state)} rounds for a ${capacity}-player bracket…`);
   try {
     for (let round = 1; round <= bracketRounds(state); round++) {
       for (const { matchId, call } of roundMatchCreateCalls(state, round)) {
@@ -817,6 +870,16 @@ async function deployPaidUpfront(
         attachMatchTournament(state, matchId, tid.toString());
       }
     }
+    // Escrow the sponsor seed NOW (before anyone joins) so the prize is locked
+    // and trustlessly visible — distributed across the placement tiers.
+    if (d.seed) {
+      const seedCalls = bracketFeePrizeCalls(state, {
+        tokenAddress: d.seed.tokenAddress,
+        fee: d.seed.amount,
+        tiersBps,
+      });
+      if (seedCalls.length > 0) await session.data.account.execute(seedCalls);
+    }
   } catch (error) {
     await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}`);
     return;
@@ -826,12 +889,10 @@ async function deployPaidUpfront(
     state,
     organizerChatId,
     announceChatId,
-    paid: {
-      tokenAddress: d.entryFee!.tokenAddress,
-      fee: d.entryFee!.amount,
-      tiersBps: d.tiersBps!,
-      label: d.entryFee!.label,
-    },
+    paid: d.entryFee
+      ? { tokenAddress: d.entryFee.tokenAddress, fee: d.entryFee.amount, tiersBps, label: d.entryFee.label }
+      : undefined,
+    seed: d.seed ? { tokenAddress: d.seed.tokenAddress, amount: d.seed.amount, tiersBps, label: d.seed.label } : undefined,
     capacity,
     filled: 0,
     phase: "filling",
@@ -843,9 +904,13 @@ async function deployPaidUpfront(
     b.cardMessageId = mid;
     await store.save(b);
   }
+  const joinLine = d.entryFee
+    ? `Players tap Join to pay ${d.entryFee.label} (adds to the pool) and enter.`
+    : `Players tap Join to enter (free).`;
+  const seedLine = d.seed ? ` Seed of ${d.seed.label} is locked.` : "";
   await api.sendMessage(
     organizerChatId,
-    `✅ Paid bracket ${id} deployed & open (0/${capacity}). Players tap Join to pay ${d.entryFee!.label} and enter. Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).`,
+    `✅ Bracket ${id} deployed & open (0/${capacity}).${seedLine} ${joinLine} Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).`,
   );
 }
 
@@ -864,10 +929,11 @@ async function enterPaidSlot(
   payerChatId: string,
   opts: { playerAddress?: string; playerName?: string } = {},
 ): Promise<string> {
-  if (b.phase !== "filling" || !b.paid || b.filled === undefined || b.capacity === undefined) {
+  if (b.phase !== "filling" || b.filled === undefined || b.capacity === undefined) {
     return "This bracket isn't open for joins.";
   }
-  // Capture so narrowing survives the awaits below.
+  // Capture so narrowing survives the awaits below. `paid` is undefined for
+  // free (seed-only) brackets — then joining is just an entry, no fee.
   const paid = b.paid;
   const sponsoring = !!opts.playerAddress;
   if (b.filled >= b.capacity) return "Sorry — it just filled up.";
@@ -894,14 +960,17 @@ async function enterPaidSlot(
   b.state.players[seed - 1] = player;
 
   try {
-    await session.data.account.execute([
-      ...bracketEntryCalls(b.state, match.id, playerAddress),
-      ...bracketFeePrizeCalls(b.state, {
-        tokenAddress: paid.tokenAddress,
-        fee: paid.fee,
-        tiersBps: paid.tiersBps,
-      }),
-    ]);
+    const calls = [...bracketEntryCalls(b.state, match.id, playerAddress)];
+    if (paid) {
+      calls.push(
+        ...bracketFeePrizeCalls(b.state, {
+          tokenAddress: paid.tokenAddress,
+          fee: paid.fee,
+          tiersBps: paid.tiersBps,
+        }),
+      );
+    }
+    await session.data.account.execute(calls);
   } catch (error) {
     // Roll back the slot so it stays open for a retry.
     if (slotA) match.playerA = placeholder(seed);
@@ -914,11 +983,12 @@ async function enterPaidSlot(
   if (b.filled >= b.capacity) b.phase = "live";
   await store.save(b);
   await updatePaidCard(api, b);
+  const paidPrefix = paid ? `Paid ${paid.label} — ` : "";
   if (b.phase === "live") {
-    return `✅ Paid — ${sponsoring ? "sponsored entry added" : "you're in"}; the bracket is starting!`;
+    return `✅ ${paidPrefix}${sponsoring ? "sponsored entry added" : "you're in"}; the bracket is starting!`;
   }
   const who = sponsoring ? `${playerName ?? short(playerAddress)} is in (sponsored)` : "you're in";
-  return `✅ Paid ${paid.label} — ${who}! (${b.filled}/${b.capacity})`;
+  return `✅ ${paidPrefix}${who}! (${b.filled}/${b.capacity})`;
 }
 
 /** Tap-to-join a paid bracket: the tapping player pays their own entry. */
@@ -945,8 +1015,8 @@ export async function sponsorPaid(
   target: string,
 ): Promise<void> {
   const b = await store.get(id);
-  if (!b || b.phase !== "filling" || !b.paid) {
-    await api.sendMessage(chatId, `No paid bracket ${id} is open for sponsorship.`);
+  if (!b || b.phase !== "filling") {
+    await api.sendMessage(chatId, `No up-front bracket ${id} is open for sponsorship.`);
     return;
   }
   const { players, unresolved } = await resolvePlayers(b.state.chain as Chain, target);
@@ -967,16 +1037,17 @@ function paidCard(b: StoredBracket): string {
   const filled = b.filled ?? 0;
   const remaining = cap - filled;
   const real = b.state.players.filter(isReal);
+  const tiersBps = b.seed?.tiersBps ?? b.paid?.tiersBps;
   const lines = [
     "━━━━━━━━━━━━━━━━━━",
     `🥊 ${b.state.namePrefix} — 1v1 Bracket`,
     "📊 Registration",
     `👥 Players: ${filled}/${cap}`,
   ];
-  if (b.paid) {
-    lines.push(`💸 Entry: ${b.paid.label}`);
-    lines.push(`📊 Paid places: ${b.paid.tiersBps.map((bp) => `${(bp / 100).toFixed(0)}%`).join(" / ")}`);
-  }
+  if (b.seed) lines.push(`💰 Seed (locked): ${b.seed.label}`);
+  if (b.paid) lines.push(`💸 Entry: ${b.paid.label} (adds to pool)`);
+  else lines.push(`💸 Entry: free`);
+  if (tiersBps) lines.push(`📊 Pays: ${tiersBps.map((bp) => `${(bp / 100).toFixed(0)}%`).join(" / ")}`);
   lines.push("", "Registered:");
   if (real.length === 0) lines.push("  (be the first!)");
   else real.forEach((p, i) => lines.push(`  ${i + 1}. ${p.name ?? short(p.address)}`));
@@ -993,9 +1064,10 @@ function paidCard(b: StoredBracket): string {
 
 function paidJoinKeyboard(b: StoredBracket): { inline_keyboard: InlineKeyboardButton[][] } | undefined {
   if ((b.filled ?? 0) >= (b.capacity ?? 0)) return undefined;
+  const joinLabel = b.paid ? `🎮 Join — ${b.paid.label}` : `🎮 Join (free)`;
   return {
     inline_keyboard: [
-      [{ text: `🎮 Join — ${b.paid?.label ?? "play"} (${b.filled ?? 0}/${b.capacity ?? 0})`, callback_data: `bjoin:${b.state.id}` }],
+      [{ text: `${joinLabel} (${b.filled ?? 0}/${b.capacity ?? 0})`, callback_data: `bjoin:${b.state.id}` }],
       [{ text: `🎁 Sponsor a player`, callback_data: `bspon:${b.state.id}` }],
     ],
   };
@@ -1353,13 +1425,17 @@ function confirmText(d: Draft): string {
     `  • Settings: ${d.settingsName ?? "(default)"}`,
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
-    `  • Prize: ${d.prize ? `${d.prize.label}${splitSuffix(d.prizeTiersBps)}` : "none"}`,
-    ...(d.entryFee
-      ? [`  • Entry fee: ${d.entryFee.label} → places ${(d.tiersBps ?? []).map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`]
+    ...(d.seed ? [`  • Seed (locked up front): ${d.seed.label}`] : []),
+    ...(d.entryFee ? [`  • Entry fee: ${d.entryFee.label} (adds to pool)`] : []),
+    ...((d.seed || d.entryFee) && d.tiersBps
+      ? [`  • Pays: ${d.tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join(" / ")}`]
       : []),
+    ...(d.prize ? [`  • Prize: ${d.prize.label}${splitSuffix(d.prizeTiersBps)}`] : []),
+    ...(d.mode !== "open" && !d.prize ? [`  • Prize: none`] : []),
+    ...(d.mode === "open" && !d.seed && !d.entryFee ? [`  • Prize: none (free)`] : []),
     "",
-    d.mode === "open" && d.entryFee
-      ? "Deploys the gated tree now; players tap Join to pay & enter. Round 1 starts at the sign-up deadline — any empty slots walk over."
+    d.mode === "open" && (d.seed || d.entryFee)
+      ? "Deploys the gated tree now (seed locked up front); players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
       : d.mode === "closed"
         ? "Deploys the gated tree now and enters round 1 for the players."
         : "Opens registration; deploys automatically when it fills.",
