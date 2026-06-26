@@ -50,6 +50,20 @@ export interface StoredBracket {
   announceChatId: string;
   /** Match ids whose winners the bot has already auto-entered into the next round. */
   entered?: string[];
+  /**
+   * Paid "open" brackets are deployed up front (placeholder slots) and players
+   * pay on tap. Present only for paid brackets that are still gathering players.
+   */
+  paid?: { tokenAddress: string; fee: string; tiersBps: number[]; label: string };
+  /** Target roster size for a paid up-front bracket (power of two). */
+  capacity?: number;
+  /** Round-1 slots assigned so far (paid up-front brackets). */
+  filled?: number;
+  /** "filling" while a paid up-front bracket gathers players; else live/running. */
+  phase?: "filling" | "live";
+  /** The public registration card's location, so taps can edit it in place. */
+  cardChatId?: string;
+  cardMessageId?: number;
 }
 
 export class BracketStore {

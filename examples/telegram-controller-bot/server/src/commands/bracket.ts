@@ -21,6 +21,7 @@ import {
   attachMatchTournament,
   bracketEntryCalls,
   bracketFinalPrizeCalls,
+  bracketFeePrizeCalls,
   bracketRounds,
   bracketSummary,
   parseTournamentIdFromReceipt,
@@ -60,7 +61,7 @@ const MODES = [
 const CAPACITIES = [4, 8, 16, 32] as const;
 
 interface Draft {
-  step: "game" | "mode" | "capacity" | "players" | "length" | "prize" | "confirm";
+  step: "game" | "mode" | "capacity" | "players" | "length" | "prize" | "fee" | "confirm";
   chain: Chain;
   games: Game[];
   game?: Game;
@@ -69,6 +70,10 @@ interface Draft {
   players?: Player[]; // closed: everyone; mix: seeds; open: undefined
   length?: (typeof LENGTH_PRESETS)[number];
   prize?: { tokenAddress: string; amount: string; label: string };
+  // Paid (open mode only): players pay this fee on tap; it escrows into
+  // placement prizes per tiersBps (basis points per tier).
+  entryFee?: { tokenAddress: string; amount: string; label: string };
+  tiersBps?: number[];
 }
 
 const drafts = new Map<string, Draft>();
@@ -226,6 +231,48 @@ export async function handleAnswer(
       }
       d.prize = { tokenAddress: token.address, amount: toRawAmount(amt, token.decimals), label: `${amt} ${token.symbol}` };
     }
+    // Only OPEN brackets can take an entry fee (every player joins + pays from
+    // their own session — pre-seeded/closed players can't be charged).
+    if (d.mode === "open") {
+      d.step = "fee";
+      await api.sendMessage(
+        chatId,
+        [
+          "💸 Entry fee? Reply `<symbol> <amount> [places…]` — e.g. `STRK 100 60 30 10`",
+          "(100 STRK entry; champion 60% / runner-up 30% / semifinalists 10%).",
+          "Just `<symbol> <amount>` = winner-takes-all. `skip` for a free bracket. /cancel to abort.",
+        ].join("\n"),
+      );
+      return;
+    }
+    d.step = "confirm";
+    await api.sendMessage(chatId, confirmText(d));
+    return;
+  }
+
+  if (d.step === "fee") {
+    if (t.toLowerCase() !== "skip") {
+      const parts = t.split(/\s+/);
+      const sym = parts[0];
+      const amt = parts[1];
+      const token = sym ? findTokenBySymbol(d.chain, sym) : undefined;
+      if (!token || !amt || !/^\d+(\.\d+)?$/.test(amt)) {
+        await api.sendMessage(chatId, "Couldn't parse that. Use `<symbol> <amount> [places…]`, or `skip`.");
+        return;
+      }
+      const places = parts.slice(2).map(Number);
+      let tiersBps: number[];
+      if (places.length === 0) {
+        tiersBps = [10000]; // winner takes all
+      } else if (places.some((p) => !Number.isFinite(p) || p < 0) || places.reduce((a, b) => a + b, 0) !== 100) {
+        await api.sendMessage(chatId, "Places must be whole percentages summing to 100 (e.g. `60 30 10`). Try again, or `skip`.");
+        return;
+      } else {
+        tiersBps = places.map((p) => Math.round(p * 100));
+      }
+      d.entryFee = { tokenAddress: token.address, amount: toRawAmount(amt, token.decimals), label: `${amt} ${token.symbol}` };
+      d.tiersBps = tiersBps;
+    }
     d.step = "confirm";
     await api.sendMessage(chatId, confirmText(d));
     return;
@@ -252,7 +299,13 @@ export async function handleAnswer(
       return;
     }
 
-    // open / mix → create a registration that fills before it deploys.
+    // open + entry fee → deploy the tree up front so taps can pay on the spot.
+    if (d.mode === "open" && d.entryFee) {
+      await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
+      return;
+    }
+
+    // free open / mix → create a registration that fills before it deploys.
     const reg: BracketRegistration = {
       id: `b${Date.now().toString(36)}`,
       chain: d.chain,
@@ -301,6 +354,13 @@ export async function join(
 ): Promise<void> {
   const reg = await store.getRegistration(id);
   if (!reg) {
+    // Paid up-front bracket? Join + pay via the player's session.
+    const b = await store.get(id);
+    if (b?.phase === "filling") {
+      const toast = await paidJoin(api, config, store, b, chatId);
+      await api.sendMessage(chatId, toast);
+      return;
+    }
     await api.sendMessage(chatId, `No open bracket ${id}.`);
     return;
   }
@@ -343,13 +403,20 @@ export async function joinViaButton(
   fromId: number | undefined,
   id: string,
 ): Promise<void> {
-  const reg = await store.getRegistration(id);
-  if (!reg) {
-    await api.answerCallback(callbackQueryId, "This bracket is no longer open.", true);
-    return;
-  }
   if (fromId === undefined) {
     await api.answerCallback(callbackQueryId, "Couldn't identify you — try /bracket_join in a DM.", true);
+    return;
+  }
+  const reg = await store.getRegistration(id);
+  if (!reg) {
+    // Paid up-front bracket? Pay + enter via the tapper's session.
+    const b = await store.get(id);
+    if (b?.phase === "filling") {
+      const toast = await paidJoin(api, config, store, b, String(fromId));
+      await api.answerCallback(callbackQueryId, toast, true);
+      return;
+    }
+    await api.answerCallback(callbackQueryId, "This bracket is no longer open.", true);
     return;
   }
   if (reg.players.length >= reg.capacity) {
@@ -520,6 +587,213 @@ async function deployResolved(
   return true;
 }
 
+// ----- paid brackets (deploy up front; pay on tap) -----
+
+const PLACEHOLDER_ADDRESS = "0x0";
+const placeholder = (seed: number): Player & { seed: number } => ({ address: PLACEHOLDER_ADDRESS, seed });
+const isReal = (p?: { address: string }): boolean => !!p && p.address.toLowerCase() !== PLACEHOLDER_ADDRESS;
+
+/**
+ * Deploy a paid bracket's whole gated tree up front with placeholder slots, so
+ * a Join tap can pay + enter immediately. Players replace slots in join order.
+ */
+async function deployPaidUpfront(
+  api: TelegramApi,
+  config: Config,
+  store: BracketStore,
+  organizerChatId: string,
+  announceChatId: string,
+  d: Draft,
+): Promise<void> {
+  const chain = d.chain;
+  const session = await resolveAccount(organizerChatId, chain, config);
+  if (!session.ok) {
+    await api.sendMessage(organizerChatId, `Not connected on ${chain} — run /connect first.`);
+    return;
+  }
+  const budokanAddress = config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
+  if (!budokanAddress) {
+    await api.sendMessage(organizerChatId, `Internal error: no Budokan address for ${chain}.`);
+    return;
+  }
+
+  const capacity = d.capacity!;
+  const game = d.game!;
+  const id = `b${Date.now().toString(36)}`;
+  const state = createBracket({
+    id,
+    budokanAddress,
+    game: game.contractAddress,
+    chain: chain as BracketState["chain"],
+    settingsId: 0,
+    creatorRewardsAddress: session.data.address,
+    namePrefix: game.name.slice(0, 12),
+    scheduleTemplate: {
+      registrationStartDelay: 0,
+      registrationEndDelay: d.length!.reg,
+      gameStartDelay: d.length!.reg,
+      gameEndDelay: d.length!.game,
+      submissionDuration: d.length!.sub,
+    },
+    leaderboard: {
+      ascending: game.leaderboardAscending ?? false,
+      gameMustBeOver: game.leaderboardGameMustBeOver ?? false,
+    },
+    // Placeholder roster — replaced by real players as they tap Join.
+    players: Array.from({ length: capacity }, () => ({ address: PLACEHOLDER_ADDRESS })),
+    gated: true,
+  });
+
+  const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
+  await api.sendMessage(organizerChatId, `⏳ Deploying ${bracketRounds(state)} rounds for a ${capacity}-player paid bracket…`);
+  try {
+    for (let round = 1; round <= bracketRounds(state); round++) {
+      for (const { matchId, call } of roundMatchCreateCalls(state, round)) {
+        const tx = await session.data.account.execute([call]);
+        const receipt = (await rpc.waitForTransaction(tx.transaction_hash)) as {
+          events?: Array<{ from_address?: string; keys?: string[] }>;
+        };
+        const tid = parseTournamentIdFromReceipt(receipt, budokanAddress);
+        if (tid === undefined) throw new Error(`Couldn't read tournament id for ${matchId}`);
+        attachMatchTournament(state, matchId, tid.toString());
+      }
+    }
+  } catch (error) {
+    await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}`);
+    return;
+  }
+
+  const b: StoredBracket = {
+    state,
+    organizerChatId,
+    announceChatId,
+    paid: {
+      tokenAddress: d.entryFee!.tokenAddress,
+      fee: d.entryFee!.amount,
+      tiersBps: d.tiersBps!,
+      label: d.entryFee!.label,
+    },
+    capacity,
+    filled: 0,
+    phase: "filling",
+  };
+  await store.save(b);
+  const mid = await api.sendCard(announceChatId, paidCard(b), paidJoinKeyboard(b)).catch(() => undefined);
+  if (mid !== undefined) {
+    b.cardChatId = announceChatId;
+    b.cardMessageId = mid;
+    await store.save(b);
+  }
+  await api.sendMessage(
+    organizerChatId,
+    `✅ Paid bracket ${id} deployed & open (0/${capacity}). Players tap Join to pay ${d.entryFee!.label} and enter.`,
+  );
+}
+
+/**
+ * Tap-to-join a paid up-front bracket: assign the next slot, then run the
+ * player's own session to enter their round-1 match + escrow their fee as
+ * placement prizes — one multicall, non-custodial. Returns a toast string.
+ */
+async function paidJoin(
+  api: TelegramApi,
+  config: Config,
+  store: BracketStore,
+  b: StoredBracket,
+  joinerChatId: string,
+): Promise<string> {
+  if (b.phase !== "filling" || !b.paid || b.filled === undefined || b.capacity === undefined) {
+    return "This bracket isn't open for joins.";
+  }
+  // Capture so narrowing survives the awaits below.
+  const paid = b.paid;
+  if (b.filled >= b.capacity) return "Sorry — it just filled up.";
+  const chain = b.state.chain as Chain;
+  const session = await resolveAccount(joinerChatId, chain, config);
+  if (!session.ok) return "DM me first: open the bot, /connect, then tap Join.";
+  const addr = session.data.address.toLowerCase();
+  if (b.state.matches.some((m) => m.round === 1 && (m.playerA?.address.toLowerCase() === addr || m.playerB?.address.toLowerCase() === addr))) {
+    return `You're already in (${b.filled}/${b.capacity}).`;
+  }
+
+  const seed = b.filled + 1;
+  const match = b.state.matches.find((m) => m.round === 1 && (m.playerA?.seed === seed || m.playerB?.seed === seed));
+  if (!match) return "No open slot — try again.";
+  const name = session.data.username && session.data.username !== "unknown" ? session.data.username : undefined;
+  const realPlayer = { address: session.data.address, name, seed };
+  const slotA = match.playerA?.seed === seed;
+  if (slotA) match.playerA = realPlayer;
+  else match.playerB = realPlayer;
+  b.state.players[seed - 1] = realPlayer;
+
+  try {
+    await session.data.account.execute([
+      ...bracketEntryCalls(b.state, match.id, realPlayer.address),
+      ...bracketFeePrizeCalls(b.state, {
+        tokenAddress: paid.tokenAddress,
+        fee: paid.fee,
+        tiersBps: paid.tiersBps,
+      }),
+    ]);
+  } catch (error) {
+    // Roll back the slot so it stays open for a retry.
+    if (slotA) match.playerA = placeholder(seed);
+    else match.playerB = placeholder(seed);
+    b.state.players[seed - 1] = placeholder(seed);
+    return `Couldn't join: ${formatError(error)}`;
+  }
+
+  b.filled += 1;
+  if (b.filled >= b.capacity) b.phase = "live";
+  await store.save(b);
+  await updatePaidCard(api, b);
+  return b.phase === "live"
+    ? `✅ Paid & in — the bracket is starting!`
+    : `✅ Paid ${b.paid.label} — you're in! (${b.filled}/${b.capacity})`;
+}
+
+function paidCard(b: StoredBracket): string {
+  const cap = b.capacity ?? 0;
+  const filled = b.filled ?? 0;
+  const remaining = cap - filled;
+  const real = b.state.players.filter(isReal);
+  const lines = [
+    "━━━━━━━━━━━━━━━━━━",
+    `🥊 ${b.state.namePrefix} — 1v1 Bracket`,
+    "📊 Registration",
+    `👥 Players: ${filled}/${cap}`,
+  ];
+  if (b.paid) {
+    lines.push(`💸 Entry: ${b.paid.label}`);
+    lines.push(`📊 Paid places: ${b.paid.tiersBps.map((bp) => `${(bp / 100).toFixed(0)}%`).join(" / ")}`);
+  }
+  lines.push("", "Registered:");
+  if (real.length === 0) lines.push("  (be the first!)");
+  else real.forEach((p, i) => lines.push(`  ${i + 1}. ${p.name ?? short(p.address)}`));
+  lines.push("");
+  if (remaining > 0) {
+    lines.push(`🪑 ${remaining} spot${remaining === 1 ? "" : "s"} remaining!`);
+    lines.push("🎮 Tap Join — first /connect in a DM with me.");
+  } else {
+    lines.push("🚀 Full — starting the bracket!");
+  }
+  return lines.join("\n");
+}
+
+function paidJoinKeyboard(b: StoredBracket): { inline_keyboard: InlineKeyboardButton[][] } | undefined {
+  if ((b.filled ?? 0) >= (b.capacity ?? 0)) return undefined;
+  return {
+    inline_keyboard: [
+      [{ text: `🎮 Join — ${b.paid?.label ?? "play"} (${b.filled ?? 0}/${b.capacity ?? 0})`, callback_data: `bjoin:${b.state.id}` }],
+    ],
+  };
+}
+
+async function updatePaidCard(api: TelegramApi, b: StoredBracket): Promise<void> {
+  if (!b.cardChatId || b.cardMessageId === undefined) return;
+  await api.editCard(b.cardChatId, b.cardMessageId, paidCard(b), paidJoinKeyboard(b));
+}
+
 // ----- advancement (poller) -----
 
 export async function advanceStoredBracket(
@@ -528,6 +802,8 @@ export async function advanceStoredBracket(
   store: BracketStore,
   b: StoredBracket,
 ): Promise<void> {
+  // A paid bracket still gathering players isn't running yet — don't advance it.
+  if (b.phase === "filling") return;
   const chain = b.state.chain as Chain;
   const session = await resolveAccount(b.organizerChatId, chain, config);
   if (!session.ok) return;
@@ -623,7 +899,8 @@ export async function view(
 ): Promise<void> {
   const b = await store.get(id);
   if (b) {
-    await api.sendMessage(chatId, presentation(b));
+    if (b.phase === "filling") await api.sendCard(chatId, paidCard(b), paidJoinKeyboard(b));
+    else await api.sendMessage(chatId, presentation(b));
     return;
   }
   const reg = await store.getRegistration(id);
@@ -733,10 +1010,15 @@ function confirmText(d: Draft): string {
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
     `  • Champion prize: ${d.prize ? d.prize.label : "none"}`,
+    ...(d.entryFee
+      ? [`  • Entry fee: ${d.entryFee.label} → places ${(d.tiersBps ?? []).map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`]
+      : []),
     "",
-    d.mode === "closed"
-      ? "Deploys the gated tree now and enters round 1 for the players."
-      : "Opens registration; deploys automatically when it fills.",
+    d.mode === "open" && d.entryFee
+      ? "Deploys the gated tree now; players tap Join to pay & enter, and it starts when full."
+      : d.mode === "closed"
+        ? "Deploys the gated tree now and enters round 1 for the players."
+        : "Opens registration; deploys automatically when it fills.",
     "",
     "Reply 'yes', or /cancel.",
   ].join("\n");
