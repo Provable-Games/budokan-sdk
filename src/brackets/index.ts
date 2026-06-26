@@ -12,11 +12,19 @@
  * returns `Call`s for the caller to run, mirroring `src/calldata`.
  */
 import {
+  buildAddPrizeCall,
   buildCreateTournamentCall,
   buildEnterTournamentCall,
+  buildErc20ApproveCall,
   type Call,
   type CreateTournamentArgs,
+  type EntryRequirementArgs,
 } from "../calldata/index.js";
+import {
+  buildTournamentQualificationProof,
+  buildTournamentValidatorConfig,
+  extensionAddressFor,
+} from "../extensions/index.js";
 import type { WhitelistChain } from "../games/whitelist.js";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +60,12 @@ export interface BracketMatch {
   tournamentId?: string;
   status: MatchStatus;
   winner?: BracketPlayer;
+  /**
+   * Winning game-token id from this match's leaderboard. Captured on resolve;
+   * needed as the `QualificationProof` token when the winner enters the gated
+   * next-round match.
+   */
+  winnerTokenId?: string;
   /** Next-round match id this match's winner feeds into (undefined = final). */
   feedsInto?: string;
 }
@@ -79,6 +93,15 @@ export interface BracketState {
   leaderboard: { ascending: boolean; gameMustBeOver: boolean };
   /** Short label prefixed onto each match tournament name (≤ ~20 bytes). */
   namePrefix: string;
+  /**
+   * When true (the upfront model), round >1 matches are created with an
+   * entry_requirement gating entry to the winners of their two feeder matches
+   * (tournament validator, "won at least one of [feederA, feederB]"). Round
+   * schedules are staggered so each round opens after the previous finishes.
+   */
+  gated: boolean;
+  /** Optional ERC20 prize escrowed on the final match for the champion. */
+  finalPrize?: { tokenAddress: string; amount: string };
   /** Bracket size = next power of two ≥ players.length. */
   size: number;
   players: BracketPlayer[];
@@ -104,6 +127,14 @@ export interface CreateBracketOptions {
   seeding?: "as-given" | "random";
   /** Deterministic shuffle seed (only used when seeding === "random"). */
   shuffleSeed?: number;
+  /**
+   * Gate round >1 entry on having won a feeder match (default true — the
+   * upfront on-chain-enforced model). Set false for a coordinator-trusted
+   * bracket with no entry_requirement.
+   */
+  gated?: boolean;
+  /** Optional ERC20 prize escrowed on the final match for the champion. */
+  finalPrize?: { tokenAddress: string; amount: string };
 }
 
 /** A match tournament that needs creating, paired with its match id. */
@@ -121,7 +152,7 @@ export interface CreateMatchCall {
  */
 export interface MatchResult {
   finished: boolean;
-  ranking: Array<{ address: string; position: number }>;
+  ranking: Array<{ address: string; position: number; tokenId?: string }>;
 }
 
 export type MatchReader = (tournamentId: string) => Promise<MatchResult>;
@@ -188,6 +219,14 @@ export function createBracket(opts: CreateBracketOptions): BracketState {
   if (opts.players.length < 2) {
     throw new Error("A bracket needs at least 2 players");
   }
+  // Byes can't be expressed as an on-chain entry gate (there's no feeder
+  // tournament to have "won"), so gated brackets require a power-of-two roster.
+  const gated = opts.gated ?? true;
+  if (gated && opts.players.length !== nextPowerOfTwo(opts.players.length)) {
+    throw new Error(
+      `A gated bracket needs a power-of-two player count (got ${opts.players.length}; use 2, 4, 8, 16, …). Disable gating to allow byes.`,
+    );
+  }
   const ordered =
     opts.seeding === "random"
       ? shuffle(opts.players, opts.shuffleSeed ?? 1)
@@ -248,6 +287,8 @@ export function createBracket(opts: CreateBracketOptions): BracketState {
     scheduleTemplate: opts.scheduleTemplate,
     leaderboard: opts.leaderboard,
     namePrefix: opts.namePrefix ?? "Match",
+    gated,
+    finalPrize: opts.finalPrize,
     size,
     players,
     matches,
@@ -357,6 +398,120 @@ export function attachMatchTournament(
   return state;
 }
 
+// ---------------------------------------------------------------------------
+// Upfront gated deploy
+//
+// The whole tree is deployed at creation time: round 1 first, then each later
+// round gated on its feeders having been won. Because round N's entry
+// requirement references round N-1's tournament ids, deploy round-by-round —
+// create a round, attach its ids, then build the next. Schedules are staggered
+// so round N opens only after round N-1's submission window closes.
+// ---------------------------------------------------------------------------
+
+/** The two matches whose winners feed into `matchId`, in slot order. */
+export function bracketFeeders(state: BracketState, matchId: string): BracketMatch[] {
+  return state.matches
+    .filter((m) => m.feedsInto === matchId)
+    .sort((a, b) => a.indexInRound - b.indexInRound);
+}
+
+/** Stagger a round's schedule so it opens after the prior rounds finish. */
+function roundSchedule(t: MatchScheduleTemplate, round: number): MatchScheduleTemplate {
+  // registrationStartDelay and gameStartDelay are measured from created_at;
+  // shift both by the cumulative span of the earlier rounds. The remaining
+  // fields are relative durations, so they're unchanged.
+  const roundSpan = t.gameStartDelay + t.gameEndDelay + t.submissionDuration;
+  const offset = (round - 1) * roundSpan;
+  return {
+    ...t,
+    registrationStartDelay: t.registrationStartDelay + offset,
+    gameStartDelay: t.gameStartDelay + offset,
+  };
+}
+
+/** Build a match's create_tournament Call with staggered schedule + gating. */
+function gatedMatchCreateCall(state: BracketState, match: BracketMatch): Call {
+  let entryRequirement: EntryRequirementArgs | undefined;
+  if (state.gated && match.round > 1) {
+    const feeders = bracketFeeders(state, match.id);
+    const feederIds = feeders.map((f) => f.tournamentId).filter((id): id is string => !!id);
+    if (feeders.length === 0 || feederIds.length !== feeders.length) {
+      throw new Error(
+        `Cannot gate ${match.id}: its feeder match tournaments aren't created yet — deploy round ${match.round - 1} first.`,
+      );
+    }
+    entryRequirement = {
+      entryLimit: 1,
+      type: {
+        kind: "extension",
+        address: extensionAddressFor(state.chain, "tournament"),
+        config: buildTournamentValidatorConfig({
+          requirement: "won",
+          tournamentIds: feederIds,
+          topPositions: 1,
+          qualifyingMode: 0, // AtLeastOne — the winner of either feeder qualifies.
+        }),
+      },
+    };
+  }
+  const args: CreateTournamentArgs = {
+    creatorRewardsAddress: state.creatorRewardsAddress,
+    name: `${state.namePrefix} R${match.round}-${match.indexInRound + 1}`.slice(0, 31),
+    description: `Bracket ${state.id} - round ${match.round}, match ${match.indexInRound + 1}`,
+    gameAddress: state.game,
+    settingsId: state.settingsId,
+    schedule: roundSchedule(state.scheduleTemplate, match.round),
+    leaderboard: { ...state.leaderboard },
+    ...(entryRequirement ? { entryRequirement } : {}),
+  };
+  return buildCreateTournamentCall(state.budokanAddress, args);
+}
+
+/**
+ * Create calls for every (non-bye) match in `round`, with the round's
+ * staggered schedule and — for rounds >1 of a gated bracket — the
+ * feeder-won entry requirement. Round >1 requires the prior round's
+ * tournament ids to be attached already. Run these, then
+ * `attachMatchTournament` each resulting id before deploying the next round.
+ */
+export function roundMatchCreateCalls(
+  state: BracketState,
+  round: number,
+): CreateMatchCall[] {
+  return state.matches
+    .filter((m) => m.round === round && m.status !== "bye" && !m.tournamentId)
+    .map((m) => ({ matchId: m.id, call: gatedMatchCreateCall(state, m) }));
+}
+
+/** Number of rounds in the bracket. */
+export function bracketRounds(state: BracketState): number {
+  return Math.max(...state.matches.map((m) => m.round));
+}
+
+/**
+ * Calls to escrow the configured ERC20 prize on the final match (approve +
+ * add_prize at position 1). Empty when no `finalPrize` is set or the final
+ * match isn't created yet. The caller (organizer) signs them.
+ */
+export function bracketFinalPrizeCalls(state: BracketState): Call[] {
+  if (!state.finalPrize) return [];
+  const final = state.matches.find((m) => !m.feedsInto);
+  if (!final?.tournamentId) return [];
+  const { tokenAddress, amount } = state.finalPrize;
+  return [
+    buildErc20ApproveCall(tokenAddress, state.budokanAddress, amount),
+    buildAddPrizeCall(state.budokanAddress, {
+      tournamentId: final.tournamentId,
+      prize: {
+        kind: "token",
+        tokenAddress,
+        tokenType: { kind: "erc20", amount },
+        position: 1,
+      },
+    }),
+  ];
+}
+
 /** Build the enter call(s) for a player joining their (live) match. */
 export function bracketEntryCalls(
   state: BracketState,
@@ -377,11 +532,36 @@ export function bracketEntryCalls(
   if (!player) {
     throw new Error(`${playerAddress} is not a competitor in ${matchIdToEnter}`);
   }
+
+  // Gated rounds >1: prove the entrant won the feeder they came from. The proof
+  // is QualificationProof::Extension([feederTournamentId, winnerTokenId, 1]) for
+  // the tournament validator; the feeder is the player's winning feeder match.
+  let qualifier: string | undefined;
+  let qualification: { kind: "extension"; data: string[] } | undefined;
+  if (state.gated && m.round > 1) {
+    const feeder = bracketFeeders(state, m.id).find(
+      (f) => f.winner?.address === player.address,
+    );
+    if (!feeder?.tournamentId || !feeder.winnerTokenId) {
+      throw new Error(
+        `Can't build a qualification proof for ${player.address} in ${matchIdToEnter}: ` +
+          `their feeder match isn't resolved with a winning token yet.`,
+      );
+    }
+    qualifier = player.address;
+    qualification = {
+      kind: "extension",
+      data: buildTournamentQualificationProof(feeder.tournamentId, feeder.winnerTokenId, 1),
+    };
+  }
+
   return [
     buildEnterTournamentCall(state.budokanAddress, {
       tournamentId: m.tournamentId,
       playerAddress: player.address,
       playerName: player.name,
+      ...(qualifier ? { qualifier } : {}),
+      ...(qualification ? { qualification } : {}),
     }),
   ];
 }
@@ -402,18 +582,25 @@ export function nextMatchesFor(
 function resolveWinner(
   match: BracketMatch,
   result: MatchResult,
-): { winner: BracketPlayer; status: "resolved" | "walkover" } {
+): { winner: BracketPlayer; status: "resolved" | "walkover"; winnerTokenId?: string } {
   const a = match.playerA!;
   const b = match.playerB!;
-  const byAddr = new Map(result.ranking.map((r) => [r.address, r.position]));
-  const posA = byAddr.get(a.address);
-  const posB = byAddr.get(b.address);
+  const byAddr = new Map(result.ranking.map((r) => [r.address, r]));
+  const rowA = byAddr.get(a.address);
+  const rowB = byAddr.get(b.address);
+  const posA = rowA?.position;
+  const posB = rowB?.position;
 
   if (posA !== undefined && posB !== undefined) {
-    return { winner: posA <= posB ? a : b, status: "resolved" };
+    const aWins = posA <= posB;
+    return {
+      winner: aWins ? a : b,
+      status: "resolved",
+      winnerTokenId: (aWins ? rowA : rowB)?.tokenId,
+    };
   }
-  if (posA !== undefined) return { winner: a, status: "walkover" };
-  if (posB !== undefined) return { winner: b, status: "walkover" };
+  if (posA !== undefined) return { winner: a, status: "walkover", winnerTokenId: rowA?.tokenId };
+  if (posB !== undefined) return { winner: b, status: "walkover", winnerTokenId: rowB?.tokenId };
   // Neither submitted a score: higher seed (lower number) advances.
   return { winner: a.seed <= b.seed ? a : b, status: "walkover" };
 }
@@ -436,8 +623,9 @@ export async function advanceBracket(
     if (m.status !== "live" || !m.tournamentId) continue;
     const result = await read(m.tournamentId);
     if (!result.finished) continue;
-    const { winner, status } = resolveWinner(m, result);
+    const { winner, status, winnerTokenId } = resolveWinner(m, result);
     m.winner = winner;
+    m.winnerTokenId = winnerTokenId;
     m.status = status;
     propagate(state, m);
   }

@@ -3,9 +3,13 @@ import {
   advanceBracket,
   attachMatchTournament,
   bracketEntryCalls,
+  bracketFeeders,
+  bracketFinalPrizeCalls,
+  bracketRounds,
   createBracket,
   nextMatchesFor,
   pendingMatchCreateCalls,
+  roundMatchCreateCalls,
   type CreateBracketOptions,
   type MatchReader,
 } from "../src/brackets/index.ts";
@@ -51,7 +55,8 @@ describe("createBracket sizing & seeding", () => {
   });
 
   test("non-power-of-two: 3 players → size 4, one bye for seed 1", () => {
-    const s = createBracket(baseOpts(players(3)));
+    // Byes are only allowed for ungated brackets.
+    const s = createBracket({ ...baseOpts(players(3)), gated: false });
     expect(s.size).toBe(4);
     const r1 = s.matches.filter((m) => m.round === 1);
     const bye = r1.find((m) => m.status === "bye")!;
@@ -165,5 +170,94 @@ describe("nextMatchesFor", () => {
     const next = nextMatchesFor(s, seed1.address);
     expect(next).toHaveLength(1);
     expect(next[0]!.round).toBe(1);
+  });
+});
+
+describe("gated upfront deploy", () => {
+  test("gated default rejects non-power-of-two rosters", () => {
+    expect(() => createBracket(baseOpts(players(3)))).toThrow();
+  });
+
+  test("bracketFeeders returns the two round-1 matches feeding the final", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const final = s.matches.find((m) => !m.feedsInto)!;
+    const feeders = bracketFeeders(s, final.id);
+    expect(feeders).toHaveLength(2);
+    expect(feeders.every((f) => f.round === 1)).toBe(true);
+    expect(feeders.map((f) => f.indexInRound)).toEqual([0, 1]);
+  });
+
+  test("round 1 create calls are ungated; round 2 gates on feeders + staggers schedule", () => {
+    const s = createBracket(baseOpts(players(4)));
+
+    // Round 1: base schedule, no gating. (Tournament ids are numeric on-chain.)
+    const r1 = roundMatchCreateCalls(s, 1);
+    expect(r1).toHaveLength(2);
+    r1.forEach(({ matchId, call }, i) => {
+      expect(call.entrypoint).toBe("create_tournament");
+      attachMatchTournament(s, matchId, String(100 + i));
+    });
+    const r1Len = (r1[0]!.call.calldata as string[]).length;
+
+    // Round 2 (the final): gated on its two feeders → more calldata than an
+    // ungated round-1 create.
+    const r2 = roundMatchCreateCalls(s, 2);
+    expect(r2).toHaveLength(1);
+    expect((r2[0]!.call.calldata as string[]).length).toBeGreaterThan(r1Len);
+  });
+
+  test("round 2 create throws if round 1 not deployed yet", () => {
+    const s = createBracket(baseOpts(players(4)));
+    expect(() => roundMatchCreateCalls(s, 2)).toThrow();
+  });
+
+  test("qualified entry attaches a QualificationProof for gated round-2 winners", async () => {
+    let s = createBracket(baseOpts(players(4)));
+    roundMatchCreateCalls(s, 1).forEach(({ matchId }, i) =>
+      attachMatchTournament(s, matchId, String(100 + i)),
+    );
+    // Resolve round 1 with numeric winning token ids.
+    const read: MatchReader = async (tid) => {
+      const m = s.matches.find((x) => x.tournamentId === tid)!;
+      return {
+        finished: true,
+        ranking: [
+          { address: m.playerA!.address, position: 1, tokenId: String(900 + m.indexInRound) },
+          { address: m.playerB!.address, position: 2, tokenId: String(800 + m.indexInRound) },
+        ],
+      };
+    };
+    s = (await advanceBracket(s, read)).state;
+
+    const final = s.matches.find((m) => !m.feedsInto)!;
+    attachMatchTournament(s, final.id, "200");
+    const winnerAddr = final.playerA!.address;
+
+    const gatedCall = bracketEntryCalls(s, final.id, winnerAddr)[0]!;
+    expect(gatedCall.entrypoint).toBe("enter_tournament");
+    // A gated entry carries the QualificationProof, so its calldata is longer
+    // than the same entry without gating.
+    const ungatedCall = bracketEntryCalls({ ...s, gated: false }, final.id, winnerAddr)[0]!;
+    expect((gatedCall.calldata as string[]).length).toBeGreaterThan(
+      (ungatedCall.calldata as string[]).length,
+    );
+
+    const feeder = bracketFeeders(s, final.id).find((f) => f.winner?.address === winnerAddr)!;
+    expect(feeder.winnerTokenId).toBe(String(900 + feeder.indexInRound));
+  });
+
+  test("final prize calls = approve + add_prize once the final is created", () => {
+    let s = createBracket({
+      ...baseOpts(players(4)),
+      finalPrize: { tokenAddress: "0xprize", amount: "1000" },
+    });
+    expect(bracketFinalPrizeCalls(s)).toHaveLength(0); // final not created yet
+    const final = s.matches.find((m) => !m.feedsInto)!;
+    attachMatchTournament(s, final.id, "t-final");
+    const calls = bracketFinalPrizeCalls(s);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.entrypoint).toBe("approve");
+    expect(calls[1]!.entrypoint).toBe("add_prize");
+    expect(bracketRounds(s)).toBe(2);
   });
 });
