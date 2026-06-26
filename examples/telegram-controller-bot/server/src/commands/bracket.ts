@@ -67,7 +67,8 @@ interface Draft {
     | "capacity"
     | "players"
     | "length"
-    | "prize"
+    | "prizeToken"
+    | "prizeAmount"
     | "feeToken"
     | "feeAmount"
     | "feeSplit"
@@ -80,6 +81,7 @@ interface Draft {
   capacity?: number;
   players?: Player[]; // closed: everyone; mix: seeds; open: undefined
   length?: (typeof LENGTH_PRESETS)[number];
+  prizeToken?: Erc20Token;
   prize?: { tokenAddress: string; amount: string; label: string };
   // Paid (open mode only): players pay this fee on tap; it escrows into
   // placement prizes per tiersBps (basis points per tier). Collected over the
@@ -246,25 +248,39 @@ export async function handleAnswer(
       await sendFeeTokenPrompt(api, d.chain, chatId);
       return;
     }
-    d.step = "prize";
-    await api.sendMessage(
-      chatId,
-      "🏆 Champion prize? Reply `<symbol> <amount>` (e.g. `STRK 100`) to escrow an ERC-20 on the final, or `skip`. /cancel to abort.",
-    );
+    d.step = "prizeToken";
+    await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
     return;
   }
 
-  if (d.step === "prize") {
-    if (t.toLowerCase() !== "skip") {
-      const [sym, amt] = t.split(/\s+/);
-      const token = sym ? findTokenBySymbol(d.chain, sym) : undefined;
-      if (!token || !amt || !/^\d+(\.\d+)?$/.test(amt)) {
-        await api.sendMessage(chatId, "Couldn't parse that. Use `<symbol> <amount>` (known token), or `skip`.");
-        return;
-      }
-      d.prize = { tokenAddress: token.address, amount: toRawAmount(amt, token.decimals), label: `${amt} ${token.symbol}` };
+  if (d.step === "prizeToken") {
+    if (/^(0|skip|none|no)$/i.test(t)) {
+      d.step = "confirm";
+      await api.sendMessage(chatId, confirmText(d));
+      return;
     }
-    // closed/mix only reach here (open went to the fee flow after length).
+    const tokens = tokensForChain(d.chain);
+    const n = Number(t);
+    if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
+      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no prize, or /cancel.`);
+      return;
+    }
+    d.prizeToken = tokens[n - 1];
+    d.step = "prizeAmount";
+    await api.sendMessage(chatId, `🏆 Champion prize amount in ${d.prizeToken!.symbol}? (e.g. 100) /cancel to abort.`);
+    return;
+  }
+
+  if (d.step === "prizeAmount") {
+    if (!/^\d+(\.\d+)?$/.test(t)) {
+      await api.sendMessage(chatId, `Enter a number in ${d.prizeToken!.symbol} (e.g. 100), or /cancel.`);
+      return;
+    }
+    d.prize = {
+      tokenAddress: d.prizeToken!.address,
+      amount: toRawAmount(t, d.prizeToken!.decimals),
+      label: `${t} ${d.prizeToken!.symbol}`,
+    };
     d.step = "confirm";
     await api.sendMessage(chatId, confirmText(d));
     return;
@@ -1077,13 +1093,24 @@ async function sendLengthPrompt(api: TelegramApi, chatId: string): Promise<void>
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
-async function sendFeeTokenPrompt(api: TelegramApi, chain: Chain, chatId: string): Promise<void> {
+/** Numbered token picker shared by the entry-fee and sponsored-prize steps. */
+async function sendTokenList(
+  api: TelegramApi,
+  chain: Chain,
+  chatId: string,
+  header: string,
+  zeroLabel: string,
+): Promise<void> {
   const tokens = tokensForChain(chain);
-  const lines = ["💸 Entry fee — pick a token:", ""];
+  const lines = [header, ""];
   tokens.forEach((tk, i) => lines.push(`  ${i + 1}. ${tk.symbol}`));
-  lines.push("  0. No entry fee (free bracket)");
+  lines.push(`  0. ${zeroLabel}`);
   lines.push("", "Reply with a number. /cancel to abort.");
   await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function sendFeeTokenPrompt(api: TelegramApi, chain: Chain, chatId: string): Promise<void> {
+  await sendTokenList(api, chain, chatId, "💸 Entry fee — pick a token:", "No entry fee (free bracket)");
 }
 
 async function sendFeeSplitPrompt(api: TelegramApi, chatId: string): Promise<void> {
@@ -1203,11 +1230,6 @@ async function lookupAddressesToUsernames(addresses: string[]): Promise<Map<stri
     if (r.addresses?.[0]) out.set(num.toHex(r.addresses[0]), r.username);
   }
   return out;
-}
-
-function findTokenBySymbol(chain: Chain, symbol: string) {
-  const want = symbol.toLowerCase();
-  return tokensForChain(chain).find((token) => token.symbol.toLowerCase() === want);
 }
 
 function toRawAmount(human: string, decimals: number): string {
