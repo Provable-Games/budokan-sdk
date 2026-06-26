@@ -58,6 +58,46 @@ describe("buildEnterTournamentCall (#264/#269 8-param shape)", () => {
     ]);
   });
 
+  test("extension qualification proof (tournament validator) encodes Some/Extension/span", () => {
+    const call = buildEnterTournamentCall(BUDOKAN, {
+      tournamentId: "9",
+      playerAddress: "0xW",
+      // entrant won feeder tournament 7 with token 0x123 at position 1
+      qualification: { kind: "extension", data: ["7", "0x123", "1"] },
+    });
+    expect(call.calldata).toEqual([
+      "0x9", // tournament_id
+      "0x1", // player_name None
+      "0x0", "0xW", // player_address Some
+      "0x1", // qualifier None
+      "0x0", // qualification Some
+      "0x1", // QualificationProof::Extension (variant 1)
+      "0x3", "0x7", "0x123", "0x1", // Span<felt252> [len, tid, tokenId, position]
+      "0x1", // entry_fee_pay_params None
+      "0x0", // salt
+      "0x0", // metadata_value
+    ]);
+  });
+
+  test("nft qualification proof encodes Some/NFT/u256", () => {
+    const call = buildEnterTournamentCall(BUDOKAN, {
+      tournamentId: "9",
+      qualification: { kind: "nft", tokenId: "5" },
+    });
+    expect(call.calldata).toEqual([
+      "0x9", // tournament_id
+      "0x1", // player_name None
+      "0x1", // player_address None
+      "0x1", // qualifier None
+      "0x0", // qualification Some
+      "0x0", // QualificationProof::NFT (variant 0)
+      "0x5", "0x0", // NFTQualification { token_id: u256 } → low, high
+      "0x1", // entry_fee_pay_params None
+      "0x0", // salt
+      "0x0", // metadata_value
+    ]);
+  });
+
   test("qualifier Some when provided", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",

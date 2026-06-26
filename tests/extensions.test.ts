@@ -4,8 +4,19 @@ import {
   buildMerkleConfig,
   buildOpusTrovesConfig,
   buildTournamentValidatorConfig,
+  buildTournamentQualificationProof,
   u256ToLowHigh,
 } from "../src/extensions/index.ts";
+
+describe("buildTournamentQualificationProof", () => {
+  test("encodes [qualifyingTournamentId, tokenId, position]", () => {
+    expect(buildTournamentQualificationProof("7", "0x123", 1)).toEqual([
+      "7",
+      "0x123",
+      "1",
+    ]);
+  });
+});
 
 describe("u256ToLowHigh", () => {
   test("splits into low/high limbs", () => {

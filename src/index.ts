@@ -203,6 +203,7 @@ export {
   buildOpusTrovesConfig,
   buildMerkleConfig,
   buildTournamentValidatorConfig,
+  buildTournamentQualificationProof,
 } from "./extensions/index.js";
 export type {
   ExtensionPresetKind,

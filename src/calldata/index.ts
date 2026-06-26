@@ -112,6 +112,18 @@ export interface EnterTournamentArgs {
    */
   qualifier?: string;
   /**
+   * Proof that the entrant satisfies the tournament's `entry_requirement`,
+   * encoded as `Option<QualificationProof>`. Omit → `None` (open tournaments,
+   * or validators that need no proof).
+   * - `{ kind: "extension", data }` → `QualificationProof::Extension(Span<felt252>)`.
+   *   For the tournament validator (entry gated on having placed in another
+   *   tournament), build `data` with `buildTournamentQualificationProof`.
+   * - `{ kind: "nft", tokenId }` → `QualificationProof::NFT({ token_id })`.
+   */
+  qualification?:
+    | { kind: "extension"; data: string[] }
+    | { kind: "nft"; tokenId: string };
+  /**
    * `entry_fee_pay_params` (`Option<Span<felt252>>`). Required only for
    * tournaments with an `EntryFeeKind::Extension` fee — the felts the fee
    * extension expects. Omit for the built-in fee flow (Option::None).
@@ -327,10 +339,22 @@ export function buildEnterTournamentCall(
   } else {
     calldata.push("0x1");
   }
-  // qualification: Option<QualificationProof> — only None is supported here.
-  // Token / extension qualified tournaments require a real proof, which
-  // depends on the validator and on the caller's runtime state.
-  calldata.push("0x1");
+  // qualification: Option<QualificationProof>. None for open tournaments;
+  // Some(proof) for gated ones. QualificationProof variants: NFT=0, Extension=1.
+  if (args.qualification) {
+    calldata.push("0x0"); // Option::Some
+    if (args.qualification.kind === "nft") {
+      calldata.push("0x0"); // QualificationProof::NFT(NFTQualification { token_id: u256 })
+      const { low, high } = uint256.bnToUint256(args.qualification.tokenId);
+      calldata.push(num.toHex(low), num.toHex(high));
+    } else {
+      calldata.push("0x1"); // QualificationProof::Extension(Span<felt252>)
+      const data = args.qualification.data;
+      calldata.push(num.toHex(data.length), ...data.map((d) => num.toHex(d)));
+    }
+  } else {
+    calldata.push("0x1"); // Option::None
+  }
   // entry_fee_pay_params: Option<Span<felt252>>. Some(span) for
   // EntryFeeKind::Extension tournaments; None for the built-in fee flow.
   if (args.entryFeePayParams && args.entryFeePayParams.length > 0) {

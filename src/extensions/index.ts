@@ -204,3 +204,24 @@ export function buildTournamentValidatorConfig(
     cfg.requirement === "won" ? String(cfg.topPositions) : "0";
   return [qualifierType, qualifyingMode, topPositions, ...cfg.tournamentIds];
 }
+
+/**
+ * Build the `QualificationProof::Extension` span an entrant passes to
+ * `enter_tournament` to prove they satisfy a tournament-validator
+ * entry_requirement — i.e. that `tokenId` placed at `position` in
+ * `qualifyingTournamentId` (one of the validator's allowed tournaments).
+ *
+ * Layout (from tournament_validator's qualification check):
+ *   [qualifying_tournament_id, token_id, position]
+ *
+ * Pass the result as `qualification: { kind: "extension", data }` to
+ * `buildEnterTournamentCall`. For a 1v1 bracket, `position` is 1 (the match
+ * winner) and `qualifyingTournamentId` is the feeder match the entrant won.
+ */
+export function buildTournamentQualificationProof(
+  qualifyingTournamentId: string,
+  tokenId: string,
+  position: number,
+): string[] {
+  return [qualifyingTournamentId, tokenId, String(position)];
+}
