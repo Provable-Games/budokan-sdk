@@ -701,9 +701,12 @@ async function deployPaidUpfront(
   const tiersBps = d.tiersBps ?? [10000];
   const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
   await api.sendMessage(organizerChatId, `⏳ Deploying ${bracketRounds(state)} rounds for a ${capacity}-player bracket…`);
+  let step = "starting";
   try {
     for (let round = 1; round <= bracketRounds(state); round++) {
       for (const { matchId, call } of roundMatchCreateCalls(state, round)) {
+        step = `creating match ${matchId} (round ${round}${round > 1 ? ", gated" : ""})`;
+        console.error(`[bracket ${id}] ${step}: create_tournament settingsId=${d.settingsId ?? 0}`);
         const tx = await session.data.account.execute([call]);
         const receipt = (await rpc.waitForTransaction(tx.transaction_hash)) as {
           events?: Array<{ from_address?: string; keys?: string[] }>;
@@ -716,6 +719,8 @@ async function deployPaidUpfront(
     // Escrow the sponsor seed NOW (before anyone joins) so the prize is locked
     // and trustlessly visible — distributed across the placement tiers.
     if (d.seed) {
+      step = `escrowing seed (${d.seed.label})`;
+      console.error(`[bracket ${id}] ${step}`);
       const seedCalls = bracketFeePrizeCalls(state, {
         tokenAddress: d.seed.tokenAddress,
         fee: d.seed.amount,
@@ -724,7 +729,7 @@ async function deployPaidUpfront(
       if (seedCalls.length > 0) await session.data.account.execute(seedCalls);
     }
   } catch (error) {
-    await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}`);
+    await api.sendMessage(organizerChatId, `❌ Deploy stopped while ${step}: ${formatError(error)}`);
     return;
   }
 
