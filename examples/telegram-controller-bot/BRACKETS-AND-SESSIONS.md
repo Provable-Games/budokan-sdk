@@ -164,40 +164,45 @@ visible only to the invoking user, *in the public channel*. So the whole flow
   live in the channel, and each interaction is private to the tapping user — no
   DM round-trip.
 
-## Entry integrity (on-chain limits — important caveat)
+## Entry integrity (on-chain enforcement)
 
-Budokan does **not** enforce one entry per address on-chain. `enter_tournament`
-has no per-caller dedup — each call mints a fresh tournament token. The built-in
-`entry_limit` field is counted **per qualifier** (an NFT token id / qualification
-proof hash), **never per caller address**, and only applies when a tournament
-has an entry requirement. There are exactly two built-in requirement types
-(`token` NFT-gate, `extension`); neither is keyed by address. So:
+Budokan does **not** enforce one entry per address by default — `enter_tournament`
+has no per-caller dedup; each call mints a fresh tournament token. The built-in
+`entry_limit` is counted **per qualifier** (an NFT token id / qualification-proof
+hash), **never per caller address**, and only applies when a tournament has an
+entry requirement. There are two built-in requirement types (`token` NFT-gate,
+`extension`); neither is keyed by address. What this means per round:
 
-- **Round-1 matches are open (no requirement)** → there is no on-chain
-  per-address cap available. `entry_limit` cannot express "open to anyone but 1
-  per address" — that needs a **custom `IEntryRequirementExtension`** contract.
-- **Gated rounds** use the production `tournament_validator` extension, whose
-  `valid_entry` checks only token ownership + leaderboard position; the framework
-  `entry_limit` is a no-op for extension gates and this preset keeps no enforced
-  counter. So a winner's qualifier token can technically be reused (double-enter
-  a gated round). The configured limit is surfaced only by an advisory
-  `entries_left` view that the entry path never calls.
+- **Gated rounds (round > 1) — enforced on-chain.** Each gated match is created
+  with an entry requirement using the **`tournament_validator` v0.1.5** extension
+  (the version Budokan pins) and **`entryLimit: 1`** (`gatedMatchCreateCall`).
+  v0.1.5's `validate_entry` checks feeder-win + leaderboard position **and**
+  asserts the per-token counter against `entry_limit`, so: only a feeder *winner*
+  can enter, and each qualifier token is **single-use** — a winner **cannot**
+  double-enter. The SDK's `buildTournamentValidatorConfig` + qualification-proof
+  layouts are verified to match the deployed v0.1.5 ABI (the v0.1.1→v0.1.5
+  breaking change touched separate `add_config` params, not the SDK's config span
+  or proof). *(Earlier notes claimed this wasn't enforced — that was against a
+  stale v0.1.1 checkout in the workspace, not the deployed v0.1.5.)*
+- **Round-1 matches are open (no requirement)** → there is **no built-in
+  per-address cap**. `entry_limit` can't express "open to anyone but 1 per
+  address" (it's per-qualifier, and round 1 has no qualifier); that would need a
+  **custom `IEntryRequirementExtension`** contract. Round-1 integrity therefore
+  relies on the bot.
 
-**How the bot stays correct anyway (the chosen model):**
+**How the bot covers round 1:**
 
 - The **bot is the entry path.** `paidJoin`/`join` enforce **one entry per
-  address per bracket** (membership check before assigning a slot), and the bot
-  is the only thing that enters players in normal use.
+  address per bracket** (membership check before assigning a slot).
 - **Resolution is competitor-keyed.** `resolveWinner` looks up only the match's
   two named `playerA`/`playerB` by address and compares *their* leaderboard
-  positions — so a random third entrant **cannot "win"** a match, and a winner
-  double-entering their own next match is harmless (the duplicate token is
-  ignored). This holds regardless of on-chain entry caps.
+  positions — so a random third entrant **cannot "win"** a match, regardless of
+  on-chain entries.
 
-**Residual gap (accepted):** a griefer who *plays* a round-1 match they're not
-part of and scores #1 can push the real winner to position 2, which can block
-that winner's position-based qualification into the **gated** next round. This
-requires bypassing the bot on-chain *and* outscoring both real players, and only
-affects gated brackets. True on-chain prevention (per-address round-1 cap +
-single-use qualifiers) would require deploying a custom entry-requirement
-extension; that is intentionally out of scope for this reference bot.
+**Residual gap (accepted, round 1 only):** a griefer who *plays* an open round-1
+match they're not part of and scores #1 could push the real winner to position 2,
+which can block that winner's position-based qualification into the gated next
+round. It requires bypassing the bot on-chain *and* outscoring both real players.
+Eliminating it would need a custom per-address entry-requirement extension on
+round-1 matches — intentionally out of scope for this reference bot. Gated rounds
+(2+) are fully protected on-chain.
