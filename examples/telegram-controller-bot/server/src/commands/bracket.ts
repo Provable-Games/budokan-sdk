@@ -476,14 +476,16 @@ export async function handleAnswer(
       return;
     }
 
-    // open + a prize pool (seed and/or entry fee) → deploy the tree up front so
-    // the seed is escrowed before anyone joins (trustless) and taps can pay.
-    if (d.mode === "open" && (d.entryFee || d.seed)) {
+    // ALL open brackets deploy the tree up front (no register-then-fill): any
+    // seed is escrowed before anyone joins (trustless), and players tap Join to
+    // enter — paying a fee if set, free otherwise. Tournaments are on-chain
+    // immediately, so there's never a "where are my tournaments?" gap.
+    if (d.mode === "open") {
       await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
       return;
     }
 
-    // free, no-prize open / mix → register, fill, then deploy (nothing to lock).
+    // mix → register the seeded players, fill the open slots, then deploy.
     const reg: BracketRegistration = {
       id: `b${Date.now().toString(36)}`,
       chain: d.chain,
