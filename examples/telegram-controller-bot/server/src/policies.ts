@@ -17,6 +17,8 @@ import { tokensForChain } from "./catalog/tokens.ts";
 export interface PolicyMethod {
   entrypoint: string;
   description?: string;
+  /** ERC20 `approve` policies only: the spender authorized (the Budokan contract). */
+  spender?: string;
   /** ERC20 `approve` policies only: per-token session spending cap (base units). */
   amount?: string;
 }
@@ -66,6 +68,9 @@ export function buildSessionPolicies(
         {
           entrypoint: "approve",
           description: `Pay entry fees & sponsor prizes in ${token.symbol} (up to your spending limit)`,
+          // Budokan is the only spender we ever approve (it pulls entry fees +
+          // prize escrow). Declaring spender + amount is the non-deprecated form.
+          spender: budokanAddress,
           amount: token.spendLimit,
         },
       ],
