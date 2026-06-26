@@ -40,6 +40,7 @@ import { resolveAccount } from "../controller-account.ts";
 import { keychainSafeRpcUrl } from "../cartridge-link.ts";
 import { gamesForChain, type Game } from "../catalog/games.ts";
 import { tokensForChain, type Erc20Token } from "../catalog/tokens.ts";
+import { fetchSettings, type SettingsPage } from "../catalog/settings.ts";
 import { formatError } from "../format-error.ts";
 import { BracketStore, type BracketRegistration, type StoredBracket } from "../bracket-store.ts";
 
@@ -63,6 +64,7 @@ const CAPACITIES = [4, 8, 16, 32] as const;
 interface Draft {
   step:
     | "game"
+    | "settings"
     | "mode"
     | "capacity"
     | "players"
@@ -77,6 +79,9 @@ interface Draft {
   chain: Chain;
   games: Game[];
   game?: Game;
+  settingsId?: number;
+  settingsName?: string;
+  settingsPage?: SettingsPage;
   mode?: (typeof MODES)[number]["key"];
   capacity?: number;
   players?: Player[]; // closed: everyone; mix: seeds; open: undefined
@@ -158,11 +163,12 @@ export async function handleAnswer(
       return;
     }
     d.game = d.games[n - 1];
-    d.step = "mode";
-    const lines = [`🎮 ${d.game!.name}. How should players join?`, ""];
-    MODES.forEach((m, i) => lines.push(`  ${i + 1}. ${m.label}`));
-    lines.push("", "Reply with a number. /cancel to abort.");
-    await api.sendMessage(chatId, lines.join("\n"));
+    await renderBracketSettings(api, d, chatId, 0);
+    return;
+  }
+
+  if (d.step === "settings") {
+    await handleBracketSettings(api, d, chatId, t);
     return;
   }
 
@@ -288,8 +294,9 @@ export async function handleAnswer(
 
   if (d.step === "feeToken") {
     if (/^(0|skip|none|no)$/i.test(t)) {
-      d.step = "confirm";
-      await api.sendMessage(chatId, confirmText(d));
+      // No entry fee → offer an optional sponsored champion prize instead.
+      d.step = "prizeToken";
+      await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
       return;
     }
     const tokens = tokensForChain(d.chain);
@@ -370,6 +377,7 @@ export async function handleAnswer(
         announceChatId,
         chain: d.chain,
         game: d.game!,
+        settingsId: d.settingsId,
         length: d.length!,
         prize: d.prize,
         players: d.players!,
@@ -397,6 +405,8 @@ export async function handleAnswer(
       },
       length: { reg: d.length!.reg, game: d.length!.game, sub: d.length!.sub },
       prize: d.prize,
+      settingsId: d.settingsId,
+      settingsName: d.settingsName,
       capacity: d.capacity!,
       players: d.players ?? [],
       createdAt: Date.now(),
@@ -582,6 +592,7 @@ async function deployFromRegistration(
     announceChatId: reg.announceChatId,
     chain: reg.chain,
     game,
+    settingsId: reg.settingsId,
     length: reg.length,
     prize: reg.prize,
     players: reg.players,
@@ -596,6 +607,7 @@ interface DeployParams {
   announceChatId: string;
   chain: Chain;
   game: Game;
+  settingsId?: number;
   length: { reg: number; game: number; sub: number };
   prize?: { tokenAddress: string; amount: string; label: string };
   players: Player[];
@@ -628,7 +640,7 @@ async function deployResolved(
     budokanAddress,
     game: p.game.contractAddress,
     chain: chain as BracketState["chain"],
-    settingsId: 0,
+    settingsId: p.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
     namePrefix: p.game.name.slice(0, 12),
     scheduleTemplate: {
@@ -720,7 +732,7 @@ async function deployPaidUpfront(
     budokanAddress,
     game: game.contractAddress,
     chain: chain as BracketState["chain"],
-    settingsId: 0,
+    settingsId: d.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
     namePrefix: game.name.slice(0, 12),
     scheduleTemplate: {
@@ -1121,6 +1133,90 @@ async function sendFeeSplitPrompt(api: TelegramApi, chatId: string): Promise<voi
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
+async function sendModePrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  d.step = "mode";
+  const tag = d.settingsName ? ` — ${d.settingsName}` : "";
+  const lines = [`🎮 ${d.game!.name}${tag}. How should players join?`, ""];
+  MODES.forEach((m, i) => lines.push(`  ${i + 1}. ${m.label}`));
+  lines.push("", "Reply with a number. /cancel to abort.");
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+/** Fetch + show one page of the game's settings (mirrors /create). */
+async function renderBracketSettings(api: TelegramApi, d: Draft, chatId: string, offset: number): Promise<void> {
+  d.step = "settings";
+  let page: SettingsPage;
+  try {
+    page = await fetchSettings(d.chain, d.game!.contractAddress, { limit: 5, offset });
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't load settings: ${formatError(error)}\nReply 'retry', or 'skip' to use ID 0.`);
+    d.settingsPage = undefined;
+    return;
+  }
+  d.settingsPage = page;
+  if (page.data.length === 0) {
+    d.settingsId = 0;
+    d.settingsName = "(default)";
+    await api.sendMessage(chatId, "No settings registered for this game — using settings ID 0.");
+    await sendModePrompt(api, d, chatId);
+    return;
+  }
+  const pages = Math.max(1, Math.ceil(page.total / page.limit));
+  const lines = [
+    `⚙️ Settings for ${d.game!.name} (page ${Math.floor(offset / page.limit) + 1} of ${pages}):`,
+    "",
+    ...page.data.map((s, i) => `  ${i + 1}. ID ${s.id}${s.name ? ` — ${s.name}` : ""}`),
+    "",
+    "Reply with a number, 'next' / 'prev', or 'skip' for ID 0. /cancel to abort.",
+  ];
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string, input: string): Promise<void> {
+  const lower = input.toLowerCase();
+  if (lower === "skip") {
+    d.settingsId = 0;
+    d.settingsName = "(default)";
+    await sendModePrompt(api, d, chatId);
+    return;
+  }
+  if (lower === "retry") {
+    await renderBracketSettings(api, d, chatId, d.settingsPage?.offset ?? 0);
+    return;
+  }
+  const page = d.settingsPage;
+  if (!page) {
+    await renderBracketSettings(api, d, chatId, 0);
+    return;
+  }
+  if (lower === "next") {
+    const nextOffset = page.offset + page.limit;
+    if (nextOffset >= page.total) {
+      await api.sendMessage(chatId, "Already on the last page.");
+      return;
+    }
+    await renderBracketSettings(api, d, chatId, nextOffset);
+    return;
+  }
+  if (lower === "prev") {
+    if (page.offset === 0) {
+      await api.sendMessage(chatId, "Already on the first page.");
+      return;
+    }
+    await renderBracketSettings(api, d, chatId, Math.max(0, page.offset - page.limit));
+    return;
+  }
+  const n = Number(input);
+  if (!/^\d+$/.test(input) || n < 1 || n > page.data.length) {
+    await api.sendMessage(chatId, `Reply 1–${page.data.length}, 'next', 'prev', or 'skip'.`);
+    return;
+  }
+  const chosen = page.data[n - 1]!;
+  d.settingsId = chosen.id;
+  d.settingsName = chosen.name ?? `ID ${chosen.id}`;
+  await sendModePrompt(api, d, chatId);
+}
+
 function confirmText(d: Draft): string {
   const roster =
     d.mode === "open"
@@ -1131,6 +1227,7 @@ function confirmText(d: Draft): string {
   return [
     "🧾 Confirm bracket:",
     `  • Game: ${d.game!.name}`,
+    `  • Settings: ${d.settingsName ?? "(default)"}`,
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
     `  • Champion prize: ${d.prize ? d.prize.label : "none"}`,

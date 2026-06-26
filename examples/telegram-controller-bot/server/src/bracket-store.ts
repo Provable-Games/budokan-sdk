@@ -32,6 +32,9 @@ export interface BracketRegistration {
   /** Per-match schedule durations (seconds). */
   length: { reg: number; game: number; sub: number };
   prize?: { tokenAddress: string; amount: string; label: string };
+  /** Game settings (denshokan) chosen at create time; defaults to 0. */
+  settingsId?: number;
+  settingsName?: string;
   /** Power-of-two target; the bracket deploys when this many have joined. */
   capacity: number;
   /** Seeded by the organizer + everyone who has joined, in seed order. */
