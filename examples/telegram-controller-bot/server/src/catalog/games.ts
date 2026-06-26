@@ -17,6 +17,8 @@
 //   - displaying friendly names elsewhere
 
 import { createDenshokanClient, type DenshokanClient } from "@provable-games/denshokan-sdk";
+import { CHAINS } from "@provable-games/budokan-sdk";
+import { RpcProvider } from "starknet";
 
 import type { Chain } from "../chat-state.ts";
 
@@ -69,10 +71,11 @@ const METADATA: Record<string, GameMetadata> = {
     controllerOnly: true,
     defaultEntryFeeToken: STRK_ADDRESS,
   },
-  // sepolia Number Guess
+  // sepolia Number Guess (registry requires a 5% game fee)
   "0x3a2ea07f0f49c770035eed9a010eb3d1e1bc3cb92e1d47eef2ad75a25c6bdb2": {
     controllerOnly: true,
     defaultEntryFeeToken: STRK_ADDRESS,
+    defaultGameFeePercentage: 5,
   },
   // sepolia zKube
   "0x5e02a1f750b3fa0e835d454705b664ecb23166cdb49459b1c96c1e3eaf9a2f4": {
@@ -182,4 +185,42 @@ export async function findGame(chain: Chain, contractAddress: string): Promise<G
  */
 export function gameMetadataFor(contractAddress: string): GameMetadata | undefined {
   return METADATA[contractAddress.toLowerCase()];
+}
+
+// Cache of the registry-required game fee (bps) per chain:game. The minimum is
+// fixed on-chain, so one lookup per game is plenty.
+const gameFeeBpsCache = new Map<string, number>();
+
+/**
+ * The game's required creator fee in basis points, read live from the registry
+ * (game → token → registry → game_fee_info). Budokan's `_assert_game_fee_met`
+ * rejects a `game_creator_share` below this, so /create uses it as the floor.
+ * Returns null on any read failure — callers fall back to the catalog default.
+ *
+ * The on-chain `GameFeeInfo` ends with the fee numerator (bps); a licence
+ * ByteArray sits before it, so we read the LAST felt of the response.
+ */
+export async function fetchGameFeeBps(
+  chain: Chain,
+  gameAddress: string,
+  rpcUrl?: string,
+): Promise<number | null> {
+  const key = `${chain}:${gameAddress.toLowerCase()}`;
+  const cached = gameFeeBpsCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const rpc = new RpcProvider({ nodeUrl: rpcUrl ?? CHAINS[chain]?.rpcUrl });
+    const call = (addr: string, fn: string, cd: string[] = []) =>
+      rpc.callContract({ contractAddress: addr, entrypoint: fn, calldata: cd });
+    const tokenAddress = (await call(gameAddress, "token_address"))[0]!;
+    const registry = (await call(tokenAddress, "game_registry_address"))[0]!;
+    const gameId = (await call(registry, "game_id_from_address", [gameAddress]))[0]!;
+    const info = await call(registry, "game_fee_info", [gameId]);
+    const bps = Number(BigInt(info[info.length - 1]!));
+    if (!Number.isFinite(bps) || bps < 0 || bps > 10000) return null;
+    gameFeeBpsCache.set(key, bps);
+    return bps;
+  } catch {
+    return null;
+  }
 }
