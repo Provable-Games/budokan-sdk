@@ -246,12 +246,6 @@ export class TelegramBot {
       case "/bracketchannel":
         // Run in the target group to make bracket cards post there.
         return bracketCmd.setAnnounceChannel(this.api, this.brackets, chatId);
-      case "/bracket_start":
-      case "/bracketstart": {
-        const id = args[0];
-        if (!id) return this.api.sendMessage(chatId, "Usage: /bracket_start <id>");
-        return bracketCmd.startNow(this.api, this.config, this.brackets, chatId, id);
-      }
       case "/enter": {
         const chain = await this.chatStates.getChain(chatId);
         return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, args);
@@ -501,9 +495,9 @@ export class TelegramBot {
         "  /add_prize [tournamentId] — sponsor an ERC-20 prize (no id → picker; signs in chat within your spending limit, else a budokan.gg link)",
         "",
         "Brackets (1v1 single-elim, gated):",
-        "  /bracket — create a bracket: closed (paste players), open (people join till full), or mix. Players can be 0x addresses or Cartridge usernames.",
-        "  /bracket_join <id> — join an open bracket (after /connect); /bracket_start <id> — organizer force-start",
-        "  /bracket_sponsor <id> <address|username> — pay another player's entry into a paid bracket",
+        "  /bracket — create a bracket: closed (paste players) or open (people join till full). Players can be 0x addresses or Cartridge usernames.",
+        "  /bracket_join <id> — join an open bracket (after /connect)",
+        "  /bracket_sponsor <id> <address|username> — pay/sponsor another player's entry",
         "  /bracket_channel — run in a public group to post bracket cards + updates there (no env var needed)",
         "  /brackets — list brackets; /bracket_view <id> — show the tree",
         "",

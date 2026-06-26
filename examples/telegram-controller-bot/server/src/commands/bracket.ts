@@ -2,16 +2,18 @@
 // bracket over Budokan tournaments, with on-chain gating (each round's entry
 // requires having won the feeder match). See budokan-sdk `src/brackets`.
 //
-// Three rosters:
+// Two rosters:
 //   - closed: organizer pastes every player up front (addresses or Cartridge
-//     usernames) → deploys immediately.
-//   - open:   organizer sets a capacity; players /bracket_join until full,
-//     then it auto-starts.
-//   - mix:    organizer seeds some players + opens the remaining slots.
+//     usernames) → deploys immediately, enters everyone.
+//   - open:   organizer sets a capacity + optional prize pool (sponsor seed
+//     and/or per-entry fee); the tree deploys up front (seed escrowed before
+//     joins), players tap Join to enter their slot. Round 1 starts at the
+//     sign-up deadline (empty slots walk over). To add a specific player,
+//     /bracket_sponsor them in.
 //
-// The whole tree is deployed up front; the bot enters round-1 players on their
-// behalf and, as rounds resolve, enters winners into the next gated match.
-// Progression is handled by the poller (advanceStoredBracket).
+// The whole tree is deployed up front; the bot enters round-1 players (closed)
+// or players enter themselves on Join (open), and as rounds resolve the poller
+// (advanceStoredBracket) enters winners into the next gated match.
 
 import {
   CHAINS,
@@ -41,7 +43,7 @@ import { gamesForChain, type Game } from "../catalog/games.ts";
 import { tokensForChain, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, type SettingsPage } from "../catalog/settings.ts";
 import { formatError } from "../format-error.ts";
-import { BracketStore, type BracketRegistration, type StoredBracket } from "../bracket-store.ts";
+import { BracketStore, type StoredBracket } from "../bracket-store.ts";
 
 type Player = { address: string; name?: string };
 
@@ -55,7 +57,6 @@ const LENGTH_PRESETS = [
 const MODES = [
   { key: "closed", label: "Closed — I'll paste all players now" },
   { key: "open", label: "Open — players join until full, then it starts" },
-  { key: "mix", label: "Mix — I seed some, others join the rest" },
 ] as const;
 
 const CAPACITIES = [4, 8, 16, 32] as const;
@@ -91,7 +92,7 @@ interface Draft {
   seed?: { tokenAddress: string; amount: string; label: string };
   mode?: (typeof MODES)[number]["key"];
   capacity?: number;
-  players?: Player[]; // closed: everyone; mix: seeds; open: undefined
+  players?: Player[]; // closed: everyone; open: [] (all join)
   length?: (typeof LENGTH_PRESETS)[number];
   prizeToken?: Erc20Token;
   prize?: { tokenAddress: string; amount: string; label: string };
@@ -208,15 +209,10 @@ export async function handleAnswer(
       return;
     }
     d.capacity = CAPACITIES[n - 1];
-    if (d.mode === "mix") {
-      d.step = "players";
-      await api.sendMessage(chatId, pastePrompt(`up to ${d.capacity! - 1} seeds (leave the rest open)`));
-    } else {
-      // open: no seeds
-      d.players = [];
-      d.step = "length";
-      await sendLengthPrompt(api, chatId);
-    }
+    // open: no pre-seeds — everyone joins.
+    d.players = [];
+    d.step = "length";
+    await sendLengthPrompt(api, chatId);
     return;
   }
 
@@ -230,19 +226,12 @@ export async function handleAnswer(
       await api.sendMessage(chatId, "No players parsed. Paste addresses or Cartridge usernames, or /cancel.");
       return;
     }
-    if (d.mode === "closed") {
-      if (!isPow2(players.length)) {
-        await api.sendMessage(chatId, `Got ${players.length}. A closed bracket needs a power of two (2, 4, 8, 16…). Resend, or /cancel.`);
-        return;
-      }
-      d.capacity = players.length;
-    } else {
-      // mix seeds: must be < capacity and leave a power-of-two final size
-      if (players.length >= d.capacity!) {
-        await api.sendMessage(chatId, `That's ${players.length} seeds for a ${d.capacity}-player bracket — leave at least one open slot, or use a bigger size. /cancel to abort.`);
-        return;
-      }
+    // closed: the pasted roster is the whole bracket (power of two).
+    if (!isPow2(players.length)) {
+      await api.sendMessage(chatId, `Got ${players.length}. A closed bracket needs a power of two (2, 4, 8, 16…). Resend, or /cancel.`);
+      return;
     }
+    d.capacity = players.length;
     d.players = players;
     d.step = "length";
     await sendLengthPrompt(api, chatId);
@@ -257,8 +246,8 @@ export async function handleAnswer(
     }
     d.length = LENGTH_PRESETS[n - 1];
     // Open brackets fund a pool from a sponsor seed (locked up front) and/or
-    // per-entry fees → start with the seed. Closed/mix have no per-entry pool,
-    // so offer an optional sponsored prize.
+    // per-entry fees → start with the seed. Closed has no per-entry pool, so it
+    // offers a single optional sponsored prize.
     if (d.mode === "open") {
       d.step = "seedToken";
       await sendTokenList(api, d.chain, chatId, "💰 Seed the prize pool up front? Pick a token:", "No seed");
@@ -476,51 +465,11 @@ export async function handleAnswer(
       return;
     }
 
-    // ALL open brackets deploy the tree up front (no register-then-fill): any
-    // seed is escrowed before anyone joins (trustless), and players tap Join to
-    // enter — paying a fee if set, free otherwise. Tournaments are on-chain
-    // immediately, so there's never a "where are my tournaments?" gap.
-    if (d.mode === "open") {
-      await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
-      return;
-    }
-
-    // mix → register the seeded players, fill the open slots, then deploy.
-    const reg: BracketRegistration = {
-      id: `b${Date.now().toString(36)}`,
-      chain: d.chain,
-      organizerChatId: chatId,
-      announceChatId,
-      game: {
-        contractAddress: d.game!.contractAddress,
-        name: d.game!.name,
-        leaderboardAscending: d.game!.leaderboardAscending,
-        leaderboardGameMustBeOver: d.game!.leaderboardGameMustBeOver,
-      },
-      length: { reg: d.length!.reg, game: d.length!.game, sub: d.length!.sub },
-      prize: d.prize,
-      prizeTiersBps: d.prizeTiersBps,
-      settingsId: d.settingsId,
-      settingsName: d.settingsName,
-      capacity: d.capacity!,
-      players: d.players ?? [],
-      createdAt: Date.now(),
-    };
-    await store.saveRegistration(reg);
-    // Post the live registration card (with a Join button) to the public chat
-    // and remember its location so each join can edit it in place.
-    const messageId = await api
-      .sendCard(reg.announceChatId, registrationCard(reg), joinKeyboard(reg))
-      .catch(() => undefined);
-    if (messageId !== undefined) {
-      reg.cardChatId = reg.announceChatId;
-      reg.cardMessageId = messageId;
-      await store.saveRegistration(reg);
-    }
-    await api.sendMessage(
-      chatId,
-      `✅ Registration ${reg.id} open (${reg.players.length}/${reg.capacity}). Players can tap Join on the card, or /bracket_join ${reg.id} after /connect. Auto-starts when full; /bracket_start ${reg.id} to force-start.`,
-    );
+    // Open brackets deploy the tree up front (no register-then-fill): any seed
+    // is escrowed before anyone joins (trustless), and players tap Join to enter
+    // — paying a fee if set, free otherwise. Tournaments are on-chain at
+    // creation, so there's never a "where are my tournaments?" gap.
+    await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
     return;
   }
 }
@@ -542,58 +491,30 @@ export async function setAnnounceChannel(
   );
 }
 
-// ----- join / start (open & mix) -----
+// ----- join (open brackets are deployed up front; players enter their slot) -----
 
 export async function join(
   api: TelegramApi,
   config: Config,
   store: BracketStore,
   chatId: string,
-  chain: Chain,
+  _chain: Chain,
   id: string,
 ): Promise<void> {
-  const reg = await store.getRegistration(id);
-  if (!reg) {
-    // Paid up-front bracket? Join + pay via the player's session.
-    const b = await store.get(id);
-    if (b?.phase === "filling") {
-      const toast = await paidJoin(api, config, store, b, chatId);
-      await api.sendMessage(chatId, toast);
-      return;
-    }
-    await api.sendMessage(chatId, `No open bracket ${id}.`);
+  const b = await store.get(id);
+  if (b?.phase === "filling") {
+    const toast = await paidJoin(api, config, store, b, chatId);
+    await api.sendMessage(chatId, toast);
     return;
   }
-  const session = await resolveAccount(chatId, chain, config);
-  if (!session.ok) {
-    await api.sendMessage(chatId, `Run /connect first so I can register your wallet for bracket ${id}.`);
-    return;
-  }
-  const me = session.data.address.toLowerCase();
-  if (reg.players.some((p) => p.address.toLowerCase() === me)) {
-    await api.sendMessage(chatId, `You're already in bracket ${id} (${reg.players.length}/${reg.capacity}).`);
-    return;
-  }
-  if (reg.players.length >= reg.capacity) {
-    await api.sendMessage(chatId, `Bracket ${id} is already full.`);
-    return;
-  }
-  const name = session.data.username && session.data.username !== "unknown" ? session.data.username : undefined;
-  reg.players.push({ address: session.data.address, name });
-  await store.saveRegistration(reg);
-  await api.sendMessage(chatId, `✅ You're in bracket ${id} (${reg.players.length}/${reg.capacity}).`);
-  await updateCard(api, reg);
-
-  if (reg.players.length >= reg.capacity) {
-    await deployFromRegistration(api, config, store, reg);
-  }
+  await api.sendMessage(chatId, `No open bracket ${id} to join.`);
 }
 
 /**
  * Handle a tap on the public "Join" button. The callback's `fromId` is the
- * player's Telegram user id, which equals their private-chat id — so we can
- * resolve their /connect session and join them without them typing anything.
- * Feedback is a private toast; the public card is edited in place.
+ * player's Telegram user id, which equals their private-chat id — so we resolve
+ * their /connect session and enter them without them typing anything. Feedback
+ * is a private toast; the public card is edited in place.
  */
 export async function joinViaButton(
   api: TelegramApi,
@@ -607,93 +528,13 @@ export async function joinViaButton(
     await api.answerCallback(callbackQueryId, "Couldn't identify you — try /bracket_join in a DM.", true);
     return;
   }
-  const reg = await store.getRegistration(id);
-  if (!reg) {
-    // Paid up-front bracket? Pay + enter via the tapper's session.
-    const b = await store.get(id);
-    if (b?.phase === "filling") {
-      const toast = await paidJoin(api, config, store, b, String(fromId));
-      await api.answerCallback(callbackQueryId, toast, true);
-      return;
-    }
-    await api.answerCallback(callbackQueryId, "This bracket is no longer open.", true);
+  const b = await store.get(id);
+  if (b?.phase === "filling") {
+    const toast = await paidJoin(api, config, store, b, String(fromId));
+    await api.answerCallback(callbackQueryId, toast, true);
     return;
   }
-  if (reg.players.length >= reg.capacity) {
-    await api.answerCallback(callbackQueryId, "Sorry — it just filled up.", true);
-    return;
-  }
-  const session = await resolveAccount(String(fromId), reg.chain, config);
-  if (!session.ok) {
-    await api.answerCallback(
-      callbackQueryId,
-      `DM me first: open @ the bot, run /connect, then tap Join.`,
-      true,
-    );
-    return;
-  }
-  const me = session.data.address.toLowerCase();
-  if (reg.players.some((p) => p.address.toLowerCase() === me)) {
-    await api.answerCallback(callbackQueryId, `You're already in (${reg.players.length}/${reg.capacity}).`);
-    return;
-  }
-  const name = session.data.username && session.data.username !== "unknown" ? session.data.username : undefined;
-  reg.players.push({ address: session.data.address, name });
-  await store.saveRegistration(reg);
-  await api.answerCallback(callbackQueryId, `✅ You're in! (${reg.players.length}/${reg.capacity})`);
-  await updateCard(api, reg);
-  if (reg.players.length >= reg.capacity) {
-    await deployFromRegistration(api, config, store, reg);
-  }
-}
-
-export async function startNow(
-  api: TelegramApi,
-  config: Config,
-  store: BracketStore,
-  chatId: string,
-  id: string,
-): Promise<void> {
-  const reg = await store.getRegistration(id);
-  if (!reg) {
-    await api.sendMessage(chatId, `No open bracket ${id}.`);
-    return;
-  }
-  if (chatId !== reg.organizerChatId) {
-    await api.sendMessage(chatId, `Only the organizer can start bracket ${id}.`);
-    return;
-  }
-  if (!isPow2(reg.players.length)) {
-    await api.sendMessage(chatId, `Bracket ${id} has ${reg.players.length} players — need a power of two (2, 4, 8, 16…) to start. Wait for more joins, or /cancel via a new bracket.`);
-    return;
-  }
-  await deployFromRegistration(api, config, store, reg);
-}
-
-async function deployFromRegistration(
-  api: TelegramApi,
-  config: Config,
-  store: BracketStore,
-  reg: BracketRegistration,
-): Promise<void> {
-  const game: Game = {
-    contractAddress: reg.game.contractAddress,
-    name: reg.game.name,
-    leaderboardAscending: reg.game.leaderboardAscending,
-    leaderboardGameMustBeOver: reg.game.leaderboardGameMustBeOver,
-  };
-  const ok = await deployResolved(api, config, store, {
-    organizerChatId: reg.organizerChatId,
-    announceChatId: reg.announceChatId,
-    chain: reg.chain,
-    game,
-    settingsId: reg.settingsId,
-    length: reg.length,
-    prize: reg.prize,
-    prizeTiersBps: reg.prizeTiersBps,
-    players: reg.players,
-  });
-  if (ok) await store.deleteRegistration(reg.id);
+  await api.answerCallback(callbackQueryId, "This bracket is no longer open.", true);
 }
 
 // ----- deploy (shared) -----
@@ -1174,18 +1015,15 @@ export async function list(
   chain: Chain,
 ): Promise<void> {
   const deployed = (await store.all()).filter((b) => (b.state.chain as Chain) === chain);
-  const open = (await store.allRegistrations()).filter((r) => r.chain === chain);
-  if (deployed.length === 0 && open.length === 0) {
+  if (deployed.length === 0) {
     await api.sendMessage(chatId, `No brackets on ${chain}. Create one with /bracket.`);
     return;
   }
   const lines = [`🥊 Brackets on ${chain}:`, ""];
-  for (const r of open) {
-    lines.push(`  • ${r.id} [registering ${r.players.length}/${r.capacity}] · join: /bracket_join ${r.id}`);
-  }
   for (const b of deployed) {
     const champ = b.state.champion ? ` — 🏆 ${b.state.champion.name ?? short(b.state.champion.address)}` : "";
-    lines.push(`  • ${b.state.id} [${b.state.status}] · ${b.state.players.length} players${champ} · /bracket_view ${b.state.id}`);
+    const phase = b.phase === "filling" ? `filling ${b.filled ?? 0}/${b.capacity ?? 0}` : b.state.status;
+    lines.push(`  • ${b.state.id} [${phase}] · ${b.state.players.length} players${champ} · /bracket_view ${b.state.id}`);
   }
   await api.sendMessage(chatId, lines.join("\n"));
 }
@@ -1202,11 +1040,6 @@ export async function view(
     else await api.sendMessage(chatId, presentation(b));
     return;
   }
-  const reg = await store.getRegistration(id);
-  if (reg) {
-    await api.sendCard(chatId, registrationCard(reg), joinKeyboard(reg));
-    return;
-  }
   await api.sendMessage(chatId, `No bracket ${id}.`);
 }
 
@@ -1216,50 +1049,6 @@ async function announceTo(api: TelegramApi, chatId: string, text: string): Promi
   } catch (error) {
     console.error("bracket announce failed:", formatError(error));
   }
-}
-
-/** The live, public registration card (edited in place as players join). */
-function registrationCard(reg: BracketRegistration): string {
-  const remaining = reg.capacity - reg.players.length;
-  const lines = [
-    "━━━━━━━━━━━━━━━━━━",
-    `🥊 ${reg.game.name} — 1v1 Bracket`,
-    "📊 Registration",
-    `👥 Players: ${reg.players.length}/${reg.capacity}`,
-  ];
-  if (reg.prize) lines.push(`🏆 Prize: ${reg.prize.label}${splitSuffix(reg.prizeTiersBps)}`);
-  lines.push("", "Registered:");
-  if (reg.players.length === 0) {
-    lines.push("  (be the first!)");
-  } else {
-    reg.players.forEach((p, i) => lines.push(`  ${i + 1}. ${p.name ?? short(p.address)}`));
-  }
-  lines.push("");
-  if (remaining > 0) {
-    lines.push(`🪑 ${remaining} spot${remaining === 1 ? "" : "s"} remaining!`);
-    lines.push("🎮 Tap Join below — first /connect in a DM with me.");
-  } else {
-    lines.push("🚀 Full — starting the bracket!");
-  }
-  return lines.join("\n");
-}
-
-/** Inline keyboard with the Join button (omitted once full). */
-function joinKeyboard(
-  reg: BracketRegistration,
-): { inline_keyboard: InlineKeyboardButton[][] } | undefined {
-  if (reg.players.length >= reg.capacity) return undefined;
-  return {
-    inline_keyboard: [
-      [{ text: `🎮 Join (${reg.players.length}/${reg.capacity})`, callback_data: `bjoin:${reg.id}` }],
-    ],
-  };
-}
-
-/** Re-render the public registration card in place after a roster change. */
-async function updateCard(api: TelegramApi, reg: BracketRegistration): Promise<void> {
-  if (!reg.cardChatId || reg.cardMessageId === undefined) return;
-  await api.editCard(reg.cardChatId, reg.cardMessageId, registrationCard(reg), joinKeyboard(reg));
 }
 
 function presentation(b: StoredBracket): string {
@@ -1427,9 +1216,7 @@ function confirmText(d: Draft): string {
   const roster =
     d.mode === "open"
       ? `open, capacity ${d.capacity}`
-      : d.mode === "mix"
-        ? `mix — ${d.players!.length} seeded, capacity ${d.capacity}`
-        : `closed — ${d.players!.length} players`;
+      : `closed — ${d.players!.length} players`;
   return [
     "🧾 Confirm bracket:",
     `  • Game: ${d.game!.name}`,
@@ -1445,11 +1232,9 @@ function confirmText(d: Draft): string {
     ...(d.mode !== "open" && !d.prize ? [`  • Prize: none`] : []),
     ...(d.mode === "open" && !d.seed && !d.entryFee ? [`  • Prize: none (free)`] : []),
     "",
-    d.mode === "open" && (d.seed || d.entryFee)
-      ? "Deploys the gated tree now (seed locked up front); players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
-      : d.mode === "closed"
-        ? "Deploys the gated tree now and enters round 1 for the players."
-        : "Opens registration; deploys automatically when it fills.",
+    d.mode === "open"
+      ? "Deploys the gated tree now (any seed locked up front); players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
+      : "Deploys the gated tree now and enters round 1 for the players.",
     "",
     "Reply 'yes', or /cancel.",
   ].join("\n");
