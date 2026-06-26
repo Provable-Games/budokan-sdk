@@ -48,8 +48,11 @@ import { BracketStore, type StoredBracket } from "../bracket-store.ts";
 type Player = { address: string; name?: string };
 
 // Per-match schedule presets (durations in seconds).
+// Budokan enforces 1-hour minimums on each phase (MIN_REGISTRATION_PERIOD,
+// MIN_TOURNAMENT_LENGTH, MIN_SUBMISSION_PERIOD = 3600s), so every preset must
+// keep reg/game/sub ≥ 3600 or create_tournament reverts in schedule validation.
 const LENGTH_PRESETS = [
-  { label: "Quick — 15m sign-up, 30m matches", reg: 900, game: 1800, sub: 900 },
+  { label: "Quick — 1h sign-up, 1h matches", reg: 3600, game: 3600, sub: 3600 },
   { label: "Standard — 1h sign-up, 6h matches", reg: 3600, game: 21600, sub: 3600 },
   { label: "Daily — 6h sign-up, 24h matches", reg: 21600, game: 86400, sub: 21600 },
 ] as const;
