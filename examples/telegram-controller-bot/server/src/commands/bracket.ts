@@ -39,7 +39,7 @@ import { TelegramApi, type InlineKeyboardButton } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { keychainSafeRpcUrl } from "../cartridge-link.ts";
 import { gamesForChain, type Game } from "../catalog/games.ts";
-import { tokensForChain } from "../catalog/tokens.ts";
+import { tokensForChain, type Erc20Token } from "../catalog/tokens.ts";
 import { formatError } from "../format-error.ts";
 import { BracketStore, type BracketRegistration, type StoredBracket } from "../bracket-store.ts";
 
@@ -61,7 +61,18 @@ const MODES = [
 const CAPACITIES = [4, 8, 16, 32] as const;
 
 interface Draft {
-  step: "game" | "mode" | "capacity" | "players" | "length" | "prize" | "fee" | "confirm";
+  step:
+    | "game"
+    | "mode"
+    | "capacity"
+    | "players"
+    | "length"
+    | "prize"
+    | "feeToken"
+    | "feeAmount"
+    | "feeSplit"
+    | "feeCustom"
+    | "confirm";
   chain: Chain;
   games: Game[];
   game?: Game;
@@ -71,10 +82,25 @@ interface Draft {
   length?: (typeof LENGTH_PRESETS)[number];
   prize?: { tokenAddress: string; amount: string; label: string };
   // Paid (open mode only): players pay this fee on tap; it escrows into
-  // placement prizes per tiersBps (basis points per tier).
+  // placement prizes per tiersBps (basis points per tier). Collected over the
+  // feeToken → feeAmount → feeSplit sub-flow.
+  feeToken?: Erc20Token;
+  feeAmountRaw?: string;
+  feeAmountLabel?: string;
   entryFee?: { tokenAddress: string; amount: string; label: string };
   tiersBps?: number[];
 }
+
+// Prize-split presets (basis points per placement tier: champion, runner-up,
+// semifinalists, quarterfinalists). Tiers deeper than the bracket are ignored;
+// a tier's bps is shared equally across that round's losers (see
+// bracketFeePrizeCalls). Mirrors the spirit of Budokan's payout distribution.
+const FEE_SPLITS = [
+  { label: "Winner takes all (100%)", bps: [10000] },
+  { label: "Top 2 — 70% / 30%", bps: [7000, 3000] },
+  { label: "Top 4 — 50% / 25% / 25% (champion / runner-up / semis)", bps: [5000, 2500, 2500] },
+  { label: "Top 8 — 40 / 20 / 20 / 20 (champion / runner-up / semis / QFs)", bps: [4000, 2000, 2000, 2000] },
+] as const;
 
 const drafts = new Map<string, Draft>();
 
@@ -213,6 +239,13 @@ export async function handleAnswer(
       return;
     }
     d.length = LENGTH_PRESETS[n - 1];
+    // Open brackets fund prizes from entry fees (the pool) — go straight to the
+    // fee flow. Closed/mix have no pool, so offer an optional sponsored prize.
+    if (d.mode === "open") {
+      d.step = "feeToken";
+      await sendFeeTokenPrompt(api, d.chain, chatId);
+      return;
+    }
     d.step = "prize";
     await api.sendMessage(
       chatId,
@@ -231,48 +264,75 @@ export async function handleAnswer(
       }
       d.prize = { tokenAddress: token.address, amount: toRawAmount(amt, token.decimals), label: `${amt} ${token.symbol}` };
     }
-    // Only OPEN brackets can take an entry fee (every player joins + pays from
-    // their own session — pre-seeded/closed players can't be charged).
-    if (d.mode === "open") {
-      d.step = "fee";
-      await api.sendMessage(
-        chatId,
-        [
-          "💸 Entry fee? Reply `<symbol> <amount> [places…]` — e.g. `STRK 100 60 30 10`",
-          "(100 STRK entry; champion 60% / runner-up 30% / semifinalists 10%).",
-          "Just `<symbol> <amount>` = winner-takes-all. `skip` for a free bracket. /cancel to abort.",
-        ].join("\n"),
-      );
-      return;
-    }
+    // closed/mix only reach here (open went to the fee flow after length).
     d.step = "confirm";
     await api.sendMessage(chatId, confirmText(d));
     return;
   }
 
-  if (d.step === "fee") {
-    if (t.toLowerCase() !== "skip") {
-      const parts = t.split(/\s+/);
-      const sym = parts[0];
-      const amt = parts[1];
-      const token = sym ? findTokenBySymbol(d.chain, sym) : undefined;
-      if (!token || !amt || !/^\d+(\.\d+)?$/.test(amt)) {
-        await api.sendMessage(chatId, "Couldn't parse that. Use `<symbol> <amount> [places…]`, or `skip`.");
-        return;
-      }
-      const places = parts.slice(2).map(Number);
-      let tiersBps: number[];
-      if (places.length === 0) {
-        tiersBps = [10000]; // winner takes all
-      } else if (places.some((p) => !Number.isFinite(p) || p < 0) || places.reduce((a, b) => a + b, 0) !== 100) {
-        await api.sendMessage(chatId, "Places must be whole percentages summing to 100 (e.g. `60 30 10`). Try again, or `skip`.");
-        return;
-      } else {
-        tiersBps = places.map((p) => Math.round(p * 100));
-      }
-      d.entryFee = { tokenAddress: token.address, amount: toRawAmount(amt, token.decimals), label: `${amt} ${token.symbol}` };
-      d.tiersBps = tiersBps;
+  if (d.step === "feeToken") {
+    if (/^(0|skip|none|no)$/i.test(t)) {
+      d.step = "confirm";
+      await api.sendMessage(chatId, confirmText(d));
+      return;
     }
+    const tokens = tokensForChain(d.chain);
+    const n = Number(t);
+    if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
+      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for a free bracket, or /cancel.`);
+      return;
+    }
+    d.feeToken = tokens[n - 1];
+    d.step = "feeAmount";
+    await api.sendMessage(chatId, `💸 Entry fee amount in ${d.feeToken!.symbol}? (e.g. 100) /cancel to abort.`);
+    return;
+  }
+
+  if (d.step === "feeAmount") {
+    if (!/^\d+(\.\d+)?$/.test(t)) {
+      await api.sendMessage(chatId, `Enter a number in ${d.feeToken!.symbol} (e.g. 100), or /cancel.`);
+      return;
+    }
+    d.feeAmountRaw = toRawAmount(t, d.feeToken!.decimals);
+    d.feeAmountLabel = `${t} ${d.feeToken!.symbol}`;
+    d.step = "feeSplit";
+    await sendFeeSplitPrompt(api, chatId);
+    return;
+  }
+
+  if (d.step === "feeSplit") {
+    if (/^custom$/i.test(t) || Number(t) === FEE_SPLITS.length + 1) {
+      d.step = "feeCustom";
+      await api.sendMessage(
+        chatId,
+        "Enter the split as whole % summing to 100 — 1st, then 2nd, then semifinalists, then quarterfinalists. E.g. `60 30 10`. /cancel to abort.",
+      );
+      return;
+    }
+    const n = Number(t);
+    if (!/^\d+$/.test(t) || n < 1 || n > FEE_SPLITS.length) {
+      await api.sendMessage(chatId, `Reply 1–${FEE_SPLITS.length + 1}, or /cancel.`);
+      return;
+    }
+    d.tiersBps = [...FEE_SPLITS[n - 1]!.bps];
+    d.entryFee = { tokenAddress: d.feeToken!.address, amount: d.feeAmountRaw!, label: d.feeAmountLabel! };
+    d.step = "confirm";
+    await api.sendMessage(chatId, confirmText(d));
+    return;
+  }
+
+  if (d.step === "feeCustom") {
+    const places = t.split(/\s+/).map(Number);
+    if (
+      places.length === 0 ||
+      places.some((p) => !Number.isFinite(p) || p < 0) ||
+      places.reduce((a, b) => a + b, 0) !== 100
+    ) {
+      await api.sendMessage(chatId, "Whole percentages summing to 100 (e.g. `60 30 10`). Try again, or /cancel.");
+      return;
+    }
+    d.tiersBps = places.map((p) => Math.round(p * 100));
+    d.entryFee = { tokenAddress: d.feeToken!.address, amount: d.feeAmountRaw!, label: d.feeAmountLabel! };
     d.step = "confirm";
     await api.sendMessage(chatId, confirmText(d));
     return;
@@ -1013,6 +1073,23 @@ function pastePrompt(who: string): string {
 async function sendLengthPrompt(api: TelegramApi, chatId: string): Promise<void> {
   const lines = ["Pick a match length:", ""];
   LENGTH_PRESETS.forEach((p, i) => lines.push(`  ${i + 1}. ${p.label}`));
+  lines.push("", "Reply with a number. /cancel to abort.");
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function sendFeeTokenPrompt(api: TelegramApi, chain: Chain, chatId: string): Promise<void> {
+  const tokens = tokensForChain(chain);
+  const lines = ["💸 Entry fee — pick a token:", ""];
+  tokens.forEach((tk, i) => lines.push(`  ${i + 1}. ${tk.symbol}`));
+  lines.push("  0. No entry fee (free bracket)");
+  lines.push("", "Reply with a number. /cancel to abort.");
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function sendFeeSplitPrompt(api: TelegramApi, chatId: string): Promise<void> {
+  const lines = ["🏆 Prize split — how the pool pays out:", ""];
+  FEE_SPLITS.forEach((s, i) => lines.push(`  ${i + 1}. ${s.label}`));
+  lines.push(`  ${FEE_SPLITS.length + 1}. Custom — enter percentages`);
   lines.push("", "Reply with a number. /cancel to abort.");
   await api.sendMessage(chatId, lines.join("\n"));
 }
