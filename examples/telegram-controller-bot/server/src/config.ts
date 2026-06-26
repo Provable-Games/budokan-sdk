@@ -23,6 +23,8 @@ export interface Config {
    *  callers. Must match one of the comma-separated tokens in the proxy's
    *  PROXY_AUTH_TOKENS env var. */
   voyagerProxyToken?: string;
+  /** Optional public chat id for bracket announcements; falls back to DM. */
+  bracketChannelId?: string;
 }
 
 export function loadConfig(): Config {
@@ -67,6 +69,9 @@ export function loadConfig(): Config {
     viewerAddress: env("BUDOKAN_VIEWER_ADDRESS"),
     voyagerProxyUrl: env("BUDOKAN_VOYAGER_PROXY_URL"),
     voyagerProxyToken: env("BUDOKAN_VOYAGER_PROXY_TOKEN"),
+    // Optional public chat (group/channel id) to post bracket trees + updates
+    // to. Falls back to the organizer's DM when unset.
+    bracketChannelId: env("BRACKET_CHANNEL_ID"),
   };
 }
 

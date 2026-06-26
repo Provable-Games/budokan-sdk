@@ -21,6 +21,8 @@ import * as create from "./commands/create.ts";
 import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
 import * as submitCmd from "./commands/submit.ts";
+import * as bracketCmd from "./commands/bracket.ts";
+import type { BracketStore } from "./bracket-store.ts";
 import * as listCmds from "./commands/list.ts";
 import * as claimCmd from "./commands/claim.ts";
 import { distribute } from "./commands/distribute.ts";
@@ -55,6 +57,7 @@ export class TelegramBot {
     private readonly handshakes: HandshakeStore,
     private readonly sessions: SessionStore,
     private readonly chatStates: ChatStateStore,
+    private readonly brackets: BracketStore,
   ) {
     this.api = new TelegramApi(config.telegramBotToken);
   }
@@ -139,6 +142,9 @@ export class TelegramBot {
     if (!isCommand && claimCmd.isPending(chatId)) {
       return claimCmd.handleAnswer(this.api, this.config, chatId, text);
     }
+    if (!isCommand && bracketCmd.isPending(chatId)) {
+      return bracketCmd.handleAnswer(this.api, this.config, this.brackets, chatId, text);
+    }
     if (!isCommand && leaderboardCmd.isPending(chatId)) {
       return leaderboardCmd.handleAnswer(this.api, this.config, this.chatStates, chatId, text);
     }
@@ -204,6 +210,20 @@ export class TelegramBot {
         const chain = await this.chatStates.getChain(chatId);
         return distribute(this.api, this.config, chatId, chain, args);
       }
+      case "/bracket": {
+        const chain = await this.chatStates.getChain(chatId);
+        return bracketCmd.start(this.api, this.config, chatId, chain);
+      }
+      case "/brackets": {
+        const chain = await this.chatStates.getChain(chatId);
+        return bracketCmd.list(this.api, this.brackets, chatId, chain);
+      }
+      case "/bracket_view":
+      case "/bracketview": {
+        const id = args[0];
+        if (!id) return this.api.sendMessage(chatId, "Usage: /bracket_view <id>");
+        return bracketCmd.view(this.api, this.brackets, chatId, id);
+      }
       case "/enter": {
         const chain = await this.chatStates.getChain(chatId);
         return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, args);
@@ -247,6 +267,28 @@ export class TelegramBot {
    * left with a second flow still pending — which is exactly how /create and
    * /enter previously got tangled.
    */
+  /**
+   * Advance every running bracket once: resolve finished matches and enter
+   * winners into their gated next match. Called on an interval from index.ts.
+   * Best-effort per bracket — one failure doesn't stop the others.
+   */
+  async bracketTick(): Promise<void> {
+    let running;
+    try {
+      running = await this.brackets.running();
+    } catch (error) {
+      console.error("bracketTick: list failed:", formatError(error));
+      return;
+    }
+    for (const b of running) {
+      try {
+        await bracketCmd.advanceStoredBracket(this.api, this.config, this.brackets, b);
+      } catch (error) {
+        console.error(`bracketTick: ${b.state.id} failed:`, formatError(error));
+      }
+    }
+  }
+
   private clearPendingFlows(chatId: string): boolean {
     const cancelled = [
       create.cancel(chatId),
@@ -254,6 +296,7 @@ export class TelegramBot {
       enterCmd.cancel(chatId),
       submitCmd.cancel(chatId),
       claimCmd.cancel(chatId),
+      bracketCmd.cancel(chatId),
       leaderboardCmd.cancel(chatId),
     ];
     return cancelled.some(Boolean);
@@ -416,6 +459,11 @@ export class TelegramBot {
         "    Power-user: /claim <tournamentId> <kind> — prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
         "  /distribute <tournamentId> — pay out every unclaimed reward to all winners (permissionless; same as /claim → 'all')",
         "  /add_prize [tournamentId] — sponsor an ERC-20 prize (no id → picker; signs in chat within your spending limit, else a budokan.gg link)",
+        "",
+        "Brackets (1v1 single-elim, gated):",
+        "  /bracket — create a bracket (pick game, players, length, prize); deploys the whole gated tree and enters round 1 for the players",
+        "  /brackets — list brackets; /bracket_view <id> — show the tree",
+        "",
         "  /cancel — abort an in-flight multi-turn flow",
         "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
       ].join("\n"),
@@ -541,6 +589,8 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "submit_score", description: "Submit your scores to the leaderboard (one or all)" },
   { command: "claim", description: "Claim the rewards your wallet is owed" },
   { command: "distribute", description: "Pay out every unclaimed reward to all winners (permissionless)" },
+  { command: "bracket", description: "Create a 1v1 single-elim bracket (organizer)" },
+  { command: "brackets", description: "List brackets on this chain" },
   { command: "add_prize", description: "Sponsor a prize for a tournament" },
   { command: "back", description: "Go back / edit the current section in /create" },
   { command: "cancel", description: "Abort the current multi-turn flow" },

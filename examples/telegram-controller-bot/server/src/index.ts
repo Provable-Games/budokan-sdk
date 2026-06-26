@@ -7,14 +7,19 @@ import { loadConfig } from "./config.ts";
 import { ChatStateStore } from "./chat-state.ts";
 import { HandshakeStore } from "./handshake.ts";
 import { SessionStore } from "./session-store.ts";
+import { BracketStore } from "./bracket-store.ts";
 import { buildHttpServer } from "./http.ts";
 import { TelegramBot } from "./telegram.ts";
+
+// How often to advance running brackets (resolve matches, enter winners).
+const BRACKET_TICK_MS = 60_000;
 
 async function main() {
   const config = loadConfig();
   const handshakes = new HandshakeStore();
   const sessions = new SessionStore(config.dataDir);
   const chatStates = new ChatStateStore(config.dataDir, config.chain);
+  const brackets = new BracketStore(config.dataDir);
 
   // One-shot migration from the pre-chain-namespaced session layout.
   // Idempotent on subsequent boots.
@@ -25,7 +30,7 @@ async function main() {
     );
   }
 
-  const bot = new TelegramBot(config, handshakes, sessions, chatStates);
+  const bot = new TelegramBot(config, handshakes, sessions, chatStates, brackets);
   const http = await buildHttpServer({
     config,
     handshakes,
@@ -35,6 +40,11 @@ async function main() {
 
   handshakes.start();
 
+  // Advance running brackets on an interval (resolve matches, enter winners,
+  // post updates). unref so it never holds the process open on its own.
+  const bracketTimer = setInterval(() => void bot.bracketTick(), BRACKET_TICK_MS);
+  bracketTimer.unref?.();
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -42,6 +52,7 @@ async function main() {
     console.log(`Received ${signal}, shutting down...`);
     bot.shutdown();
     handshakes.stop();
+    clearInterval(bracketTimer);
     try {
       await http.close();
     } catch (error) {
