@@ -47,9 +47,9 @@ type Player = { address: string; name?: string };
 
 // Per-match schedule presets (durations in seconds).
 const LENGTH_PRESETS = [
-  { label: "Quick — 15m registration, 30m game", reg: 900, game: 1800, sub: 900 },
-  { label: "Standard — 1h registration, 6h game", reg: 3600, game: 21600, sub: 3600 },
-  { label: "Daily — 6h registration, 24h game", reg: 21600, game: 86400, sub: 21600 },
+  { label: "Quick — 15m sign-up, 30m matches", reg: 900, game: 1800, sub: 900 },
+  { label: "Standard — 1h sign-up, 6h matches", reg: 3600, game: 21600, sub: 3600 },
+  { label: "Daily — 6h sign-up, 24h matches", reg: 21600, game: 86400, sub: 21600 },
 ] as const;
 
 const MODES = [
@@ -686,7 +686,7 @@ async function deployPaidUpfront(
   }
   await api.sendMessage(
     organizerChatId,
-    `✅ Paid bracket ${id} deployed & open (0/${capacity}). Players tap Join to pay ${d.entryFee!.label} and enter.`,
+    `✅ Paid bracket ${id} deployed & open (0/${capacity}). Players tap Join to pay ${d.entryFee!.label} and enter. Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).`,
   );
 }
 
@@ -774,8 +774,9 @@ function paidCard(b: StoredBracket): string {
   if (remaining > 0) {
     lines.push(`🪑 ${remaining} spot${remaining === 1 ? "" : "s"} remaining!`);
     lines.push("🎮 Tap Join — first /connect in a DM with me.");
+    lines.push("⏱️ Round 1 starts at the sign-up deadline (empty slots walk over).");
   } else {
-    lines.push("🚀 Full — starting the bracket!");
+    lines.push("🔒 Full — round 1 begins at the sign-up deadline.");
   }
   return lines.join("\n");
 }
@@ -1015,7 +1016,7 @@ function confirmText(d: Draft): string {
       : []),
     "",
     d.mode === "open" && d.entryFee
-      ? "Deploys the gated tree now; players tap Join to pay & enter, and it starts when full."
+      ? "Deploys the gated tree now; players tap Join to pay & enter. Round 1 starts at the sign-up deadline — any empty slots walk over."
       : d.mode === "closed"
         ? "Deploys the gated tree now and enters round 1 for the players."
         : "Opens registration; deploys automatically when it fills.",

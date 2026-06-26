@@ -64,3 +64,31 @@ Or via the dashboard.
 ## Cost shape
 
 Tiny — a mostly-idle Bun process plus a small volume. A low-traffic bot runs in the low single dollars per month on Railway's hobby tier.
+
+## Local development against an unpublished SDK (no npm publish)
+
+The bot depends on the published `@provable-games/budokan-sdk`, but while
+iterating on SDK + bot together you don't need to publish a version each time —
+link the local SDK with `bun link`:
+
+```bash
+# 1. From the repo root: build + register the local SDK once.
+bun install
+bun run dev            # watch-build the SDK (rebuilds dist on change)
+
+# 2. In another shell, register + link it:
+#    (root) bun link        # registers @provable-games/budokan-sdk
+#    (server) bun link @provable-games/budokan-sdk
+cd examples/telegram-controller-bot/server
+bun link @provable-games/budokan-sdk
+
+# 3. Run the bot against the local SDK (sepolia test bot token + ngrok URL):
+bun run dev
+```
+
+Now SDK source changes are picked up live (the root `bun run dev` rebuilds
+`dist/`; the bot's `--watch` reloads). `bun link` only changes `node_modules/`,
+so `package.json` and the Railway deploy are untouched — Railway keeps using the
+published version. **Publish a new SDK version only when a change is validated
+and you want to deploy it** (then bump the bot's dependency). To unlink:
+`bun unlink @provable-games/budokan-sdk` in `server/` and `bun install`.
