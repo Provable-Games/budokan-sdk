@@ -203,6 +203,58 @@ entry requirement. There are two built-in requirement types (`token` NFT-gate,
 match they're not part of and scores #1 could push the real winner to position 2,
 which can block that winner's position-based qualification into the gated next
 round. It requires bypassing the bot on-chain *and* outscoring both real players.
-Eliminating it would need a custom per-address entry-requirement extension on
-round-1 matches — intentionally out of scope for this reference bot. Gated rounds
-(2+) are fully protected on-chain.
+Gated rounds (2+) are fully protected on-chain.
+
+## Future hardening — match integrity & Sybil resistance (design)
+
+The round-1 gap above is *not* a "double-entry" problem (resolution already
+ignores extra entries) and **"1 entry per address" is the wrong fix** — wallets
+are free, so a per-address count is Sybil-defeatable *and* doesn't target the
+real issue. The real issue is: **non-competitors can enter an open round-1 match
+and pollute its leaderboard positions** (one rogue wallet suffices). The fix is
+to restrict *who* can enter, keyed to **identity/eligibility, not wallet count**.
+
+### Option A — per-match competitor allowlist (closed/known rosters)
+Admit only the two addresses the bracket assigned to a match. A fresh wallet
+isn't an assigned competitor → rejected, so spinning up wallets buys nothing
+(**Sybil-resistant for match integrity**). 
+- **Closed mode:** the two addresses are known at create time → bake the allowlist
+  into each match's entry requirement directly.
+- **Open/paid (deploy-upfront):** matches are created *before* players join, so the
+  allowlist isn't known yet → needs an **updatable** custom
+  `IEntryRequirementExtension` the bot (as orchestrator) writes per-match as
+  players join. More involved; a closed-roster feature in practice.
+
+This closes the rogue-interference hole completely, but only fits **known
+rosters** — it doesn't make an open public bracket Sybil-proof at the *roster*
+level (flooding the bracket with your own wallets is a separate problem; see
+below).
+
+### Option B — eligibility gates for OPEN brackets
+For open public brackets you can't allowlist specific competitors, so gate entry
+on something **costly or identity-bound** instead of wallet count:
+
+| Convention | Where enforced | Sybil resistance | Buildable now? |
+|---|---|---|---|
+| **Telegram group membership** (`getChatMember`) | **Bot-side** (off-chain, before enter-on-behalf) | Weak–medium (raises cost; multi-TG-account still possible) | ✅ yes — Telegram API call in `join`/`paidJoin` |
+| **NFT / token gate** (`EntryRequirementSpec.kind: "token"` + `entryLimit: 1` per token) | **On-chain** (built-in `token` requirement) | As strong as the NFT's distribution; `entry_limit` caps per token | ✅ yes — SDK already supports it |
+| **Bot-signed attestation** (validator verifies a signature from the bot's key) | **On-chain** (custom extension) | As strong as the bot's off-chain checks (TG membership, captcha, account age…) — flexible | ✗ needs a custom extension |
+| **Proof-of-personhood SBT** (Starknet ID / World-ID-style) | **On-chain** (custom extension) | Strong (one human ≈ one entry) | ✗ needs a custom extension + identity infra |
+| **Entry fee** (paid brackets) | **On-chain** (already implemented) | Economic — flooding pays N fees into a pool you'd mostly win back; no free profit | ✅ in place |
+
+**Telegram-membership note:** Telegram state isn't on-chain, so a *contract*
+validator can't read it — but the bot is the entry path, so it can call
+`getChatMember(chatId, userId)` and refuse to enter non-members. Easiest
+real-world Sybil-dampener for a community bracket; pairs well with the entry-fee
+economics already in place.
+
+**Recommended posture:**
+- **High-stakes / integrity-critical:** closed roster + Option A (per-match
+  competitor allowlist).
+- **Open community brackets:** bot-side TG-membership check + entry-fee economics
+  (both cheap/available), optionally NFT-gating if the community has a token.
+  Bot-signed-attestation or PoP SBT only if a use case demands on-chain-enforced
+  open eligibility.
+
+None of these are built yet beyond what's noted as "in place"; this section is
+the design map for when a concrete use case calls for it.
