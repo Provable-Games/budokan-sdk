@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "dev": "bun --env-file=../.env --watch src/index.ts",
+    "dev": "node --experimental-wasm-modules --watch --env-file=../.env --import tsx src/index.ts",
     "start": "node --experimental-wasm-modules --import tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },
