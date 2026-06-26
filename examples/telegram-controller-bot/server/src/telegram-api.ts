@@ -94,10 +94,50 @@ export class TelegramApi {
    * loading spinner. Best-effort — a failed ack shouldn't abort the action
    * the button triggered.
    */
-  async answerCallback(callbackQueryId: string, text?: string): Promise<void> {
+  async answerCallback(
+    callbackQueryId: string,
+    text?: string,
+    showAlert?: boolean,
+  ): Promise<void> {
     await this.call("answerCallbackQuery", {
       callback_query_id: callbackQueryId,
       ...(text ? { text } : {}),
+      ...(showAlert ? { show_alert: true } : {}),
+    }).catch(() => {});
+  }
+
+  /**
+   * Send a single (un-chunked) message and return its message_id, so the caller
+   * can later edit it in place — used for the live registration card. Optional
+   * inline keyboard for the Join button.
+   */
+  async sendCard(
+    chatId: string,
+    text: string,
+    replyMarkup?: { inline_keyboard: InlineKeyboardButton[][] },
+  ): Promise<number | undefined> {
+    const res = await this.call<{ message_id?: number }>("sendMessage", {
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    });
+    return res?.message_id;
+  }
+
+  /** Edit a previously-sent card in place. Best-effort (ignores "not modified"). */
+  async editCard(
+    chatId: string,
+    messageId: number,
+    text: string,
+    replyMarkup?: { inline_keyboard: InlineKeyboardButton[][] },
+  ): Promise<void> {
+    await this.call("editMessageText", {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      disable_web_page_preview: true,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     }).catch(() => {});
   }
 }

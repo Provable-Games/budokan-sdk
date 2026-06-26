@@ -38,6 +38,7 @@ interface TelegramMessage {
 interface TelegramCallbackQuery {
   id: string;
   data?: string;
+  from?: { id: number };
   message?: TelegramMessage;
 }
 
@@ -390,11 +391,19 @@ export class TelegramBot {
    * dispatch to the same /enter path a typed command would take.
    */
   private async handleCallback(cb: TelegramCallbackQuery): Promise<void> {
+    const [action, arg] = (cb.data ?? "").split(":");
+
+    // Public "Join" button: identify the player by from.id (== their DM chat id)
+    // and join via their session. joinViaButton answers with a private toast, so
+    // don't pre-ack here.
+    if (action === "bjoin" && arg) {
+      return bracketCmd.joinViaButton(this.api, this.config, this.brackets, cb.id, cb.from?.id, arg);
+    }
+
     await this.api.answerCallback(cb.id);
     const chatId = cb.message ? String(cb.message.chat.id) : undefined;
     if (!chatId) return;
 
-    const [action, arg] = (cb.data ?? "").split(":");
     if (action === "enter" && arg && /^\d+$/.test(arg)) {
       // Tapping Enter abandons any half-finished flow, same as issuing the
       // command would (see handleMessage).

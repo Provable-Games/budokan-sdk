@@ -34,7 +34,7 @@ import { num, RpcProvider } from "starknet";
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
-import { TelegramApi } from "../telegram-api.ts";
+import { TelegramApi, type InlineKeyboardButton } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { keychainSafeRpcUrl } from "../cartridge-link.ts";
 import { gamesForChain, type Game } from "../catalog/games.ts";
@@ -271,11 +271,20 @@ export async function handleAnswer(
       createdAt: Date.now(),
     };
     await store.saveRegistration(reg);
+    // Post the live registration card (with a Join button) to the public chat
+    // and remember its location so each join can edit it in place.
+    const messageId = await api
+      .sendCard(reg.announceChatId, registrationCard(reg), joinKeyboard(reg))
+      .catch(() => undefined);
+    if (messageId !== undefined) {
+      reg.cardChatId = reg.announceChatId;
+      reg.cardMessageId = messageId;
+      await store.saveRegistration(reg);
+    }
     await api.sendMessage(
       chatId,
-      `✅ Registration ${reg.id} open (${reg.players.length}/${reg.capacity}). Players join with /bracket_join ${reg.id} (after /connect). It auto-starts when full; you can also force-start with /bracket_start ${reg.id}.`,
+      `✅ Registration ${reg.id} open (${reg.players.length}/${reg.capacity}). Players can tap Join on the card, or /bracket_join ${reg.id} after /connect. Auto-starts when full; /bracket_start ${reg.id} to force-start.`,
     );
-    await announceTo(api, reg.announceChatId, registrationText(reg, "🥊 Bracket registration open!"));
     return;
   }
 }
@@ -313,8 +322,59 @@ export async function join(
   reg.players.push({ address: session.data.address, name });
   await store.saveRegistration(reg);
   await api.sendMessage(chatId, `✅ You're in bracket ${id} (${reg.players.length}/${reg.capacity}).`);
-  await announceTo(api, reg.announceChatId, registrationText(reg, "📝 New entrant!"));
+  await updateCard(api, reg);
 
+  if (reg.players.length >= reg.capacity) {
+    await deployFromRegistration(api, config, store, reg);
+  }
+}
+
+/**
+ * Handle a tap on the public "Join" button. The callback's `fromId` is the
+ * player's Telegram user id, which equals their private-chat id — so we can
+ * resolve their /connect session and join them without them typing anything.
+ * Feedback is a private toast; the public card is edited in place.
+ */
+export async function joinViaButton(
+  api: TelegramApi,
+  config: Config,
+  store: BracketStore,
+  callbackQueryId: string,
+  fromId: number | undefined,
+  id: string,
+): Promise<void> {
+  const reg = await store.getRegistration(id);
+  if (!reg) {
+    await api.answerCallback(callbackQueryId, "This bracket is no longer open.", true);
+    return;
+  }
+  if (fromId === undefined) {
+    await api.answerCallback(callbackQueryId, "Couldn't identify you — try /bracket_join in a DM.", true);
+    return;
+  }
+  if (reg.players.length >= reg.capacity) {
+    await api.answerCallback(callbackQueryId, "Sorry — it just filled up.", true);
+    return;
+  }
+  const session = await resolveAccount(String(fromId), reg.chain, config);
+  if (!session.ok) {
+    await api.answerCallback(
+      callbackQueryId,
+      `DM me first: open @ the bot, run /connect, then tap Join.`,
+      true,
+    );
+    return;
+  }
+  const me = session.data.address.toLowerCase();
+  if (reg.players.some((p) => p.address.toLowerCase() === me)) {
+    await api.answerCallback(callbackQueryId, `You're already in (${reg.players.length}/${reg.capacity}).`);
+    return;
+  }
+  const name = session.data.username && session.data.username !== "unknown" ? session.data.username : undefined;
+  reg.players.push({ address: session.data.address, name });
+  await store.saveRegistration(reg);
+  await api.answerCallback(callbackQueryId, `✅ You're in! (${reg.players.length}/${reg.capacity})`);
+  await updateCard(api, reg);
   if (reg.players.length >= reg.capacity) {
     await deployFromRegistration(api, config, store, reg);
   }
@@ -568,7 +628,7 @@ export async function view(
   }
   const reg = await store.getRegistration(id);
   if (reg) {
-    await api.sendMessage(chatId, registrationText(reg, `Bracket ${id} — registering`));
+    await api.sendCard(chatId, registrationCard(reg), joinKeyboard(reg));
     return;
   }
   await api.sendMessage(chatId, `No bracket ${id}.`);
@@ -582,17 +642,48 @@ async function announceTo(api: TelegramApi, chatId: string, text: string): Promi
   }
 }
 
-function registrationText(reg: BracketRegistration, header: string): string {
+/** The live, public registration card (edited in place as players join). */
+function registrationCard(reg: BracketRegistration): string {
+  const remaining = reg.capacity - reg.players.length;
   const lines = [
-    header,
-    `Game: ${reg.game.name} · ${reg.players.length}/${reg.capacity} joined${reg.prize ? ` · 🏆 ${reg.prize.label}` : ""}`,
-    "",
+    "━━━━━━━━━━━━━━━━━━",
+    `🥊 ${reg.game.name} — 1v1 Bracket`,
+    "📊 Registration",
+    `👥 Players: ${reg.players.length}/${reg.capacity}`,
   ];
-  reg.players.forEach((p, i) => lines.push(`  ${i + 1}. ${p.name ?? short(p.address)}`));
-  if (reg.players.length < reg.capacity) {
-    lines.push("", `Join with /bracket_join ${reg.id} (after /connect).`);
+  if (reg.prize) lines.push(`🏆 Champion prize: ${reg.prize.label}`);
+  lines.push("", "Registered:");
+  if (reg.players.length === 0) {
+    lines.push("  (be the first!)");
+  } else {
+    reg.players.forEach((p, i) => lines.push(`  ${i + 1}. ${p.name ?? short(p.address)}`));
+  }
+  lines.push("");
+  if (remaining > 0) {
+    lines.push(`🪑 ${remaining} spot${remaining === 1 ? "" : "s"} remaining!`);
+    lines.push("🎮 Tap Join below — first /connect in a DM with me.");
+  } else {
+    lines.push("🚀 Full — starting the bracket!");
   }
   return lines.join("\n");
+}
+
+/** Inline keyboard with the Join button (omitted once full). */
+function joinKeyboard(
+  reg: BracketRegistration,
+): { inline_keyboard: InlineKeyboardButton[][] } | undefined {
+  if (reg.players.length >= reg.capacity) return undefined;
+  return {
+    inline_keyboard: [
+      [{ text: `🎮 Join (${reg.players.length}/${reg.capacity})`, callback_data: `bjoin:${reg.id}` }],
+    ],
+  };
+}
+
+/** Re-render the public registration card in place after a roster change. */
+async function updateCard(api: TelegramApi, reg: BracketRegistration): Promise<void> {
+  if (!reg.cardChatId || reg.cardMessageId === undefined) return;
+  await api.editCard(reg.cardChatId, reg.cardMessageId, registrationCard(reg), joinKeyboard(reg));
 }
 
 function presentation(b: StoredBracket): string {

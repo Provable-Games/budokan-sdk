@@ -37,6 +37,9 @@ export interface BracketRegistration {
   /** Seeded by the organizer + everyone who has joined, in seed order. */
   players: Array<{ address: string; name?: string }>;
   createdAt: number;
+  /** The public registration card's location, so joins can edit it in place. */
+  cardChatId?: string;
+  cardMessageId?: number;
 }
 
 export interface StoredBracket {
