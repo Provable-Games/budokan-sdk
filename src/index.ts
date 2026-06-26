@@ -227,6 +227,7 @@ export {
   bracketFeeders,
   bracketRounds,
   bracketFinalPrizeCalls,
+  bracketFeePrizeCalls,
   bracketEntryCalls,
   nextMatchesFor,
   bracketSummary,
@@ -241,4 +242,5 @@ export type {
   CreateMatchCall,
   MatchResult,
   MatchReader,
+  BracketFeeSplit,
 } from "./brackets/index.js";

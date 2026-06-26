@@ -488,6 +488,91 @@ export function bracketRounds(state: BracketState): number {
   return Math.max(...state.matches.map((m) => m.round));
 }
 
+/** Configurable per-placement split of a paid bracket's entry fee. */
+export interface BracketFeeSplit {
+  /** ERC20 token for the entry fee + the prizes it funds. */
+  tokenAddress: string;
+  /** One player's entry fee, in raw base units (decimal string). */
+  fee: string;
+  /**
+   * Basis points per placement tier (sum ≤ 10000):
+   *   [0] champion       → final, position 1
+   *   [1] runner-up      → final, position 2
+   *   [2] semifinalists  → each semifinal, position 2 (split equally) = 3rd/4th
+   *   [3] quarterfinalists → each quarterfinal, position 2 = 5th-8th
+   *   …each later index is the losers of one-round-earlier.
+   * Tiers deeper than the bracket has rounds are ignored.
+   */
+  tiersBps: number[];
+}
+
+/**
+ * The `approve` + `add_prize` calls that escrow ONE player's entry fee as
+ * placement prizes across the (already-deployed) bracket matches, per the tier
+ * split. The PLAYER signs these from their own session at join time, so the
+ * pool is funded non-custodially and grows with each entrant. Winners claim via
+ * the normal `claim_reward` flow.
+ *
+ * Returns [] if nothing would be escrowed (no tiers, or matches not created).
+ */
+export function bracketFeePrizeCalls(
+  state: BracketState,
+  split: BracketFeeSplit,
+): Call[] {
+  const rounds = bracketRounds(state);
+  const fee = BigInt(split.fee);
+  const prizeCalls: Call[] = [];
+  let escrowed = 0n;
+
+  split.tiersBps.forEach((bps, tier) => {
+    if (bps <= 0) return;
+    const tierAmount = (fee * BigInt(bps)) / 10000n;
+    if (tierAmount <= 0n) return;
+
+    // Map the tier to a (round, position) in the tree.
+    let round: number;
+    let position: number;
+    if (tier === 0) {
+      round = rounds;
+      position = 1; // champion
+    } else if (tier === 1) {
+      round = rounds;
+      position = 2; // runner-up
+    } else {
+      round = rounds - (tier - 1); // tier 2 → semis, tier 3 → QFs, …
+      position = 2; // the losers of that round
+    }
+    if (round < 1) return;
+
+    const matches = state.matches.filter((m) => m.round === round && m.tournamentId);
+    if (matches.length === 0) return;
+    const per = tierAmount / BigInt(matches.length);
+    if (per <= 0n) return;
+
+    for (const m of matches) {
+      prizeCalls.push(
+        buildAddPrizeCall(state.budokanAddress, {
+          tournamentId: m.tournamentId!,
+          prize: {
+            kind: "token",
+            tokenAddress: split.tokenAddress,
+            tokenType: { kind: "erc20", amount: per.toString() },
+            position,
+          },
+        }),
+      );
+      escrowed += per;
+    }
+  });
+
+  if (prizeCalls.length === 0) return [];
+  // Approve exactly what we escrow (integer division can leave the fee's dust).
+  return [
+    buildErc20ApproveCall(split.tokenAddress, state.budokanAddress, escrowed.toString()),
+    ...prizeCalls,
+  ];
+}
+
 /**
  * Calls to escrow the configured ERC20 prize on the final match (approve +
  * add_prize at position 1). Empty when no `finalPrize` is set or the final

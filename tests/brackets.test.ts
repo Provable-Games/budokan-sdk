@@ -5,6 +5,7 @@ import {
   bracketEntryCalls,
   bracketFeeders,
   bracketFinalPrizeCalls,
+  bracketFeePrizeCalls,
   bracketRounds,
   createBracket,
   nextMatchesFor,
@@ -244,6 +245,39 @@ describe("gated upfront deploy", () => {
 
     const feeder = bracketFeeders(s, final.id).find((f) => f.winner?.address === winnerAddr)!;
     expect(feeder.winnerTokenId).toBe(String(900 + feeder.indexInRound));
+  });
+
+  test("fee prize calls escrow one player's fee across placement tiers", () => {
+    const s = createBracket(baseOpts(players(4))); // rounds = 2: semis + final
+    // Deploy both rounds so the prize slots exist.
+    for (const r of [1, 2]) {
+      roundMatchCreateCalls(s, r).forEach(({ matchId }, i) =>
+        attachMatchTournament(s, matchId, String(100 + r * 10 + i)),
+      );
+    }
+    // 1000 fee, split 50% champion / 30% runner-up / 20% semifinalists.
+    const calls = bracketFeePrizeCalls(s, {
+      tokenAddress: "0xfee",
+      fee: "1000",
+      tiersBps: [5000, 3000, 2000],
+    });
+    // approve + add_prize(final pos1) + add_prize(final pos2) + add_prize(each of 2 semis pos2)
+    expect(calls[0]!.entrypoint).toBe("approve");
+    const addPrizes = calls.filter((c) => c.entrypoint === "add_prize");
+    expect(addPrizes).toHaveLength(4); // final 1st, final 2nd, 2× semifinal losers
+  });
+
+  test("fee prize calls skip tiers deeper than the bracket and empty when no fee", () => {
+    const s = createBracket(baseOpts(players(4)));
+    for (const r of [1, 2]) {
+      roundMatchCreateCalls(s, r).forEach(({ matchId }, i) =>
+        attachMatchTournament(s, matchId, String(200 + r * 10 + i)),
+      );
+    }
+    // tier index 3 (quarterfinalists) doesn't exist in a 2-round bracket → ignored.
+    const calls = bracketFeePrizeCalls(s, { tokenAddress: "0xfee", fee: "1000", tiersBps: [10000, 0, 0, 5000] });
+    expect(calls.filter((c) => c.entrypoint === "add_prize")).toHaveLength(1); // champion only
+    expect(bracketFeePrizeCalls(s, { tokenAddress: "0xfee", fee: "0", tiersBps: [10000] })).toEqual([]);
   });
 
   test("final prize calls = approve + add_prize once the final is created", () => {
