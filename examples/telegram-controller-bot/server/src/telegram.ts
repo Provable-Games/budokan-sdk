@@ -233,6 +233,10 @@ export class TelegramBot {
         const chain = await this.chatStates.getChain(chatId);
         return bracketCmd.join(this.api, this.config, this.brackets, chatId, chain, id);
       }
+      case "/bracket_channel":
+      case "/bracketchannel":
+        // Run in the target group to make bracket cards post there.
+        return bracketCmd.setAnnounceChannel(this.api, this.brackets, chatId);
       case "/bracket_start":
       case "/bracketstart": {
         const id = args[0];
@@ -486,6 +490,7 @@ export class TelegramBot {
         "Brackets (1v1 single-elim, gated):",
         "  /bracket — create a bracket: closed (paste players), open (people join till full), or mix. Players can be 0x addresses or Cartridge usernames.",
         "  /bracket_join <id> — join an open bracket (after /connect); /bracket_start <id> — organizer force-start",
+        "  /bracket_channel — run in a public group to post bracket cards + updates there (no env var needed)",
         "  /brackets — list brackets; /bracket_view <id> — show the tree",
         "",
         "  /cancel — abort an in-flight multi-turn flow",
@@ -616,6 +621,7 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "bracket", description: "Create a 1v1 single-elim bracket (organizer)" },
   { command: "brackets", description: "List brackets on this chain" },
   { command: "bracket_join", description: "Join an open bracket: /bracket_join <id>" },
+  { command: "bracket_channel", description: "Run in a group to post bracket cards there" },
   { command: "add_prize", description: "Sponsor a prize for a tournament" },
   { command: "back", description: "Go back / edit the current section in /create" },
   { command: "cancel", description: "Abort the current multi-turn flow" },

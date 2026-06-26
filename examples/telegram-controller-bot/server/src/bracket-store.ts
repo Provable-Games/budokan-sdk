@@ -166,6 +166,31 @@ export class BracketStore {
     if (existsSync(file)) await rm(file).catch(() => {});
   }
 
+  // ----- announce channel (set via /bracket_channel; replaces the env var) -----
+
+  private announceFile(): string {
+    return join(this.dir(), "announce-channel.json");
+  }
+
+  /** Remember which chat to post bracket cards/updates to. */
+  async setAnnounceChannel(chatId: string): Promise<void> {
+    const file = this.announceFile();
+    await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.tmp`;
+    await writeFile(tmp, `${JSON.stringify({ chatId })}\n`, { mode: 0o600 });
+    await rename(tmp, file);
+  }
+
+  async getAnnounceChannel(): Promise<string | null> {
+    const file = this.announceFile();
+    if (!existsSync(file)) return null;
+    try {
+      return (JSON.parse(await readFile(file, "utf8")) as { chatId?: string }).chatId ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async allRegistrations(): Promise<BracketRegistration[]> {
     const dir = this.regDir();
     if (!existsSync(dir)) return [];

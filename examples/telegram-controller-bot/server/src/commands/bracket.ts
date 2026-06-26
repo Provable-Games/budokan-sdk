@@ -284,7 +284,9 @@ export async function handleAnswer(
       return;
     }
     drafts.delete(chatId);
-    const announceChatId = config.bracketChannelId ?? chatId;
+    // Announce target: the channel set via /bracket_channel wins, then the env
+    // var, then the organizer's DM.
+    const announceChatId = (await store.getAnnounceChannel()) ?? config.bracketChannelId ?? chatId;
 
     if (d.mode === "closed") {
       await deployResolved(api, config, store, {
@@ -340,6 +342,23 @@ export async function handleAnswer(
     );
     return;
   }
+}
+
+/**
+ * Set the chat this command is run in as the bracket announce channel — run
+ * /bracket_channel inside the public group. Replaces needing BRACKET_CHANNEL_ID.
+ */
+export async function setAnnounceChannel(
+  api: TelegramApi,
+  store: BracketStore,
+  chatId: string,
+): Promise<void> {
+  await store.setAnnounceChannel(chatId);
+  const where = chatId.startsWith("-") ? "this group" : "this chat";
+  await api.sendMessage(
+    chatId,
+    `✅ Bracket cards & updates will post in ${where} from now on. (New brackets only — existing ones keep their channel.)`,
+  );
 }
 
 // ----- join / start (open & mix) -----
