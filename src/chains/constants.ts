@@ -18,11 +18,11 @@ export const CHAINS: Record<string, ChainConfig> = {
     rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
     apiBaseUrl: "https://budokan-api-sepolia.up.railway.app",
     wsUrl: "wss://budokan-api-sepolia.up.railway.app/ws",
-    budokanAddress: "0x074cc823c382d98e6b8d657aa86776a57d85e1dc2912d54d83a4fef147472683",
-    // Redeployed 2026-06-18 to match the upgraded #264/#269 budokan class —
-    // the prior viewer (0x03da56…) was built against the old budokan interface
-    // (called the removed `tournament_entries`) and reverted RPC reads.
-    viewerAddress: "0x06b2773d5f1f8bfa5aa3b698fbbaea0472b30af003ea6058330ed52a1acaa283",
+    // The contract budokan.gg + budokan-api-sepolia actually index. The prior
+    // value (0x074cc8…) was a different deployment the indexer doesn't watch, so
+    // tournaments created there never showed up in the app/API.
+    budokanAddress: "0x07edaa23494bf6832b306310e2e933c1907674bf680ea84bc87fcbfb6e5c3aa4",
+    viewerAddress: "0x0794dc020f79afce437ffea14ead0d7b83ecb4ea758e92cb99e0a0dffccaedde",
   },
 } as const;
 
