@@ -92,3 +92,24 @@ so `package.json` and the Railway deploy are untouched — Railway keeps using t
 published version. **Publish a new SDK version only when a change is validated
 and you want to deploy it** (then bump the bot's dependency). To unlink:
 `bun unlink @provable-games/budokan-sdk` in `server/` and `bun install`.
+
+## Local HTTPS tunnel (for /connect callback)
+
+`/connect` redirects the Cartridge browser flow back to `BOT_PUBLIC_URL`, so it
+must be a public HTTPS URL. For local dev, tunnel your bot's port (default 8787,
+or whatever `HTTP listening on :<port>` prints):
+
+```bash
+# cloudflared — free, no signup, no interstitial (recommended).
+# Grab the binary if it's not installed (works in a container, no root):
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared && chmod +x cloudflared
+./cloudflared tunnel --url http://localhost:8787      # prints https://<random>.trycloudflare.com
+
+# or, zero-install:
+npx localtunnel --port 8787
+```
+
+Put the printed HTTPS URL in `BOT_PUBLIC_URL`, then start the bot. The tunnel
+must run in the **same container/host** as the bot (so it can reach localhost),
+and on free tiers the URL changes each restart — update `BOT_PUBLIC_URL` and
+restart the bot when it does.
