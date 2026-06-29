@@ -1260,26 +1260,20 @@ function calculateDistributionPercentages(
   return bp.map((b) => b / 100);
 }
 
-async function moveToPrizes(api: TelegramApi, config: Config, state: State, chatId: string): Promise<void> {
+async function moveToPrizes(api: TelegramApi, _config: Config, state: State, chatId: string): Promise<void> {
   if (await maybeReturnToConfirm(api, state, chatId)) return;
+  // Prize funding is deferred to budokan.gg — the in-session path is capped at
+  // ~$10 (entry fees only), so prizes are sponsored on the web app after the
+  // tournament exists in the indexer.
   state.step = "prizesChoice";
-  if (!config.voyagerProxyUrl) {
-    // Without Voyager, skip prize sponsorship in chat.
-    await api.sendMessage(chatId, [
-      "🏆 Sponsored prizes from chat aren't enabled (BUDOKAN_VOYAGER_PROXY_URL not set).",
-      "You can add prizes after creation via budokan.gg.",
-      "",
-      "⏭️ Continuing to confirmation…",
-    ].join("\n"));
-    return moveToConfirm(api, state, chatId);
-  }
   await api.sendMessage(chatId, [
-    "🏆 Add sponsored prizes from your wallet?",
-    "  1. ⏭️ No",
-    "  2. ✨ Yes (I'll show your token balances)",
+    "🏆 Add a prize pool on budokan.gg after the tournament is created.",
+    "Once it appears in the indexer, open it there and sponsor the prize — that's a",
+    "normal wallet transaction, not something the bot does in-session.",
     "",
-    "Reply with a number.",
+    "⏭️ Continuing to confirmation…",
   ].join("\n"));
+  return moveToConfirm(api, state, chatId);
 }
 
 async function handlePrizesChoice(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
