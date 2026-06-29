@@ -297,6 +297,12 @@ describe("gated upfront deploy", () => {
     expect(bracketRounds(s)).toBe(2);
   });
 
+  test("per-round settings are carried on the bracket state", () => {
+    const s = createBracket({ ...baseOpts(players(4)), settingsId: 0, roundSettingsIds: [1, 9] });
+    expect(s.roundSettingsIds).toEqual([1, 9]);
+    // round r uses roundSettingsIds[r-1] ?? settingsId (resolved at create-call time)
+  });
+
   test("decodeTournamentValidatorConfig parses the on-chain hex config", () => {
     // [qualifierType=1, qualifyingMode=0, topPositions=1, feeders 5,6]
     expect(decodeTournamentValidatorConfig(["0x1", "0x0", "0x1", "0x5", "0x6"])).toEqual({

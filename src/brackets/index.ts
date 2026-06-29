@@ -94,6 +94,12 @@ export interface BracketState {
   /** Short label prefixed onto each match tournament name (≤ ~20 bytes). */
   namePrefix: string;
   /**
+   * Optional per-round game settings (0-indexed by round-1): round `r` uses
+   * `roundSettingsIds[r-1]` when present, else falls back to `settingsId`. Lets
+   * a bracket escalate difficulty as rounds progress.
+   */
+  roundSettingsIds?: number[];
+  /**
    * Optional organizer blurb used as every match tournament's on-chain
    * description (grouping reads the gating, not the text, so this is free-form).
    * Falls back to a generated "Bracket <id> - round/match" line when unset.
@@ -127,6 +133,8 @@ export interface CreateBracketOptions {
   scheduleTemplate: MatchScheduleTemplate;
   leaderboard: { ascending: boolean; gameMustBeOver: boolean };
   namePrefix?: string;
+  /** Optional per-round settings (0-indexed by round-1); falls back to settingsId. */
+  roundSettingsIds?: number[];
   /** Optional organizer blurb used as each match's on-chain description. */
   description?: string;
   /** Competitors. Order = seed order unless `seeding: "random"`. */
@@ -295,6 +303,7 @@ export function createBracket(opts: CreateBracketOptions): BracketState {
     scheduleTemplate: opts.scheduleTemplate,
     leaderboard: opts.leaderboard,
     namePrefix: opts.namePrefix ?? "Match",
+    ...(opts.roundSettingsIds ? { roundSettingsIds: opts.roundSettingsIds } : {}),
     ...(opts.description ? { description: opts.description } : {}),
     gated,
     finalPrize: opts.finalPrize,
@@ -376,7 +385,7 @@ function matchCreateCall(state: BracketState, match: BracketMatch): Call {
     name: `${state.namePrefix} R${match.round}-${match.indexInRound + 1}`.slice(0, 31),
     description: state.description ?? `Bracket ${state.id} - round ${match.round}, match ${match.indexInRound + 1}`,
     gameAddress: state.game,
-    settingsId: state.settingsId,
+    settingsId: state.roundSettingsIds?.[match.round - 1] ?? state.settingsId,
     schedule: { ...state.scheduleTemplate },
     leaderboard: { ...state.leaderboard },
   };
@@ -468,7 +477,7 @@ function gatedMatchCreateCall(state: BracketState, match: BracketMatch): Call {
     name: `${state.namePrefix} R${match.round}-${match.indexInRound + 1}`.slice(0, 31),
     description: state.description ?? `Bracket ${state.id} - round ${match.round}, match ${match.indexInRound + 1}`,
     gameAddress: state.game,
-    settingsId: state.settingsId,
+    settingsId: state.roundSettingsIds?.[match.round - 1] ?? state.settingsId,
     schedule: roundSchedule(state.scheduleTemplate, match.round),
     leaderboard: { ...state.leaderboard },
     ...(entryRequirement ? { entryRequirement } : {}),
