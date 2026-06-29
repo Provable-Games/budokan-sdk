@@ -916,6 +916,9 @@ export async function advanceStoredBracket(
     if (!m.playerA || !m.playerB) continue;
     try {
       for (const player of [m.playerA, m.playerB]) {
+        // Skip placeholder (0x0) slots — a walkover auto-advances, and entering
+        // 0x0 would just be a failing tx.
+        if (!isReal(player)) continue;
         await advancer.execute(bracketEntryCalls(state, m.id, player.address));
       }
       entered.add(m.id);

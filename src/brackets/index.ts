@@ -885,7 +885,7 @@ export function reconstructBrackets<T>(
   for (const t of tournaments) {
     const er = getEntryRequirement(t);
     if (!er?.config) continue;
-    if (wantAddr && er.address && toDecimal(er.address) !== wantAddr) continue;
+    if (wantAddr && (!er.address || toDecimal(er.address) !== wantAddr)) continue;
     const decoded = decodeTournamentValidatorConfig(er.config);
     if (!decoded || decoded.feederTournamentIds.length === 0) continue;
     const id = toDecimal(getId(t));
@@ -946,7 +946,17 @@ export function reconstructBrackets<T>(
       else byRound.set(r, [id]);
     }
     for (const list of byRound.values()) {
-      list.sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
+      list.sort((a, b) => {
+        // ids are normally decimal strings; fall back to lexical if a custom
+        // id isn't BigInt-parseable so a bad id can't crash grouping.
+        try {
+          const ab = BigInt(a);
+          const bb = BigInt(b);
+          return ab < bb ? -1 : ab > bb ? 1 : 0;
+        } catch {
+          return a < b ? -1 : a > b ? 1 : 0;
+        }
+      });
       list.forEach((id, i) => matchIndex.set(id, i));
     }
     const matches = ids
