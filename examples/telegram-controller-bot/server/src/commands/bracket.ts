@@ -74,6 +74,7 @@ interface Draft {
     | "capacity"
     | "players"
     | "length"
+    | "roundSettings"
     | "prizeToken"
     | "prizeAmount"
     | "prizeSplit"
@@ -93,6 +94,8 @@ interface Draft {
   settingsPage?: SettingsPage;
   /** Bracket title; prefixes each match name ("<name> R1-1") and titles the card. */
   namePrefix?: string;
+  /** Optional per-round settings (round 1 → final); falls back to settingsId. */
+  roundSettingsIds?: number[];
   /** Organizer blurb shown on the card + set as each match's on-chain description. */
   description?: string;
   // Open prize pool: an up-front sponsor seed (escrowed at deploy, before joins)
@@ -267,16 +270,30 @@ export async function handleAnswer(
       return;
     }
     d.length = LENGTH_PRESETS[n - 1];
-    // Open brackets fund a pool from a sponsor seed (locked up front) and/or
-    // per-entry fees → start with the seed. Closed has no per-entry pool, so it
-    // offers a single optional sponsored prize.
-    if (d.mode === "open") {
-      d.step = "seedToken";
-      await sendTokenList(api, d.chain, chatId, "💰 Seed the prize pool up front? Pick a token:", "No seed");
-      return;
+    d.step = "roundSettings";
+    const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
+    const base = d.settingsName ?? `ID ${d.settingsId ?? 0}`;
+    await api.sendMessage(
+      chatId,
+      [
+        `⚙️ Settings per round? This bracket has ${rounds} rounds, all using "${base}".`,
+        `Reply 'skip' to keep that for every round, or give ${rounds} settings ids comma-separated (round 1 → final), e.g. ${Array.from({ length: rounds }, () => d.settingsId ?? 0).join(",")}.`,
+      ].join("\n"),
+    );
+    return;
+  }
+
+  if (d.step === "roundSettings") {
+    const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
+    if (!/^(skip|none|no)$/i.test(t)) {
+      const ids = t.split(/[\s,]+/).filter(Boolean).map(Number);
+      if (ids.length !== rounds || ids.some((x) => !Number.isInteger(x) || x < 0)) {
+        await api.sendMessage(chatId, `Give exactly ${rounds} settings ids (round 1 → final), comma-separated, or 'skip'.`);
+        return;
+      }
+      d.roundSettingsIds = ids;
     }
-    d.step = "prizeToken";
-    await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
+    await sendFundingPrompt(api, d, chatId);
     return;
   }
 
@@ -479,6 +496,7 @@ export async function handleAnswer(
         chain: d.chain,
         game: d.game!,
         settingsId: d.settingsId,
+        roundSettingsIds: d.roundSettingsIds,
         namePrefix: d.namePrefix,
         description: d.description,
         length: d.length!,
@@ -569,6 +587,7 @@ interface DeployParams {
   chain: Chain;
   game: Game;
   settingsId?: number;
+  roundSettingsIds?: number[];
   namePrefix?: string;
   description?: string;
   length: { reg: number; game: number; sub: number };
@@ -607,6 +626,7 @@ async function deployResolved(
     settingsId: p.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
     namePrefix: p.namePrefix ?? p.game.name.slice(0, 12),
+    ...(p.roundSettingsIds ? { roundSettingsIds: p.roundSettingsIds } : {}),
     ...(p.description ? { description: p.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
@@ -709,6 +729,7 @@ async function deployPaidUpfront(
     settingsId: d.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
     namePrefix: d.namePrefix ?? game.name.slice(0, 12),
+    ...(d.roundSettingsIds ? { roundSettingsIds: d.roundSettingsIds } : {}),
     ...(d.description ? { description: d.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
@@ -1163,6 +1184,17 @@ function splitSuffix(tiersBps?: number[]): string {
   return ` → ${tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`;
 }
 
+/** Route into the prize-funding sub-flow: open → seed/fee pool; closed → sponsored prize. */
+async function sendFundingPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  if (d.mode === "open") {
+    d.step = "seedToken";
+    await sendTokenList(api, d.chain, chatId, "💰 Seed the prize pool up front? Pick a token:", "No seed");
+  } else {
+    d.step = "prizeToken";
+    await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
+  }
+}
+
 async function sendNamePrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
   d.step = "name";
   await api.sendMessage(
@@ -1272,7 +1304,7 @@ function confirmText(d: Draft): string {
     "🧾 Confirm bracket:",
     `  • Game: ${d.game!.name}`,
     `  • Name: ${d.namePrefix ?? d.game!.name}`,
-    `  • Settings: ${d.settingsName ?? "(default)"}`,
+    `  • Settings: ${d.settingsName ?? "(default)"}${d.roundSettingsIds ? ` (per round: ${d.roundSettingsIds.join(", ")})` : ""}`,
     ...(d.description ? [`  • Description: ${d.description}`] : []),
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
