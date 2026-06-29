@@ -68,6 +68,7 @@ interface Draft {
   step:
     | "game"
     | "settings"
+    | "description"
     | "mode"
     | "capacity"
     | "players"
@@ -89,6 +90,8 @@ interface Draft {
   settingsId?: number;
   settingsName?: string;
   settingsPage?: SettingsPage;
+  /** Organizer blurb shown on the card + set as each match's on-chain description. */
+  description?: string;
   // Open prize pool: an up-front sponsor seed (escrowed at deploy, before joins)
   // and/or a per-entry fee (added on join). Both optional; one shared split.
   seedToken?: Erc20Token;
@@ -182,6 +185,12 @@ export async function handleAnswer(
 
   if (d.step === "settings") {
     await handleBracketSettings(api, d, chatId, t);
+    return;
+  }
+
+  if (d.step === "description") {
+    if (!/^(skip|none|no)$/i.test(t)) d.description = t.slice(0, 200);
+    await sendModePrompt(api, d, chatId);
     return;
   }
 
@@ -460,6 +469,7 @@ export async function handleAnswer(
         chain: d.chain,
         game: d.game!,
         settingsId: d.settingsId,
+        description: d.description,
         length: d.length!,
         prize: d.prize,
         prizeTiersBps: d.prizeTiersBps,
@@ -548,6 +558,7 @@ interface DeployParams {
   chain: Chain;
   game: Game;
   settingsId?: number;
+  description?: string;
   length: { reg: number; game: number; sub: number };
   prize?: { tokenAddress: string; amount: string; label: string };
   prizeTiersBps?: number[];
@@ -584,6 +595,7 @@ async function deployResolved(
     settingsId: p.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
     namePrefix: p.game.name.slice(0, 12),
+    ...(p.description ? { description: p.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
       registrationEndDelay: p.length.reg,
@@ -685,6 +697,7 @@ async function deployPaidUpfront(
     settingsId: d.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
     namePrefix: game.name.slice(0, 12),
+    ...(d.description ? { description: d.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
       registrationEndDelay: d.length!.reg,
@@ -740,6 +753,7 @@ async function deployPaidUpfront(
     state,
     organizerChatId,
     announceChatId,
+    ...(d.description ? { description: d.description } : {}),
     paid: d.entryFee
       ? { tokenAddress: d.entryFee.tokenAddress, fee: d.entryFee.amount, tiersBps, label: d.entryFee.label }
       : undefined,
@@ -895,6 +909,7 @@ function paidCard(b: StoredBracket): string {
     "📊 Registration",
     `👥 Players: ${filled}/${cap}`,
   ];
+  if (b.description) lines.push(`📝 ${b.description}`);
   if (b.seed) lines.push(`💰 Seed (locked): ${b.seed.label}`);
   if (b.paid) lines.push(`💸 Entry: ${b.paid.label} (adds to pool)`);
   else lines.push(`💸 Entry: free`);
@@ -1136,6 +1151,14 @@ function splitSuffix(tiersBps?: number[]): string {
   return ` → ${tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`;
 }
 
+async function sendDescriptionPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  d.step = "description";
+  await api.sendMessage(
+    chatId,
+    "📝 Bracket description? It shows on the card + budokan.gg. Reply with text, or 'skip'. /cancel to abort.",
+  );
+}
+
 async function sendModePrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
   d.step = "mode";
   const tag = d.settingsName ? ` — ${d.settingsName}` : "";
@@ -1161,7 +1184,7 @@ async function renderBracketSettings(api: TelegramApi, d: Draft, chatId: string,
     d.settingsId = 0;
     d.settingsName = "(default)";
     await api.sendMessage(chatId, "No settings registered for this game — using settings ID 0.");
-    await sendModePrompt(api, d, chatId);
+    await sendDescriptionPrompt(api, d, chatId);
     return;
   }
   const pages = Math.max(1, Math.ceil(page.total / page.limit));
@@ -1180,7 +1203,7 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   if (lower === "skip") {
     d.settingsId = 0;
     d.settingsName = "(default)";
-    await sendModePrompt(api, d, chatId);
+    await sendDescriptionPrompt(api, d, chatId);
     return;
   }
   if (lower === "retry") {
@@ -1217,7 +1240,7 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   const chosen = page.data[n - 1]!;
   d.settingsId = chosen.id;
   d.settingsName = chosen.name ?? `ID ${chosen.id}`;
-  await sendModePrompt(api, d, chatId);
+  await sendDescriptionPrompt(api, d, chatId);
 }
 
 function confirmText(d: Draft): string {
@@ -1229,6 +1252,7 @@ function confirmText(d: Draft): string {
     "🧾 Confirm bracket:",
     `  • Game: ${d.game!.name}`,
     `  • Settings: ${d.settingsName ?? "(default)"}`,
+    ...(d.description ? [`  • Description: ${d.description}`] : []),
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
     ...(d.seed ? [`  • Seed (locked up front): ${d.seed.label}`] : []),

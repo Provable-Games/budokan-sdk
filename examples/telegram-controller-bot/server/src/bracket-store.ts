@@ -19,6 +19,8 @@ export interface StoredBracket {
   organizerChatId: string;
   /** Chat to post the public bracket tree + updates to (channel or organizer DM). */
   announceChatId: string;
+  /** Optional organizer blurb shown on the card. */
+  description?: string;
   /** Match ids whose winners the bot has already auto-entered into the next round. */
   entered?: string[];
   /**
