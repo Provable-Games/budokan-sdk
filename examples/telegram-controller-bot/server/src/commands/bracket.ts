@@ -75,12 +75,6 @@ interface Draft {
     | "players"
     | "length"
     | "roundSettings"
-    | "prizeToken"
-    | "prizeAmount"
-    | "prizeSplit"
-    | "prizeCustom"
-    | "seedToken"
-    | "seedAmount"
     | "feeToken"
     | "feeAmount"
     | "feeSplit"
@@ -98,21 +92,14 @@ interface Draft {
   roundSettingsIds?: number[];
   /** Organizer blurb shown on the card + set as each match's on-chain description. */
   description?: string;
-  // Open prize pool: an up-front sponsor seed (escrowed at deploy, before joins)
-  // and/or a per-entry fee (added on join). Both optional; one shared split.
-  seedToken?: Erc20Token;
-  seed?: { tokenAddress: string; amount: string; label: string };
   mode?: (typeof MODES)[number]["key"];
   capacity?: number;
   players?: Player[]; // closed: everyone; open: [] (all join)
   length?: (typeof LENGTH_PRESETS)[number];
-  prizeToken?: Erc20Token;
-  prize?: { tokenAddress: string; amount: string; label: string };
-  /** Sponsored-prize placement split (bps per tier); default champion-takes-all. */
-  prizeTiersBps?: number[];
-  // Paid (open mode only): players pay this fee on tap; it escrows into
-  // placement prizes per tiersBps (basis points per tier). Collected over the
-  // feeToken → feeAmount → feeSplit sub-flow.
+  // Open mode only: players pay this entry fee on join (≤ the ~$10 session cap);
+  // it escrows into placement prizes per tiersBps. Collected over the
+  // feeToken → feeAmount → feeSplit sub-flow. Larger/organizer prizes are added
+  // on budokan.gg, not in-session.
   feeToken?: Erc20Token;
   feeAmountRaw?: string;
   feeAmountLabel?: string;
@@ -297,119 +284,12 @@ export async function handleAnswer(
     return;
   }
 
-  if (d.step === "seedToken") {
-    if (/^(0|skip|none|no)$/i.test(t)) {
-      d.step = "feeToken";
-      await sendFeeTokenPrompt(api, d.chain, chatId);
-      return;
-    }
-    const tokens = spendableTokens(d.chain);
-    const n = Number(t);
-    if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
-      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no seed, or /cancel.`);
-      return;
-    }
-    d.seedToken = tokens[n - 1];
-    d.step = "seedAmount";
-    await api.sendMessage(chatId, `💰 Seed amount in ${d.seedToken!.symbol}? (escrowed up front) /cancel to abort.`);
-    return;
-  }
-
-  if (d.step === "seedAmount") {
-    if (!/^\d+(\.\d+)?$/.test(t)) {
-      await api.sendMessage(chatId, `Enter a number in ${d.seedToken!.symbol} (e.g. 100), or /cancel.`);
-      return;
-    }
-    d.seed = {
-      tokenAddress: d.seedToken!.address,
-      amount: toRawAmount(t, d.seedToken!.decimals),
-      label: `${t} ${d.seedToken!.symbol}`,
-    };
-    d.step = "feeToken";
-    await sendFeeTokenPrompt(api, d.chain, chatId);
-    return;
-  }
-
-  if (d.step === "prizeToken") {
-    if (/^(0|skip|none|no)$/i.test(t)) {
-      d.step = "confirm";
-      await api.sendMessage(chatId, confirmText(d));
-      return;
-    }
-    const tokens = spendableTokens(d.chain);
-    const n = Number(t);
-    if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
-      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no prize, or /cancel.`);
-      return;
-    }
-    d.prizeToken = tokens[n - 1];
-    d.step = "prizeAmount";
-    await api.sendMessage(chatId, `🏆 Champion prize amount in ${d.prizeToken!.symbol}? (e.g. 100) /cancel to abort.`);
-    return;
-  }
-
-  if (d.step === "prizeAmount") {
-    if (!/^\d+(\.\d+)?$/.test(t)) {
-      await api.sendMessage(chatId, `Enter a number in ${d.prizeToken!.symbol} (e.g. 100), or /cancel.`);
-      return;
-    }
-    d.prize = {
-      tokenAddress: d.prizeToken!.address,
-      amount: toRawAmount(t, d.prizeToken!.decimals),
-      label: `${t} ${d.prizeToken!.symbol}`,
-    };
-    d.step = "prizeSplit";
-    await sendFeeSplitPrompt(api, chatId);
-    return;
-  }
-
-  if (d.step === "prizeSplit") {
-    if (/^custom$/i.test(t) || Number(t) === FEE_SPLITS.length + 1) {
-      d.step = "prizeCustom";
-      await api.sendMessage(
-        chatId,
-        "Enter the split as whole % summing to 100 — 1st, then 2nd, then semifinalists, then quarterfinalists. E.g. `60 30 10`. /cancel to abort.",
-      );
-      return;
-    }
-    const n = Number(t);
-    if (!/^\d+$/.test(t) || n < 1 || n > FEE_SPLITS.length) {
-      await api.sendMessage(chatId, `Reply 1–${FEE_SPLITS.length + 1}, or /cancel.`);
-      return;
-    }
-    d.prizeTiersBps = [...FEE_SPLITS[n - 1]!.bps];
-    d.step = "confirm";
-    await api.sendMessage(chatId, confirmText(d));
-    return;
-  }
-
-  if (d.step === "prizeCustom") {
-    const places = t.split(/\s+/).map(Number);
-    if (
-      places.length === 0 ||
-      places.some((p) => !Number.isFinite(p) || p < 0) ||
-      places.reduce((a, b) => a + b, 0) !== 100
-    ) {
-      await api.sendMessage(chatId, "Whole percentages summing to 100 (e.g. `60 30 10`). Try again, or /cancel.");
-      return;
-    }
-    d.prizeTiersBps = places.map((p) => Math.round(p * 100));
-    d.step = "confirm";
-    await api.sendMessage(chatId, confirmText(d));
-    return;
-  }
-
   if (d.step === "feeToken") {
     if (/^(0|skip|none|no)$/i.test(t)) {
-      // No per-entry fee. If there's a seed, pick how it pays out; else this is
-      // a truly free, no-prize bracket → straight to confirm.
-      if (d.seed) {
-        d.step = "feeSplit";
-        await sendFeeSplitPrompt(api, chatId);
-      } else {
-        d.step = "confirm";
-        await api.sendMessage(chatId, confirmText(d));
-      }
+      // No per-entry fee → a free bracket. Organizers add any prize pool on
+      // budokan.gg (prize funding is deferred there, not done in-session).
+      d.step = "confirm";
+      await api.sendMessage(chatId, confirmText(d));
       return;
     }
     const tokens = spendableTokens(d.chain);
@@ -500,8 +380,6 @@ export async function handleAnswer(
         namePrefix: d.namePrefix,
         description: d.description,
         length: d.length!,
-        prize: d.prize,
-        prizeTiersBps: d.prizeTiersBps,
         players: d.players!,
       });
       return;
@@ -591,8 +469,6 @@ interface DeployParams {
   namePrefix?: string;
   description?: string;
   length: { reg: number; game: number; sub: number };
-  prize?: { tokenAddress: string; amount: string; label: string };
-  prizeTiersBps?: number[];
   players: Player[];
 }
 
@@ -666,16 +542,6 @@ async function deployResolved(
         await session.data.account.execute(bracketEntryCalls(state, m.id, player.address));
       }
     }
-    // Sponsored prize: the organizer's session escrows it across the placement
-    // tiers (default champion-takes-all) now that every match exists.
-    if (p.prize) {
-      const prizeCalls = bracketFeePrizeCalls(state, {
-        tokenAddress: p.prize.tokenAddress,
-        fee: p.prize.amount,
-        tiersBps: p.prizeTiersBps ?? [10000],
-      });
-      if (prizeCalls.length > 0) await session.data.account.execute(prizeCalls);
-    }
   } catch (error) {
     await store.save({ state, organizerChatId, announceChatId }).catch(() => {});
     await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /brackets shows what's live.`);
@@ -683,7 +549,7 @@ async function deployResolved(
   }
 
   await store.save({ state, organizerChatId, announceChatId });
-  await api.sendMessage(organizerChatId, `✅ Bracket ${id} deployed. Round 1 is live and players are entered.`);
+  await api.sendMessage(organizerChatId, `✅ Bracket ${id} deployed. Round 1 is live and players are entered.\n\n${addPrizeHint(state)}`);
   await announceTo(api, announceChatId, `🥊 The bracket is on!\n\n${presentation({ state, organizerChatId, announceChatId })}`);
   return true;
 }
@@ -765,18 +631,6 @@ async function deployPaidUpfront(
         attachMatchTournament(state, matchId, tid.toString());
       }
     }
-    // Escrow the sponsor seed NOW (before anyone joins) so the prize is locked
-    // and trustlessly visible — distributed across the placement tiers.
-    if (d.seed) {
-      step = `escrowing seed (${d.seed.label})`;
-      console.error(`[bracket ${id}] ${step}`);
-      const seedCalls = bracketFeePrizeCalls(state, {
-        tokenAddress: d.seed.tokenAddress,
-        fee: d.seed.amount,
-        tiersBps,
-      });
-      if (seedCalls.length > 0) await session.data.account.execute(seedCalls);
-    }
   } catch (error) {
     await api.sendMessage(organizerChatId, `❌ Deploy stopped while ${step}: ${formatError(error)}`);
     return;
@@ -790,7 +644,6 @@ async function deployPaidUpfront(
     paid: d.entryFee
       ? { tokenAddress: d.entryFee.tokenAddress, fee: d.entryFee.amount, tiersBps, label: d.entryFee.label }
       : undefined,
-    seed: d.seed ? { tokenAddress: d.seed.tokenAddress, amount: d.seed.amount, tiersBps, label: d.seed.label } : undefined,
     capacity,
     filled: 0,
     phase: "filling",
@@ -805,10 +658,9 @@ async function deployPaidUpfront(
   const joinLine = d.entryFee
     ? `Players tap Join to pay ${d.entryFee.label} (adds to the pool) and enter.`
     : `Players tap Join to enter (free).`;
-  const seedLine = d.seed ? ` Seed of ${d.seed.label} is locked.` : "";
   await api.sendMessage(
     organizerChatId,
-    `✅ Bracket ${id} deployed & open (0/${capacity}).${seedLine} ${joinLine} Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).`,
+    `✅ Bracket ${id} deployed & open (0/${capacity}). ${joinLine} Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).\n\n${addPrizeHint(b.state)}`,
   );
 }
 
@@ -930,12 +782,21 @@ export async function sponsorPaid(
   await api.sendMessage(chatId, toast);
 }
 
+/** How to add a prize pool — deferred to budokan.gg (the final match). */
+function addPrizeHint(state: BracketState): string {
+  const chain = state.chain as Chain;
+  const final = state.matches.find((m) => m.round === bracketRounds(state) && m.tournamentId);
+  return final?.tournamentId
+    ? `🏆 Add a prize pool on budokan.gg — sponsor it on the final match: ${tournamentPageUrl(chain, final.tournamentId)}`
+    : `🏆 Add a prize pool on budokan.gg once the matches are live.`;
+}
+
 function paidCard(b: StoredBracket): string {
   const cap = b.capacity ?? 0;
   const filled = b.filled ?? 0;
   const remaining = cap - filled;
   const real = b.state.players.filter(isReal);
-  const tiersBps = b.seed?.tiersBps ?? b.paid?.tiersBps;
+  const tiersBps = b.paid?.tiersBps;
   const lines = [
     "━━━━━━━━━━━━━━━━━━",
     `🥊 ${b.state.namePrefix} — 1v1 Bracket`,
@@ -943,7 +804,6 @@ function paidCard(b: StoredBracket): string {
     `👥 Players: ${filled}/${cap}`,
   ];
   if (b.description) lines.push(`📝 ${b.description}`);
-  if (b.seed) lines.push(`💰 Seed (locked): ${b.seed.label}`);
   if (b.paid) lines.push(`💸 Entry: ${b.paid.label} (adds to pool)`);
   else lines.push(`💸 Entry: free`);
   if (tiersBps) lines.push(`📊 Pays: ${tiersBps.map((bp) => `${(bp / 100).toFixed(0)}%`).join(" / ")}`);
@@ -1182,7 +1042,7 @@ async function sendLengthPrompt(api: TelegramApi, chatId: string): Promise<void>
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
-/** Numbered token picker shared by the entry-fee and sponsored-prize steps. */
+/** Numbered token picker for the entry-fee step. */
 async function sendTokenList(
   api: TelegramApi,
   chain: Chain,
@@ -1200,8 +1060,8 @@ async function sendTokenList(
 
 /**
  * Tokens the /connect session can actually escrow — i.e. those with an `approve`
- * spend cap in the session policy (see policies.ts). Seed / entry-fee / prize
- * must come from here, or the in-session escrow would be unauthorized.
+ * spend cap in the session policy (see policies.ts). Entry fees must come from
+ * here, or the in-session escrow would be unauthorized.
  */
 function spendableTokens(chain: Chain): readonly Erc20Token[] {
   return tokensForChain(chain).filter((t) => t.spendLimit);
@@ -1219,20 +1079,18 @@ async function sendFeeSplitPrompt(api: TelegramApi, chatId: string): Promise<voi
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
-/** " → 60/30/10%" for a multi-tier split; "" for champion-takes-all. */
-function splitSuffix(tiersBps?: number[]): string {
-  if (!tiersBps || tiersBps.length <= 1) return "";
-  return ` → ${tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`;
-}
-
-/** Route into the prize-funding sub-flow: open → seed/fee pool; closed → sponsored prize. */
+/**
+ * Funding step. Open brackets take an optional per-entry fee (in-session, ≤ the
+ * ~$10 session cap) that builds the placement pool. Closed brackets have no
+ * in-bot funding — the organizer adds any prize on budokan.gg after creation.
+ */
 async function sendFundingPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
   if (d.mode === "open") {
-    d.step = "seedToken";
-    await sendTokenList(api, d.chain, chatId, "💰 Seed the prize pool up front? Pick a token:", "No seed");
+    d.step = "feeToken";
+    await sendFeeTokenPrompt(api, d.chain, chatId);
   } else {
-    d.step = "prizeToken";
-    await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
+    d.step = "confirm";
+    await api.sendMessage(chatId, confirmText(d));
   }
 }
 
@@ -1349,17 +1207,16 @@ function confirmText(d: Draft): string {
     ...(d.description ? [`  • Description: ${d.description}`] : []),
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
-    ...(d.seed ? [`  • Seed (locked up front): ${d.seed.label}`] : []),
-    ...(d.entryFee ? [`  • Entry fee: ${d.entryFee.label} (adds to pool)`] : []),
-    ...((d.seed || d.entryFee) && d.tiersBps
-      ? [`  • Pays: ${d.tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join(" / ")}`]
-      : []),
-    ...(d.prize ? [`  • Prize: ${d.prize.label}${splitSuffix(d.prizeTiersBps)}`] : []),
-    ...(d.mode !== "open" && !d.prize ? [`  • Prize: none`] : []),
-    ...(d.mode === "open" && !d.seed && !d.entryFee ? [`  • Prize: none (free)`] : []),
+    ...(d.entryFee
+      ? [
+          `  • Entry fee: ${d.entryFee.label} (adds to pool)`,
+          `  • Pays: ${(d.tiersBps ?? [10000]).map((b) => `${(b / 100).toFixed(0)}%`).join(" / ")}`,
+        ]
+      : [`  • Entry: free`]),
+    `  • Prize pool: add on budokan.gg after creation`,
     "",
     d.mode === "open"
-      ? "Deploys the gated tree now (any seed locked up front); players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
+      ? "Deploys the gated tree now; players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
       : "Deploys the gated tree now and enters round 1 for the players.",
     "",
     "Reply 'yes', or /cancel.",

@@ -30,7 +30,6 @@ export interface StoredBracket {
    * prize is trustlessly locked). At least one is present on a filling bracket.
    */
   paid?: { tokenAddress: string; fee: string; tiersBps: number[]; label: string };
-  seed?: { tokenAddress: string; amount: string; tiersBps: number[]; label: string };
   /** Target roster size for a paid up-front bracket (power of two). */
   capacity?: number;
   /** Round-1 slots assigned so far (paid up-front brackets). */
