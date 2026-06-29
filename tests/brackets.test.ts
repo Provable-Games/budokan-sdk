@@ -8,8 +8,10 @@ import {
   bracketFeePrizeCalls,
   bracketRounds,
   createBracket,
+  decodeTournamentValidatorConfig,
   nextMatchesFor,
   pendingMatchCreateCalls,
+  reconstructBrackets,
   roundMatchCreateCalls,
   type CreateBracketOptions,
   type MatchReader,
@@ -293,5 +295,60 @@ describe("gated upfront deploy", () => {
     expect(calls[0]!.entrypoint).toBe("approve");
     expect(calls[1]!.entrypoint).toBe("add_prize");
     expect(bracketRounds(s)).toBe(2);
+  });
+
+  test("decodeTournamentValidatorConfig parses the on-chain hex config", () => {
+    // [qualifierType=1, qualifyingMode=0, topPositions=1, feeders 5,6]
+    expect(decodeTournamentValidatorConfig(["0x1", "0x0", "0x1", "0x5", "0x6"])).toEqual({
+      qualifierType: 1,
+      qualifyingMode: 0,
+      topPositions: 1,
+      feederTournamentIds: ["5", "6"],
+    });
+    expect(decodeTournamentValidatorConfig(["0x1", "0x0"])).toBeNull();
+    expect(decodeTournamentValidatorConfig(undefined)).toBeNull();
+  });
+
+  test("reconstructBrackets rebuilds a 4-player bracket from gating alone", () => {
+    // Tournaments 5,6 = round-1 semis (ungated); 7 = final, gated on winning 5 or 6.
+    const gate = (feeders: string[]) => ({ address: "0xval", config: ["0x1", "0x0", "0x1", ...feeders.map((f) => `0x${Number(f).toString(16)}`)] });
+    const tourneys = [
+      { id: "7", er: gate(["5", "6"]) },
+      { id: "5", er: null },
+      { id: "6", er: null },
+      { id: "99", er: null }, // standalone (never a feeder, no gate)
+    ];
+    const { brackets, standalone } = reconstructBrackets(tourneys, {
+      getId: (t) => t.id,
+      getEntryRequirement: (t) => t.er,
+    });
+    expect(standalone.map((t) => t.id)).toEqual(["99"]);
+    expect(brackets).toHaveLength(1);
+    const b = brackets[0]!;
+    expect(b.bracketId).toBe("7");
+    expect(b.rounds).toBe(2);
+    expect(b.size).toBe(4);
+    expect(b.final?.id).toBe("7");
+    // round 1 = the two semis (5,6), round 2 = the final (7)
+    expect(b.matches.map((m) => [m.tournamentId, m.round, m.isFinal])).toEqual([
+      ["5", 1, false],
+      ["6", 1, false],
+      ["7", 2, true],
+    ]);
+  });
+
+  test("reconstructBrackets respects validatorAddress and ignores non-brackets", () => {
+    const tourneys = [
+      { id: "7", er: { address: "0xother", config: ["0x1", "0x0", "0x1", "0x5", "0x6"] } },
+      { id: "5", er: null },
+      { id: "6", er: null },
+    ];
+    const { brackets, standalone } = reconstructBrackets(tourneys, {
+      getId: (t) => t.id,
+      getEntryRequirement: (t) => t.er,
+      validatorAddress: "0xval", // 0xother doesn't match → no bracket edges
+    });
+    expect(brackets).toHaveLength(0);
+    expect(standalone.map((t) => t.id).sort()).toEqual(["5", "6", "7"]);
   });
 });

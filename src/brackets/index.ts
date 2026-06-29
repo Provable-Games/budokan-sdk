@@ -751,3 +751,207 @@ export function bracketSummary(state: BracketState): string {
 function short(addr: string): string {
   return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
 }
+
+// ---------------------------------------------------------------------------
+// Bracket grouping (consumer side)
+//
+// Recognise which tournaments form one bracket and reconstruct the tree — with
+// NO extra metadata — by reading the gating that's already on-chain: each
+// round>1 match's `entry_requirement` is a tournament_validator extension whose
+// config lists the FEEDER tournament ids. The feeder graph IS the bracket, so
+// connected components = brackets and the root (no one feeds it) = the final.
+// Indexers already expose `entry_requirement` in the tournament list, so this
+// is a pure client-side transform — one API query, no extra RPC, no contract
+// change. Used by the bot's listing and budokan.gg.
+// ---------------------------------------------------------------------------
+
+/** Decoded `tournament_validator` extension config (the gating on a match). */
+export interface DecodedTournamentValidator {
+  /** 0 = participation, 1 = top-position ("won"). */
+  qualifierType: number;
+  /** 0 = PER_TOKEN (any one feeder), 1 = ALL. */
+  qualifyingMode: number;
+  topPositions: number;
+  /** The feeder tournament ids (decimal strings). */
+  feederTournamentIds: string[];
+}
+
+const toDecimal = (felt: string): string => {
+  try {
+    return BigInt(felt).toString();
+  } catch {
+    return felt;
+  }
+};
+
+/**
+ * Inverse of `buildTournamentValidatorConfig`: decode the on-chain config span
+ * `[qualifierType, qualifyingMode, topPositions, ...feederTournamentIds]` (hex
+ * felts, as indexers return them) into its parts. Returns null if malformed.
+ */
+export function decodeTournamentValidatorConfig(
+  config: readonly string[] | null | undefined,
+): DecodedTournamentValidator | null {
+  if (!config || config.length < 3) return null;
+  try {
+    return {
+      qualifierType: Number(BigInt(config[0]!)),
+      qualifyingMode: Number(BigInt(config[1]!)),
+      topPositions: Number(BigInt(config[2]!)),
+      feederTournamentIds: config.slice(3).map(toDecimal),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** A bracket match (a tournament) plus its reconstructed position in the tree. */
+export interface BracketMatchNode<T> {
+  tournament: T;
+  tournamentId: string;
+  /** 1-indexed round; leaves (round 1) are ungated, the final is round `rounds`. */
+  round: number;
+  /** 0-indexed position within the round (by tournament id). */
+  matchIndex: number;
+  isFinal: boolean;
+  /** Feeder tournament ids (empty for round 1). */
+  feederTournamentIds: string[];
+}
+
+export interface BracketGroup<T> {
+  /** Synthetic key: the final (root) tournament id. */
+  bracketId: string;
+  /** Inferred bracket size = 2^rounds. */
+  size: number;
+  rounds: number;
+  /** Matches present in the input, sorted by (round, matchIndex). */
+  matches: Array<BracketMatchNode<T>>;
+  /** The final match's tournament, if present in the input. */
+  final?: T;
+}
+
+/** Minimal shape of an entry requirement, as indexers/the viewer expose it. */
+export interface EntryRequirementLike {
+  address?: string | null;
+  config?: readonly string[] | null;
+}
+
+/**
+ * Group tournaments into brackets purely from their on-chain gating. For each
+ * tournament, `getEntryRequirement` returns its `tournament_validator`
+ * extension (address + config) or null; matches with a decodable config form
+ * feeder edges, connected components become brackets, and the round of each
+ * match is its height above the round-1 leaves. Tournaments not part of any
+ * bracket are returned as `standalone`.
+ *
+ * `validatorAddress` (optional) restricts which extension counts as a bracket
+ * gate — pass `extensionAddressFor(chain, "tournament")` to be strict.
+ */
+export function reconstructBrackets<T>(
+  tournaments: readonly T[],
+  opts: {
+    getId: (t: T) => string;
+    getEntryRequirement: (t: T) => EntryRequirementLike | null | undefined;
+    validatorAddress?: string;
+  },
+): { brackets: Array<BracketGroup<T>>; standalone: T[] } {
+  const { getId, getEntryRequirement, validatorAddress } = opts;
+  const wantAddr = validatorAddress ? toDecimal(validatorAddress) : undefined;
+
+  const byId = new Map<string, T>();
+  for (const t of tournaments) byId.set(toDecimal(getId(t)), t);
+
+  // feeders: gated match id -> its feeder ids. allFeeders: every id used as a feeder.
+  const feeders = new Map<string, string[]>();
+  const allFeeders = new Set<string>();
+  for (const t of tournaments) {
+    const er = getEntryRequirement(t);
+    if (!er?.config) continue;
+    if (wantAddr && er.address && toDecimal(er.address) !== wantAddr) continue;
+    const decoded = decodeTournamentValidatorConfig(er.config);
+    if (!decoded || decoded.feederTournamentIds.length === 0) continue;
+    const id = toDecimal(getId(t));
+    feeders.set(id, decoded.feederTournamentIds);
+    for (const f of decoded.feederTournamentIds) allFeeders.add(f);
+  }
+  if (feeders.size === 0) return { brackets: [], standalone: [...tournaments] };
+
+  // Union-find over all participating ids (gated matches + their feeders).
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = parent.get(x) ?? x;
+    if (!parent.has(x)) parent.set(x, x);
+    while (r !== parent.get(r)) {
+      const gp = parent.get(parent.get(r)!)!;
+      parent.set(r, gp);
+      r = gp;
+    }
+    return r;
+  };
+  const union = (a: string, b: string) => {
+    parent.set(find(a), find(b));
+  };
+  for (const [id, fids] of feeders) for (const f of fids) union(id, f);
+
+  // round(id) = height above the leaves (memoised; feeder graph is a DAG).
+  const roundMemo = new Map<string, number>();
+  const roundOf = (id: string, guard = 0): number => {
+    if (roundMemo.has(id)) return roundMemo.get(id)!;
+    const fids = feeders.get(id);
+    const r = fids && fids.length && guard < 64 ? 1 + Math.max(...fids.map((f) => roundOf(f, guard + 1))) : 1;
+    roundMemo.set(id, r);
+    return r;
+  };
+
+  const participants = new Set<string>([...feeders.keys(), ...allFeeders]);
+  const components = new Map<string, string[]>();
+  for (const id of participants) {
+    const root = find(id);
+    const arr = components.get(root);
+    if (arr) arr.push(id);
+    else components.set(root, [id]);
+  }
+
+  const brackets: Array<BracketGroup<T>> = [];
+  const grouped = new Set<string>();
+  for (const ids of components.values()) {
+    const rounds = Math.max(...ids.map((id) => roundOf(id)));
+    // The final is the root: at max round and never used as a feeder.
+    const finalId = ids.find((id) => roundOf(id) === rounds && !allFeeders.has(id)) ?? ids.find((id) => roundOf(id) === rounds);
+    // matchIndex: stable order within each round, by numeric id.
+    const matchIndex = new Map<string, number>();
+    const byRound = new Map<number, string[]>();
+    for (const id of ids) {
+      const r = roundOf(id);
+      const arr = byRound.get(r);
+      if (arr) arr.push(id);
+      else byRound.set(r, [id]);
+    }
+    for (const list of byRound.values()) {
+      list.sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0));
+      list.forEach((id, i) => matchIndex.set(id, i));
+    }
+    const matches = ids
+      .filter((id) => byId.has(id))
+      .map((id) => ({
+        tournament: byId.get(id)!,
+        tournamentId: id,
+        round: roundOf(id),
+        matchIndex: matchIndex.get(id) ?? 0,
+        isFinal: id === finalId,
+        feederTournamentIds: feeders.get(id) ?? [],
+      }))
+      .sort((a, b) => a.round - b.round || a.matchIndex - b.matchIndex);
+    if (matches.length === 0) continue;
+    for (const m of matches) grouped.add(m.tournamentId);
+    brackets.push({
+      bracketId: finalId ?? matches[matches.length - 1]!.tournamentId,
+      size: 2 ** rounds,
+      rounds,
+      matches,
+      final: finalId ? byId.get(finalId) : undefined,
+    });
+  }
+  const standalone = tournaments.filter((t) => !grouped.has(toDecimal(getId(t))));
+  return { brackets, standalone };
+}
