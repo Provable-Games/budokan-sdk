@@ -68,6 +68,7 @@ interface Draft {
   step:
     | "game"
     | "settings"
+    | "name"
     | "description"
     | "mode"
     | "capacity"
@@ -90,6 +91,8 @@ interface Draft {
   settingsId?: number;
   settingsName?: string;
   settingsPage?: SettingsPage;
+  /** Bracket title; prefixes each match name ("<name> R1-1") and titles the card. */
+  namePrefix?: string;
   /** Organizer blurb shown on the card + set as each match's on-chain description. */
   description?: string;
   // Open prize pool: an up-front sponsor seed (escrowed at deploy, before joins)
@@ -185,6 +188,13 @@ export async function handleAnswer(
 
   if (d.step === "settings") {
     await handleBracketSettings(api, d, chatId, t);
+    return;
+  }
+
+  if (d.step === "name") {
+    // ≤24 chars so "<name> R1-1" stays within the 31-char on-chain name limit.
+    if (!/^(skip|none|no)$/i.test(t)) d.namePrefix = t.slice(0, 24);
+    await sendDescriptionPrompt(api, d, chatId);
     return;
   }
 
@@ -469,6 +479,7 @@ export async function handleAnswer(
         chain: d.chain,
         game: d.game!,
         settingsId: d.settingsId,
+        namePrefix: d.namePrefix,
         description: d.description,
         length: d.length!,
         prize: d.prize,
@@ -558,6 +569,7 @@ interface DeployParams {
   chain: Chain;
   game: Game;
   settingsId?: number;
+  namePrefix?: string;
   description?: string;
   length: { reg: number; game: number; sub: number };
   prize?: { tokenAddress: string; amount: string; label: string };
@@ -594,7 +606,7 @@ async function deployResolved(
     chain: chain as BracketState["chain"],
     settingsId: p.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
-    namePrefix: p.game.name.slice(0, 12),
+    namePrefix: p.namePrefix ?? p.game.name.slice(0, 12),
     ...(p.description ? { description: p.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
@@ -696,7 +708,7 @@ async function deployPaidUpfront(
     chain: chain as BracketState["chain"],
     settingsId: d.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
-    namePrefix: game.name.slice(0, 12),
+    namePrefix: d.namePrefix ?? game.name.slice(0, 12),
     ...(d.description ? { description: d.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
@@ -1151,6 +1163,14 @@ function splitSuffix(tiersBps?: number[]): string {
   return ` → ${tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`;
 }
 
+async function sendNamePrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  d.step = "name";
+  await api.sendMessage(
+    chatId,
+    `🏷️ Bracket name? (titles the card + each match, e.g. "Friday Cup") Reply with text, or 'skip' to use "${d.game!.name}". /cancel to abort.`,
+  );
+}
+
 async function sendDescriptionPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
   d.step = "description";
   await api.sendMessage(
@@ -1184,7 +1204,7 @@ async function renderBracketSettings(api: TelegramApi, d: Draft, chatId: string,
     d.settingsId = 0;
     d.settingsName = "(default)";
     await api.sendMessage(chatId, "No settings registered for this game — using settings ID 0.");
-    await sendDescriptionPrompt(api, d, chatId);
+    await sendNamePrompt(api, d, chatId);
     return;
   }
   const pages = Math.max(1, Math.ceil(page.total / page.limit));
@@ -1203,7 +1223,7 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   if (lower === "skip") {
     d.settingsId = 0;
     d.settingsName = "(default)";
-    await sendDescriptionPrompt(api, d, chatId);
+    await sendNamePrompt(api, d, chatId);
     return;
   }
   if (lower === "retry") {
@@ -1240,7 +1260,7 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   const chosen = page.data[n - 1]!;
   d.settingsId = chosen.id;
   d.settingsName = chosen.name ?? `ID ${chosen.id}`;
-  await sendDescriptionPrompt(api, d, chatId);
+  await sendNamePrompt(api, d, chatId);
 }
 
 function confirmText(d: Draft): string {
@@ -1251,6 +1271,7 @@ function confirmText(d: Draft): string {
   return [
     "🧾 Confirm bracket:",
     `  • Game: ${d.game!.name}`,
+    `  • Name: ${d.namePrefix ?? d.game!.name}`,
     `  • Settings: ${d.settingsName ?? "(default)"}`,
     ...(d.description ? [`  • Description: ${d.description}`] : []),
     `  • Roster: ${roster}`,
