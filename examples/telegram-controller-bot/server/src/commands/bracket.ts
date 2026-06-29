@@ -32,7 +32,7 @@ import {
   type MatchReader,
 } from "@provable-games/budokan-sdk";
 import { createDenshokanClient } from "@provable-games/denshokan-sdk";
-import { num, RpcProvider } from "starknet";
+import { Account, num, RpcProvider } from "starknet";
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
@@ -992,6 +992,28 @@ async function updatePaidCard(api: TelegramApi, b: StoredBracket): Promise<void>
 
 // ----- advancement (poller) -----
 
+/** Anything that can sign + submit the winner-entry multicalls. */
+type Advancer = { execute: (calls: ReturnType<typeof bracketEntryCalls>) => Promise<{ transaction_hash: string }> };
+
+/**
+ * The bot-operator account, if configured: a funded Starknet account the poller
+ * uses to enter winners on their behalf, so advancement never hinges on the
+ * organizer's session. Entering is permissionless (no fund access) — the
+ * account only needs STRK for gas.
+ */
+function getOperatorAccount(config: Config, chain: Chain): Advancer | null {
+  if (!config.operatorPrivateKey || !config.operatorAddress) return null;
+  const provider = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
+  return new Account({
+    provider,
+    address: config.operatorAddress,
+    signer: config.operatorPrivateKey,
+  }) as unknown as Advancer;
+}
+
+/** Brackets we've already DM'd the organizer about (no operator + session gone). */
+const stalledNudged = new Set<string>();
+
 export async function advanceStoredBracket(
   api: TelegramApi,
   config: Config,
@@ -1001,8 +1023,27 @@ export async function advanceStoredBracket(
   // A paid bracket still gathering players isn't running yet — don't advance it.
   if (b.phase === "filling") return;
   const chain = b.state.chain as Chain;
-  const session = await resolveAccount(b.organizerChatId, chain, config);
-  if (!session.ok) return;
+
+  // Prefer the bot operator (no organizer dependency); fall back to the
+  // organizer's session if no operator is configured.
+  let advancer = getOperatorAccount(config, chain);
+  if (!advancer) {
+    const session = await resolveAccount(b.organizerChatId, chain, config);
+    if (session.ok) advancer = session.data.account as unknown as Advancer;
+  }
+  if (!advancer) {
+    if (!stalledNudged.has(b.state.id)) {
+      stalledNudged.add(b.state.id);
+      await api
+        .sendMessage(
+          b.organizerChatId,
+          `⏳ Bracket ${b.state.id} is waiting to advance — run /connect again so I can enter the round's winners (or set a bot operator account to do it automatically).`,
+        )
+        .catch(() => {});
+    }
+    return;
+  }
+  stalledNudged.delete(b.state.id);
 
   const before = bracketSummary(b.state);
   const read = buildReader(config, chain);
@@ -1015,7 +1056,7 @@ export async function advanceStoredBracket(
     if (!m.playerA || !m.playerB) continue;
     try {
       for (const player of [m.playerA, m.playerB]) {
-        await session.data.account.execute(bracketEntryCalls(state, m.id, player.address));
+        await advancer.execute(bracketEntryCalls(state, m.id, player.address));
       }
       entered.add(m.id);
     } catch (error) {
