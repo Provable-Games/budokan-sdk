@@ -40,7 +40,7 @@ import {
 
 import { gamesForChain, gameMetadataFor, fetchGameFeeBps, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
-import { fetchSettings, type GameSettingDetails } from "../catalog/settings.ts";
+import { fetchSettings, fetchSetting, formatSettingsDetails, type GameSettingDetails } from "../catalog/settings.ts";
 import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
 import { formatError } from "../format-error.ts";
 import {
@@ -404,17 +404,18 @@ async function renderSettingsPage(api: TelegramApi, state: State, chatId: string
   }
   state.settingsPage = page;
   if (page.data.length === 0) {
-    await api.sendMessage(chatId, "No settings registered for this game. Using settings ID 0.");
+    await api.sendMessage(chatId, "No custom settings for this game — using the game's built-in default.");
     state.settingsId = 0;
-    state.settingsName = "(default)";
+    state.settingsName = "Default";
     return moveToSchedule(api, state, chatId);
   }
   const lines = [
     `⚙️ Settings for ${state.game!.name} (page ${Math.floor(offset / page.limit) + 1} of ${Math.max(1, Math.ceil(page.total / page.limit))}):`,
     "",
-    ...page.data.map((s, i) => `  ${i + 1}. ID ${s.id}${s.name ? ` — ${s.name}` : ""}${s.description ? `\n     ${truncate(s.description, 80)}` : ""}`),
+    ...page.data.map((s, i) => `  ${i + 1}. ${s.name || "Unnamed"}${s.description ? `\n     ${truncate(s.description, 80)}` : ""}`),
     "",
-    "Reply with a number, or 'next' / 'prev', or 'skip' to use ID 0.",
+    "Reply a number to pick, or '<n>?' to see what it does (e.g. 1?).",
+    "'next' / 'prev' to page, 'skip' for the game default ('default?' to inspect it).",
   ];
   await api.sendMessage(chatId, lines.join("\n"));
 }
@@ -423,8 +424,18 @@ async function handleSettings(api: TelegramApi, state: State, chatId: string, in
   const lower = input.toLowerCase();
   if (lower === "skip") {
     state.settingsId = 0;
-    state.settingsName = "(default)";
+    state.settingsName = "Default";
     return moveToSchedule(api, state, chatId);
+  }
+  if (lower === "default?" || lower === "0?") {
+    const detail = await fetchSetting(state.chain, state.game!.contractAddress, 0);
+    await api.sendMessage(
+      chatId,
+      detail
+        ? `${formatSettingsDetails(detail)}\n\nReply a number to pick, or 'skip' for the default.`
+        : "ℹ️ 'Default' is the game's built-in configuration — no custom parameters. Reply a number for a custom setting, or 'skip' to use it.",
+    );
+    return;
   }
   if (lower === "retry") {
     return renderSettingsPage(api, state, chatId, state.settingsPage?.offset ?? 0);
@@ -432,6 +443,19 @@ async function handleSettings(api: TelegramApi, state: State, chatId: string, in
   const page = state.settingsPage;
   if (!page) {
     return renderSettingsPage(api, state, chatId, 0);
+  }
+  const inspectMatch = /^(\d+)\?$/.exec(input.trim());
+  if (inspectMatch) {
+    const i = Number(inspectMatch[1]);
+    if (i < 1 || i > page.data.length) {
+      await api.sendMessage(chatId, `No setting ${i} on this page. Reply 1-${page.data.length}, or 'default?'.`);
+      return;
+    }
+    await api.sendMessage(
+      chatId,
+      `${formatSettingsDetails(page.data[i - 1]!)}\n\nReply ${i} to use it, another number, or 'skip' for the default.`,
+    );
+    return;
   }
   if (lower === "next") {
     const nextOffset = page.offset + page.limit;
@@ -455,7 +479,7 @@ async function handleSettings(api: TelegramApi, state: State, chatId: string, in
   }
   const chosen = page.data[idx]!;
   state.settingsId = chosen.id;
-  state.settingsName = chosen.name ?? `ID ${chosen.id}`;
+  state.settingsName = chosen.name || "Default";
   await moveToSchedule(api, state, chatId);
 }
 

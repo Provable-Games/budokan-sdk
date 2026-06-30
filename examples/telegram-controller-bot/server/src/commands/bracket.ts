@@ -41,7 +41,13 @@ import { resolveAccount } from "../controller-account.ts";
 import { keychainSafeRpcUrl } from "../cartridge-link.ts";
 import { gamesForChain, type Game } from "../catalog/games.ts";
 import { tokensForChain, type Erc20Token } from "../catalog/tokens.ts";
-import { fetchSettings, type SettingsPage } from "../catalog/settings.ts";
+import {
+  fetchSettings,
+  fetchSetting,
+  formatSettingsDetails,
+  type SettingsPage,
+  type GameSettingDetails,
+} from "../catalog/settings.ts";
 import { formatError } from "../format-error.ts";
 import { BracketStore, type StoredBracket } from "../bracket-store.ts";
 
@@ -86,6 +92,8 @@ interface Draft {
   settingsId?: number;
   settingsName?: string;
   settingsPage?: SettingsPage;
+  /** Flat settings list for the per-round picker (numbered, no raw ids shown). */
+  settingsList?: GameSettingDetails[];
   /** Bracket title; prefixes each match name ("<name> R1-1") and titles the card. */
   namePrefix?: string;
   /** Optional per-round settings (round 1 → final); falls back to settingsId. */
@@ -257,29 +265,33 @@ export async function handleAnswer(
       return;
     }
     d.length = LENGTH_PRESETS[n - 1];
-    d.step = "roundSettings";
-    const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
-    const base = d.settingsName ?? `ID ${d.settingsId ?? 0}`;
-    await api.sendMessage(
-      chatId,
-      [
-        `⚙️ Settings per round? This bracket has ${rounds} rounds, all using "${base}".`,
-        `Reply 'skip' to keep that for every round, or give ${rounds} settings ids comma-separated (round 1 → final), e.g. ${Array.from({ length: rounds }, () => d.settingsId ?? 0).join(",")}.`,
-      ].join("\n"),
-    );
+    await sendRoundSettingsPrompt(api, d, chatId);
     return;
   }
 
   if (d.step === "roundSettings") {
     const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
-    if (!/^(skip|none|no)$/i.test(t)) {
-      const ids = t.split(/[\s,]+/).filter(Boolean).map(Number);
-      if (ids.length !== rounds || ids.some((x) => !Number.isInteger(x) || x < 0)) {
-        await api.sendMessage(chatId, `Give exactly ${rounds} settings ids (round 1 → final), comma-separated, or 'skip'.`);
-        return;
-      }
-      d.roundSettingsIds = ids;
+    const list = d.settingsList ?? [];
+    if (/^(skip|none|no)$/i.test(t)) {
+      await sendFundingPrompt(api, d, chatId);
+      return;
     }
+    const inspectMatch = /^(\d+)\?$/.exec(t.trim());
+    if (inspectMatch) {
+      const idx = Number(inspectMatch[1]);
+      if (idx >= 1 && idx <= list.length) {
+        await api.sendMessage(chatId, `${formatSettingsDetails(list[idx - 1]!)}\n\nGive ${rounds} numbers (round 1 → final), or 'skip'.`);
+      } else {
+        await api.sendMessage(chatId, `No setting ${idx}. Reply 1–${list.length}.`);
+      }
+      return;
+    }
+    const picks = t.split(/[\s,]+/).filter(Boolean).map(Number);
+    if (picks.length !== rounds || picks.some((x) => !Number.isInteger(x) || x < 1 || x > list.length)) {
+      await api.sendMessage(chatId, `Give exactly ${rounds} numbers (1–${list.length}, round 1 → final), comma-separated, or 'skip'.`);
+      return;
+    }
+    d.roundSettingsIds = picks.map((p) => list[p - 1]!.id);
     await sendFundingPrompt(api, d, chatId);
     return;
   }
@@ -1243,8 +1255,8 @@ async function renderBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   d.settingsPage = page;
   if (page.data.length === 0) {
     d.settingsId = 0;
-    d.settingsName = "(default)";
-    await api.sendMessage(chatId, "No settings registered for this game — using settings ID 0.");
+    d.settingsName = "Default";
+    await api.sendMessage(chatId, "No custom settings for this game — using the game's built-in default.");
     await sendNamePrompt(api, d, chatId);
     return;
   }
@@ -1252,10 +1264,16 @@ async function renderBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   const lines = [
     `⚙️ Settings for ${d.game!.name} (page ${Math.floor(offset / page.limit) + 1} of ${pages}):`,
     "",
-    ...page.data.map((s, i) => `  ${i + 1}. ID ${s.id}${s.name ? ` — ${s.name}` : ""}`),
-    "",
-    "Reply with a number, 'next' / 'prev', or 'skip' for ID 0. /cancel to abort.",
   ];
+  page.data.forEach((s, i) => {
+    lines.push(`  ${i + 1}. ${s.name || "Unnamed"}`);
+    if (s.description) lines.push(`     ${truncate(s.description, 88)}`);
+  });
+  lines.push(
+    "",
+    "Reply a number to pick, or '<n>?' to see what it does (e.g. 1?).",
+    "'next' / 'prev' to page, 'skip' for the game default ('default?' to inspect it). /cancel to abort.",
+  );
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
@@ -1263,8 +1281,13 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   const lower = input.toLowerCase();
   if (lower === "skip") {
     d.settingsId = 0;
-    d.settingsName = "(default)";
+    d.settingsName = "Default";
     await sendNamePrompt(api, d, chatId);
+    return;
+  }
+  // Inspect the game default ("default?" / "0?") — show what it actually does.
+  if (lower === "default?" || lower === "0?") {
+    await inspectSetting(api, d, chatId, 0);
     return;
   }
   if (lower === "retry") {
@@ -1274,6 +1297,20 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   const page = d.settingsPage;
   if (!page) {
     await renderBracketSettings(api, d, chatId, 0);
+    return;
+  }
+  // Inspect a listed setting: "<n>?" → show its description + parameters.
+  const inspectMatch = /^(\d+)\?$/.exec(input.trim());
+  if (inspectMatch) {
+    const idx = Number(inspectMatch[1]);
+    if (idx < 1 || idx > page.data.length) {
+      await api.sendMessage(chatId, `No setting ${idx} on this page. Reply 1–${page.data.length}, or 'default?'.`);
+      return;
+    }
+    await api.sendMessage(
+      chatId,
+      `${formatSettingsDetails(page.data[idx - 1]!)}\n\nReply ${idx} to use it, another number, or 'skip' for the default.`,
+    );
     return;
   }
   if (lower === "next") {
@@ -1300,8 +1337,60 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   }
   const chosen = page.data[n - 1]!;
   d.settingsId = chosen.id;
-  d.settingsName = chosen.name ?? `ID ${chosen.id}`;
+  d.settingsName = chosen.name || "Default";
   await sendNamePrompt(api, d, chatId);
+}
+
+/**
+ * Per-round settings prompt. Offers the game's settings by name (numbered, no
+ * raw ids), one pick per round. Skipped automatically when there's nothing to
+ * vary (0–1 settings available).
+ */
+async function sendRoundSettingsPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
+  const base = d.settingsName || "Default";
+  let list: GameSettingDetails[] = [];
+  try {
+    list = (await fetchSettings(d.chain, d.game!.contractAddress, { limit: 25 })).data;
+  } catch {
+    // settings unavailable — just use the chosen one throughout
+  }
+  d.settingsList = list;
+  if (list.length < 2) {
+    await sendFundingPrompt(api, d, chatId);
+    return;
+  }
+  d.step = "roundSettings";
+  const example = Array.from({ length: rounds }, (_, i) => Math.min(i + 1, list.length)).join(",");
+  const lines = [
+    `⚙️ Different settings per round? This bracket has ${rounds} rounds, all using "${base}" by default.`,
+    "",
+    ...list.map((s, i) => `  ${i + 1}. ${s.name || "Unnamed"}`),
+    "",
+    `Reply 'skip' to use "${base}" every round, or give ${rounds} numbers (round 1 → final), e.g. ${example}.`,
+    "'<n>?' to see what a setting does.",
+  ];
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+/** Show a settings entry's details (incl. id 0 = the game default). */
+async function inspectSetting(api: TelegramApi, d: Draft, chatId: string, id: number): Promise<void> {
+  const detail = await fetchSetting(d.chain, d.game!.contractAddress, id);
+  if (!detail) {
+    await api.sendMessage(
+      chatId,
+      id === 0
+        ? "ℹ️ 'Default' is the game's built-in configuration — it has no custom parameters recorded. Pick a number for a custom setting, or 'skip' to use it."
+        : `Couldn't load settings #${id}.`,
+    );
+    return;
+  }
+  await api.sendMessage(chatId, `${formatSettingsDetails(detail)}\n\nReply a number to pick, or 'skip' for the default.`);
+}
+
+/** Truncate long text for one-line previews. */
+function truncate(s: string, max: number): string {
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 function confirmText(d: Draft): string {
@@ -1313,7 +1402,13 @@ function confirmText(d: Draft): string {
     "🧾 Confirm bracket:",
     `  • Game: ${d.game!.name}`,
     `  • Name: ${d.namePrefix ?? d.game!.name}`,
-    `  • Settings: ${d.settingsName ?? "(default)"}${d.roundSettingsIds ? ` (per round: ${d.roundSettingsIds.join(", ")})` : ""}`,
+    `  • Settings: ${d.settingsName ?? "Default"}${
+      d.roundSettingsIds
+        ? ` (per round: ${d.roundSettingsIds
+            .map((id) => d.settingsList?.find((s) => s.id === id)?.name || "Default")
+            .join(" → ")})`
+        : ""
+    }`,
     ...(d.description ? [`  • Description: ${d.description}`] : []),
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
