@@ -45,6 +45,7 @@ interface TelegramCallbackQuery {
 interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  channel_post?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
 }
 
@@ -93,7 +94,7 @@ export class TelegramBot {
       try {
         const updates = await this.api.call<TelegramUpdate[]>(
           "getUpdates",
-          { timeout: 50, offset, allowed_updates: ["message", "callback_query"] },
+          { timeout: 50, offset, allowed_updates: ["message", "channel_post", "callback_query"] },
           { signal: this.abort.signal },
         );
         for (const update of updates) {
@@ -104,6 +105,10 @@ export class TelegramBot {
               this.api
                 .sendMessage(String(update.message!.chat.id), `Sorry, that command failed: ${formatError(error)}`)
                 .catch((err) => console.error("Failed to notify user of error:", formatError(err)));
+            });
+          } else if (update.channel_post?.text) {
+            await this.handleChannelPost(update.channel_post).catch((error) => {
+              console.error("Channel post handler failed:", formatError(error));
             });
           } else if (update.callback_query) {
             await this.handleCallback(update.callback_query).catch((error) => {
@@ -403,6 +408,20 @@ export class TelegramBot {
    * The dispatched command prompts /connect when there's no session yet, so an
    * unconnected first-timer lands on a clear next step rather than a dead end.
    */
+  /**
+   * Posts in a broadcast channel arrive as `channel_post` (the bot must be an
+   * admin to receive them). Only `/channel` is actionable here — it registers
+   * this channel as the announce target so bracket/tournament cards post here.
+   * Everything else needs a DM session and is ignored.
+   */
+  private async handleChannelPost(post: TelegramMessage): Promise<void> {
+    const text = (post.text ?? "").trim();
+    const cmd = text.split(/\s+/)[0]?.split("@")[0]?.toLowerCase();
+    if (cmd === "/channel") {
+      await bracketCmd.setAnnounceChannel(this.api, this.brackets, String(post.chat.id));
+    }
+  }
+
   /**
    * Inline-button taps. Currently only the /tournaments list "Enter" buttons,
    * whose callback_data is `enter:<id>`. We ack the tap (stop the spinner) then
