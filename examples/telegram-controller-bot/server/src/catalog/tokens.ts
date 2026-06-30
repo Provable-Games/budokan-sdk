@@ -27,16 +27,24 @@ export interface Erc20Token {
   spendLimit?: string;
 };
 
-// Session spend caps are sized to ~$10/token — enough for entry fees, which is
-// all the session does in-bot. Larger prize funding is done on budokan.gg, not
-// in-session. Stablecoins are exact $10; the volatile tokens (STRK/ETH/LORDS)
-// are rough $10 approximations at current prices — tune as prices move.
+// Session spend caps are ~$10/token — enough for entry fees, which is all the
+// session does in-bot (larger prize funding is deferred to budokan.gg). The cap
+// must be STABLE: it's signed into the session at /connect, and the same value
+// is re-derived to validate every later action — a live, per-call price would
+// drift and trip a policy mismatch (forcing a needless re-connect/register).
+// So these are STATIC $10-equivalents, sized from Ekubo quoter "$10 → token"
+// quotes (prod-api-quoter.ekubo.org) with a little headroom; refresh them
+// periodically as prices move rather than computing per request.
+//
+// Token metadata: standard tokens mirror Ekubo's MAINNET_TOKENS; SURVIVOR/CASH
+// (not in Ekubo's list) come from the Provable Games registry
+// (presets/src/generated/erc20-metadata.ts).
 const STRK: Erc20Token = {
   address: "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
   symbol: "STRK",
   name: "Starknet Token",
   decimals: 18,
-  spendLimit: "50000000000000000000", // ~50 STRK (≈$10)
+  spendLimit: "350000000000000000000", // ~350 STRK (≈$10 @ Ekubo)
 };
 
 const ETH: Erc20Token = {
@@ -44,7 +52,7 @@ const ETH: Erc20Token = {
   symbol: "ETH",
   name: "Ether",
   decimals: 18,
-  spendLimit: "3000000000000000", // 0.003 ETH (≈$10)
+  spendLimit: "6700000000000000", // ~0.0067 ETH (≈$10 @ Ekubo)
 };
 
 const USDC: Erc20Token = {
@@ -55,31 +63,31 @@ const USDC: Erc20Token = {
   spendLimit: "10000000", // 10 USDC
 };
 
-const USDT: Erc20Token = {
-  address: "0x068f5c6a61780768455de69077e07e89787839bf8166decfbf92b645209c0fb8",
-  symbol: "USDT",
-  name: "Tether",
-  decimals: 6,
-  spendLimit: "10000000", // 10 USDT
-};
-
 const LORDS: Erc20Token = {
   address: "0x0124aeb495b947201f5fac96fd1138e326ad86195b98df6dec9009158a533b49",
   symbol: "LORDS",
   name: "Lords",
   decimals: 18,
-  spendLimit: "150000000000000000000", // ~150 LORDS (≈$10)
+  spendLimit: "3300000000000000000000", // ~3300 LORDS (≈$10 @ Ekubo)
 };
 
-const DAI: Erc20Token = {
-  address: "0x05574eb6b8789a91466f902c380d978e472db68170ff82a5b650b95a58ddf4ad",
-  symbol: "DAI",
-  name: "Dai Stablecoin",
+const SURVIVOR: Erc20Token = {
+  address: "0x042dd777885ad2c116be96d4d634abc90a26a790ffb5871e037dd5ae7d2ec86b",
+  symbol: "SURVIVOR",
+  name: "Survivor",
   decimals: 18,
-  spendLimit: "10000000000000000000", // 10 DAI
+  spendLimit: "200000000000000000000", // ~200 SURVIVOR (≈$10 @ Ekubo)
 };
 
-const MAINNET_TOKENS: readonly Erc20Token[] = [STRK, ETH, USDC, LORDS, USDT, DAI];
+const CASH: Erc20Token = {
+  address: "0x0498edfaf50ca5855666a700c25dd629d577eb9afccdf3b5977aec79aee55ada",
+  symbol: "CASH",
+  name: "Cash",
+  decimals: 18,
+  spendLimit: "11000000000000000000", // ~11 CASH (≈$10 @ Ekubo)
+};
+
+const MAINNET_TOKENS: readonly Erc20Token[] = [STRK, ETH, USDC, LORDS, SURVIVOR, CASH];
 
 // Sepolia uses the same canonical addresses for the headline tokens — most
 // dapps don't issue separate sepolia ERC-20s.
