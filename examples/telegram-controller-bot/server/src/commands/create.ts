@@ -246,7 +246,9 @@ function gamePickerKeyboard(
   games: Game[],
 ): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } {
   return {
-    inline_keyboard: games.map((g, i) => [{ text: `🎮 ${g.name}`, callback_data: `cg:${i}` }]),
+    inline_keyboard: games.map((g, i) => [
+      { text: `${g.emoji ?? "🎮"} ${g.name}`, callback_data: `cg:${i}` },
+    ]),
   };
 }
 

@@ -87,6 +87,8 @@ const METADATA: Record<string, GameMetadata> = {
 export interface Game {
   contractAddress: string;
   name: string;
+  /** Per-game display emoji for compact pickers/listings (e.g. 🧌, 🧱). */
+  emoji?: string;
   description?: string;
   imageUrl?: string;
   /** Game homepage / client URL from the denshokan registry, when present. */
@@ -101,8 +103,23 @@ export interface Game {
 /** Friendly display fields for a game — name plus optional thumbnail/link. */
 export interface GameInfo {
   name: string;
+  emoji?: string;
   imageUrl?: string;
   clientUrl?: string;
+}
+
+/**
+ * Per-game display emoji for compact pickers/listings. Matched by name
+ * (case-insensitive substring) so it survives the registry's name variants
+ * ("Death Mountain" / "Super Death Mountain") and a game's multiple contract
+ * addresses across versions and chains. Call sites fall back to 🎮 when
+ * undefined.
+ */
+export function gameEmoji(name: string): string | undefined {
+  const n = name.toLowerCase();
+  if (n.includes("death mountain")) return "🧌";
+  if (n.includes("zkube")) return "🧱";
+  return undefined;
 }
 
 const clients = new Map<Chain, DenshokanClient>();
@@ -139,6 +156,7 @@ export async function gamesForChain(chain: Chain): Promise<Game[]> {
     games.push({
       contractAddress: g.contractAddress,
       name: g.name,
+      emoji: gameEmoji(g.name),
       description: g.description,
       imageUrl: g.imageUrl,
       clientUrl: g.clientUrl,
@@ -162,6 +180,7 @@ export async function gameInfoMap(chain: Chain): Promise<Map<string, GameInfo>> 
   for (const g of games) {
     map.set(g.contractAddress.toLowerCase(), {
       name: g.name,
+      emoji: g.emoji,
       imageUrl: g.imageUrl,
       clientUrl: g.clientUrl,
     });
