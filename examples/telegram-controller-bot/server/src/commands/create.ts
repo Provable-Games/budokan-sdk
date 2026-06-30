@@ -38,6 +38,7 @@ import {
   tournamentPageUrl,
 } from "@provable-games/budokan-sdk";
 
+import * as bracketCmd from "./bracket.ts";
 import { gamesForChain, gameMetadataFor, fetchGameFeeBps, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, fetchSetting, formatSettingsDetails, type GameSettingDetails } from "../catalog/settings.ts";
@@ -55,6 +56,7 @@ import {
 } from "../extensions.ts";
 
 type Step =
+  | "format"
   | "game"
   | "name"
   | "description"
@@ -241,9 +243,42 @@ export function cancel(chatId: string): boolean {
 }
 
 export async function start(api: TelegramApi, chatId: string, chain: Chain): Promise<void> {
+  // Format choice: single tournament (this flow) or a 1v1 bracket (the bracket
+  // flow). /bracket is folded in here so there's one create entry point.
+  states.set(chatId, { step: "format", chain, prizesSoFar: [], gamesList: [] });
+  await api.sendMessage(chatId, [
+    `🏟️ Create on ${chain} — what do you want to run? /cancel to abort.`,
+    "",
+    "  1. 🎯 Single tournament",
+    "  2. 🥊 1v1 bracket (single-elimination)",
+    "",
+    "Reply 1 or 2.",
+  ].join("\n"));
+}
+
+async function handleFormat(
+  api: TelegramApi,
+  config: Config,
+  state: State,
+  chatId: string,
+  text: string,
+): Promise<void> {
+  if (text === "1" || /^single/i.test(text)) {
+    return moveToGame(api, state, chatId);
+  }
+  if (text === "2" || /^brack/i.test(text)) {
+    // Hand off to the bracket flow (its own state machine takes over).
+    states.delete(chatId);
+    return bracketCmd.start(api, config, chatId, state.chain);
+  }
+  await api.sendMessage(chatId, "Reply 1 for a single tournament, or 2 for a 1v1 bracket.");
+}
+
+/** Load the game registry and show the picker (single-tournament path). */
+async function moveToGame(api: TelegramApi, state: State, chatId: string): Promise<void> {
   let games: Game[];
   try {
-    games = await gamesForChain(chain);
+    games = await gamesForChain(state.chain);
   } catch (error) {
     await api.sendMessage(chatId, `Couldn't load the game registry: ${formatError(error)}`);
     return;
@@ -251,14 +286,13 @@ export async function start(api: TelegramApi, chatId: string, chain: Chain): Pro
   if (games.length === 0) {
     await api.sendMessage(
       chatId,
-      `No games registered on ${chain}. They may still be propagating; try again in a minute.`,
+      `No games registered on ${state.chain}. They may still be propagating; try again in a minute.`,
     );
     return;
   }
-  states.set(chatId, { step: "game", chain, prizesSoFar: [], gamesList: games });
+  state.gamesList = games;
+  state.step = "game";
   await api.sendMessage(chatId, [
-    `🏟️ Let's create a tournament on ${chain}. /cancel to abort.`,
-    "",
     "🎮 Pick a game:",
     ...games.map((g, i) => `  ${i + 1}. ${g.name} — ${shortHex(g.contractAddress)}`),
     "",
@@ -277,6 +311,8 @@ export async function handleAnswer(
   const trimmed = text.trim();
 
   switch (state.step) {
+    case "format":
+      return handleFormat(api, config, state, chatId, trimmed);
     case "game":
       return handleGame(api, state, chatId, trimmed);
     case "name":

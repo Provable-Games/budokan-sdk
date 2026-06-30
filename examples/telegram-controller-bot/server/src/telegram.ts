@@ -225,26 +225,28 @@ export class TelegramBot {
         if (!id) return this.api.sendMessage(chatId, "Usage: /bracket_view <id>");
         return bracketCmd.view(this.api, this.brackets, chatId, id);
       }
-      case "/bracket_join":
-      case "/bracketjoin":
-      case "/join": {
+      case "/join":
+      case "/bracket_join": // legacy alias
+      case "/bracketjoin": {
         const id = args[0];
-        if (!id) return this.api.sendMessage(chatId, "Usage: /bracket_join <id>");
+        if (!id) return this.api.sendMessage(chatId, "Usage: /join <id>");
         const chain = await this.chatStates.getChain(chatId);
         return bracketCmd.join(this.api, this.config, this.brackets, chatId, chain, id);
       }
-      case "/bracket_sponsor":
+      case "/sponsor":
+      case "/bracket_sponsor": // legacy alias
       case "/bracketsponsor": {
         const id = args[0];
         const target = args[1];
         if (!id || !target) {
-          return this.api.sendMessage(chatId, "Usage: /bracket_sponsor <id> <address or Cartridge username>");
+          return this.api.sendMessage(chatId, "Usage: /sponsor <id> <address or Cartridge username>");
         }
         return bracketCmd.sponsorPaid(this.api, this.config, this.brackets, chatId, id, target);
       }
-      case "/bracket_channel":
+      case "/channel":
+      case "/bracket_channel": // legacy alias
       case "/bracketchannel":
-        // Run in the target group to make bracket cards post there.
+        // Run in the target group to make cards post there.
         return bracketCmd.setAnnounceChannel(this.api, this.brackets, chatId);
       case "/enter": {
         const chain = await this.chatStates.getChain(chatId);
@@ -262,8 +264,17 @@ export class TelegramBot {
       }
       case "/chain":
         return this.chain(chatId, args);
-      case "/tournaments":
+      case "/tournaments": {
+        const chain = await this.chatStates.getChain(chatId);
+        // /tournaments <bracketId> → view that bracket's tree (folds in /bracket_view).
+        if (args[0]) {
+          const b = await this.brackets.get(args[0]).catch(() => null);
+          if (b) return bracketCmd.view(this.api, this.brackets, chatId, args[0]!);
+        }
+        // Brackets section (folds in /brackets), then the tournament list.
+        await bracketCmd.list(this.api, this.brackets, chatId, chain, true);
         return listCmds.tournaments(this.api, this.config, this.chatStates, chatId, args);
+      }
       case "/my_tournaments":
       case "/my-tournaments":
       case "/mytournaments":
@@ -481,25 +492,23 @@ export class TelegramBot {
         `  /chain [${SUPPORTED_CHAINS.join("|")}] — show or switch your active chain`,
         "",
         "Browse:",
-        "  /tournaments [phase] [page] — list tournaments on this chain",
+        "  /tournaments [phase] [page] — list tournaments + brackets on this chain. /tournaments <bracketId> shows a bracket's tree.",
         "  /my_tournaments [page] — list tournaments you've entered",
         "  /leaderboard [tournamentId] [page] — show a tournament's scores ranking (no id → picker)",
         "",
         "Signed actions (require /connect first):",
-        "  /create — multi-turn flow to create a tournament",
+        "  /create — create a single tournament OR a 1v1 single-elim bracket (it asks which first). Brackets: closed (paste players) or open (people join till full); players can be 0x addresses or Cartridge usernames.",
         "  /enter [tournamentId] — enter a tournament (no id → picker; paid entries use your session spending limit, or fall back to a budokan.gg link)",
+        "  /join <id> — join an open bracket (after /connect)",
+        "  /sponsor <id> <address|username> — pay/sponsor another player's bracket entry",
         "  /submit_score [tournamentId] — submit your scores to the leaderboard (no id → pick from your entries; then submit one or all)",
         "  /claim [tournamentId] — see the prizes up for grabs, then claim your rewards ('mine') or pay out everyone ('all'). No id → pick from your entries.",
         "    Power-user: /claim <tournamentId> <kind> — prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
         "  /distribute <tournamentId> — pay out every unclaimed reward to all winners (permissionless; same as /claim → 'all')",
-        "  /add_prize [tournamentId] — sponsor an ERC-20 prize (no id → picker; signs in chat within your spending limit, else a budokan.gg link)",
+        "  /add_prize [tournamentId] — add a prize pool (opens budokan.gg)",
         "",
-        "Brackets (1v1 single-elim, gated):",
-        "  /bracket — create a bracket: closed (paste players) or open (people join till full). Players can be 0x addresses or Cartridge usernames.",
-        "  /bracket_join <id> — join an open bracket (after /connect)",
-        "  /bracket_sponsor <id> <address|username> — pay/sponsor another player's entry",
-        "  /bracket_channel — run in a public group to post bracket cards + updates there (no env var needed)",
-        "  /brackets — list brackets; /bracket_view <id> — show the tree",
+        "Groups/channels:",
+        "  /channel — run in a public group to post bracket/tournament cards + updates there",
         "",
         "  /cancel — abort an in-flight multi-turn flow",
         "  /back — during /create, edit the current (or last) section. At the confirmation, 'edit N' jumps to section N.",
@@ -644,20 +653,18 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "disconnect", description: "Clear your stored session" },
   { command: "whoami", description: "Show the connected account" },
   { command: "chain", description: "Show or switch your active chain" },
-  { command: "tournaments", description: "List tournaments on this chain" },
+  { command: "tournaments", description: "List tournaments & brackets on this chain" },
   { command: "my_tournaments", description: "List tournaments you've entered" },
   { command: "leaderboard", description: "Show a tournament's scores ranking" },
-  { command: "create", description: "Multi-turn flow to create a tournament" },
+  { command: "create", description: "Create a tournament or a 1v1 bracket" },
   { command: "enter", description: "Enter a tournament" },
+  { command: "join", description: "Join an open bracket: /join <id>" },
   { command: "submit_score", description: "Submit your scores to the leaderboard (one or all)" },
   { command: "claim", description: "Claim the rewards your wallet is owed" },
+  { command: "sponsor", description: "Pay a player's bracket entry: /sponsor <id> <addr>" },
+  { command: "channel", description: "Run in a group to post cards there" },
   { command: "distribute", description: "Pay out every unclaimed reward to all winners (permissionless)" },
-  { command: "bracket", description: "Create a 1v1 single-elim bracket (organizer)" },
-  { command: "brackets", description: "List brackets on this chain" },
-  { command: "bracket_join", description: "Join an open bracket: /bracket_join <id>" },
-  { command: "bracket_sponsor", description: "Pay a player's paid-bracket entry: /bracket_sponsor <id> <addr>" },
-  { command: "bracket_channel", description: "Run in a group to post bracket cards there" },
-  { command: "add_prize", description: "Sponsor a prize for a tournament" },
+  { command: "add_prize", description: "Add a prize pool (opens budokan.gg)" },
   { command: "back", description: "Go back / edit the current section in /create" },
   { command: "cancel", description: "Abort the current multi-turn flow" },
 ];
