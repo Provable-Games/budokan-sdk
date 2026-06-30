@@ -924,11 +924,15 @@ async function notifyBracket(
 
     if (m.status === "live") {
       const url = tournamentPageUrl(chain, m.tournamentId);
+      // Keys are per-player: both competitors must be DM'd, so the dedup key
+      // can't be shared across them.
       for (const p of realPlayers) {
-        await dm(p.address, `${m.id}:live`, `▶️ ${name}: your round ${m.round} match is live — play now:\n${url}`);
+        await dm(p.address, `${m.id}:${p.address.toLowerCase()}:live`, `▶️ ${name}: your round ${m.round} match is live — play now:\n${url}`);
       }
       // Game window closed but the match isn't resolved → scores need submitting.
-      if (!sent.has(`${m.id}:submit`)) {
+      // Only pay for the timing read if someone still needs the submit prompt.
+      const needsSubmit = realPlayers.some((p) => !sent.has(`${m.id}:${p.address.toLowerCase()}:submit`));
+      if (needsSubmit) {
         try {
           const t = await getClient().getTournament(m.tournamentId);
           const end = Number(t?.gameEndTime ?? 0);
@@ -936,7 +940,7 @@ async function notifyBracket(
             for (const p of realPlayers) {
               await dm(
                 p.address,
-                `${m.id}:submit`,
+                `${m.id}:${p.address.toLowerCase()}:submit`,
                 `📥 ${name}: round ${m.round} is over — submit the scores so the winner is recorded (anyone can do it once, for both players):\n/submit_score ${m.tournamentId}  → then reply "all"`,
               );
             }
