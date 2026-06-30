@@ -538,15 +538,41 @@ export class TelegramBot {
 
   private async connect(chatId: string): Promise<void> {
     const chain = await this.chatStates.getChain(chatId);
-    const existing = await this.sessions.get(chatId, chain);
-    if (existing) {
+
+    // Reuse an existing session when it's still valid AND covers the current
+    // policies — re-authorizing mints a new session (another register_session
+    // gas tx), so only do it when necessary. resolveAccount distinguishes a
+    // valid session from expired / policy-mismatch / none.
+    const status = await resolveAccount(chatId, chain, this.config);
+    if (status.ok) {
+      const stored = await this.sessions.get(chatId, chain);
+      const until = stored
+        ? ` Valid until ${new Date(Number(stored.session.expiresAt) * 1000)
+            .toISOString()
+            .slice(0, 16)
+            .replace("T", " ")} UTC.`
+        : "";
       await this.api.sendMessage(
         chatId,
-        `Already connected on ${chain} as ${existing.session.username}. Use /disconnect first to start over, or /chain to switch.`,
+        [
+          `✅ Already connected on ${chain} as ${status.data.username} — your session still covers the current policies, so there's nothing to do (no new gas tx).${until}`,
+          "",
+          "Use /disconnect only to switch account or force a fresh session.",
+        ].join("\n"),
       );
       return;
     }
+    if (status.reason === "policy_mismatch") {
+      // In-time session, but authorized for a narrower policy set than we now
+      // require (e.g. the contract/token list changed) — must re-authorize.
+      await this.sessions.delete(chatId, chain).catch(() => {});
+      await this.api.sendMessage(
+        chatId,
+        `Your existing session on ${chain} doesn't cover the current policies (they've changed since you connected). Re-authorizing once below — future /connect calls will reuse it.`,
+      );
+    }
 
+    // no_session | expired | policy_mismatch → mint a fresh session.
     // Slot-pattern auth: bot mints the session keypair, sends the user to
     // Cartridge's keychain page, and Cartridge redirects back to a callback
     // URL on our server with the auth result encoded as ?startapp=<base64>.
