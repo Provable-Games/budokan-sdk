@@ -99,6 +99,15 @@ export class TelegramBot {
         );
         for (const update of updates) {
           offset = update.update_id + 1;
+          // Diagnostic: log every incoming message/channel_post so we can see
+          // whether group/channel commands (e.g. /channel) actually reach the bot.
+          const dbg = update.message ?? update.channel_post;
+          if (dbg) {
+            const chat = dbg.chat as { id: number; type?: string };
+            console.log(
+              `[update] ${update.message ? "message" : "channel_post"} chat=${chat.id} type=${chat.type ?? "?"} text=${JSON.stringify((dbg.text ?? "").slice(0, 50))}`,
+            );
+          }
           if (update.message?.text) {
             await this.handleMessage(update.message).catch((error) => {
               console.error("Command handler failed:", formatError(error));
