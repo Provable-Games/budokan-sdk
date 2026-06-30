@@ -39,6 +39,7 @@ import {
 } from "@provable-games/budokan-sdk";
 
 import * as bracketCmd from "./bracket.ts";
+import { readAnnounceChannel } from "../bracket-store.ts";
 import { gamesForChain, gameMetadataFor, fetchGameFeeBps, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, fetchSetting, formatSettingsDetails, type GameSettingDetails } from "../catalog/settings.ts";
@@ -1560,6 +1561,36 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
       `📊 /leaderboard ${tournamentId}`,
     ].join("\n"),
   );
+
+  // Post a card to the public announce channel (set via /channel), same target
+  // brackets use. Members tap Enter to play (routed to their DM session).
+  const announce = await readAnnounceChannel(config.dataDir);
+  if (announce && announce !== chatId) {
+    const startDelay = sched.regStart + sched.regDuration + sched.staging;
+    const startsAt = new Date(Date.now() + startDelay * 1000).toISOString().slice(0, 16).replace("T", " ");
+    const page = tournamentPageUrl(state.chain, tournamentId);
+    await api
+      .sendMessage(
+        announce,
+        [
+          `🏟️ New tournament: ${state.name}`,
+          `🎮 ${state.game!.name}`,
+          `🗓️ Starts ~${startsAt} UTC`,
+          `🔗 ${page}`,
+        ].join("\n"),
+        {
+          replyMarkup: {
+            inline_keyboard: [
+              [
+                { text: "▶ Enter", callback_data: `enter:${tournamentId}` },
+                { text: "budokan.gg", url: page },
+              ],
+            ],
+          },
+        },
+      )
+      .catch(() => {});
+  }
 }
 
 /**

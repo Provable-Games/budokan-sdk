@@ -126,12 +126,21 @@ export class BracketStore {
   }
 
   async getAnnounceChannel(): Promise<string | null> {
-    const file = this.announceFile();
-    if (!existsSync(file)) return null;
-    try {
-      return (JSON.parse(await readFile(file, "utf8")) as { chatId?: string }).chatId ?? null;
-    } catch {
-      return null;
-    }
+    return readAnnounceChannel(this.rootDir);
+  }
+}
+
+/**
+ * Read the announce channel (set via /channel) without a BracketStore instance —
+ * so other flows (e.g. /create posting a tournament card) can target the same
+ * channel. `dataDir` is the bot's data root (the store's rootDir).
+ */
+export async function readAnnounceChannel(dataDir: string): Promise<string | null> {
+  const file = join(dataDir, "brackets", "announce-channel.json");
+  if (!existsSync(file)) return null;
+  try {
+    return (JSON.parse(await readFile(file, "utf8")) as { chatId?: string }).chatId ?? null;
+  } catch {
+    return null;
   }
 }
