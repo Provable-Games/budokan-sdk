@@ -58,10 +58,21 @@ type Player = { address: string; name?: string };
 // MIN_TOURNAMENT_LENGTH, MIN_SUBMISSION_PERIOD = 3600s), so every preset must
 // keep reg/game/sub ≥ 3600 or create_tournament reverts in schedule validation.
 const LENGTH_PRESETS = [
-  { label: "Quick — 1h sign-up, 1h matches", reg: 3600, game: 3600, sub: 3600 },
-  { label: "Standard — 1h sign-up, 6h matches", reg: 3600, game: 21600, sub: 3600 },
-  { label: "Daily — 6h sign-up, 24h matches", reg: 21600, game: 86400, sub: 21600 },
+  { label: "Quick — 1h matches, 1h to submit", reg: 3600, game: 3600, sub: 3600 },
+  { label: "Standard — 6h matches, 1h to submit", reg: 3600, game: 21600, sub: 3600 },
+  { label: "Daily — 24h matches, 6h to submit", reg: 21600, game: 86400, sub: 21600 },
 ] as const;
+
+// When round 1 begins, measured from deploy — also the sign-up window (players
+// can join/enter until then). Budokan's MIN_REGISTRATION_PERIOD is 1h, the floor.
+const START_PRESETS = [
+  { label: "In 1 hour (soonest)", sec: 3600 },
+  { label: "In 3 hours", sec: 10800 },
+  { label: "In 6 hours", sec: 21600 },
+  { label: "In 12 hours", sec: 43200 },
+  { label: "In 24 hours", sec: 86400 },
+] as const;
+const MIN_START_SEC = 3600;
 
 const MODES = [
   { key: "closed", label: "Closed — I'll paste all players now" },
@@ -80,6 +91,7 @@ interface Draft {
     | "capacity"
     | "players"
     | "length"
+    | "start"
     | "roundSettings"
     | "feeToken"
     | "feeAmount"
@@ -104,6 +116,8 @@ interface Draft {
   capacity?: number;
   players?: Player[]; // closed: everyone; open: [] (all join)
   length?: (typeof LENGTH_PRESETS)[number];
+  /** Seconds from deploy until round 1 starts (= the sign-up window). ≥ 1h. */
+  startDelaySec?: number;
   // Open mode only: players pay this entry fee on join (≤ the ~$10 session cap);
   // it escrows into placement prizes per tiersBps. Collected over the
   // feeToken → feeAmount → feeSplit sub-flow. Larger/organizer prizes are added
@@ -265,6 +279,20 @@ export async function handleAnswer(
       return;
     }
     d.length = LENGTH_PRESETS[n - 1];
+    await sendStartPrompt(api, d, chatId);
+    return;
+  }
+
+  if (d.step === "start") {
+    const delay = parseStartDelay(t);
+    if (delay === null) {
+      await api.sendMessage(
+        chatId,
+        `Reply 1–${START_PRESETS.length}, or a custom time like "in 2 days", "in 90 minutes", or "2026-07-05 18:00" (UTC). Minimum 1 hour out.`,
+      );
+      return;
+    }
+    d.startDelaySec = delay;
     await sendRoundSettingsPrompt(api, d, chatId);
     return;
   }
@@ -392,6 +420,7 @@ export async function handleAnswer(
         namePrefix: d.namePrefix,
         description: d.description,
         length: d.length!,
+        startDelaySec: d.startDelaySec!,
         players: d.players!,
       });
       return;
@@ -481,6 +510,7 @@ interface DeployParams {
   namePrefix?: string;
   description?: string;
   length: { reg: number; game: number; sub: number };
+  startDelaySec: number;
   players: Player[];
 }
 
@@ -518,8 +548,8 @@ async function deployResolved(
     ...(p.description ? { description: p.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
-      registrationEndDelay: p.length.reg,
-      gameStartDelay: p.length.reg,
+      registrationEndDelay: p.startDelaySec,
+      gameStartDelay: p.startDelaySec,
       gameEndDelay: p.length.game,
       submissionDuration: p.length.sub,
     },
@@ -561,7 +591,7 @@ async function deployResolved(
   }
 
   await store.save({ state, organizerChatId, announceChatId });
-  await api.sendMessage(organizerChatId, `✅ Bracket ${id} deployed. Round 1 is live and players are entered.\n\n${addPrizeHint(state)}`);
+  await api.sendMessage(organizerChatId, `✅ Bracket ${id} deployed, players entered. Round 1 starts ${startSummary(p.startDelaySec)}.\n\n${addPrizeHint(state)}`);
   await announceTo(api, announceChatId, `🥊 The bracket is on!\n\n${presentation({ state, organizerChatId, announceChatId })}`);
   return true;
 }
@@ -611,8 +641,8 @@ async function deployPaidUpfront(
     ...(d.description ? { description: d.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
-      registrationEndDelay: d.length!.reg,
-      gameStartDelay: d.length!.reg,
+      registrationEndDelay: d.startDelaySec!,
+      gameStartDelay: d.startDelaySec!,
       gameEndDelay: d.length!.game,
       submissionDuration: d.length!.sub,
     },
@@ -672,7 +702,7 @@ async function deployPaidUpfront(
     : `Players tap Join to enter (free).`;
   await api.sendMessage(
     organizerChatId,
-    `✅ Bracket ${id} deployed & open (0/${capacity}). ${joinLine} Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).\n\n${addPrizeHint(b.state)}`,
+    `✅ Bracket ${id} deployed & open (0/${capacity}). ${joinLine} Round 1 starts ${startSummary(d.startDelaySec!)}.\n\n${addPrizeHint(b.state)}`,
   );
 }
 
@@ -1160,10 +1190,58 @@ function pastePrompt(who: string): string {
 }
 
 async function sendLengthPrompt(api: TelegramApi, chatId: string): Promise<void> {
-  const lines = ["Pick a match length:", ""];
+  const lines = ["⏱️ How long is each match?", ""];
   LENGTH_PRESETS.forEach((p, i) => lines.push(`  ${i + 1}. ${p.label}`));
   lines.push("", "Reply with a number. /cancel to abort.");
   await api.sendMessage(chatId, lines.join("\n"));
+}
+
+async function sendStartPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  d.step = "start";
+  const lines = ["⏰ When should round 1 start? (players sign up / get ready until then)", ""];
+  START_PRESETS.forEach((p, i) => lines.push(`  ${i + 1}. ${p.label}`));
+  lines.push(
+    "",
+    `Reply a number, or a custom time: "in 2 days", "in 90 minutes", or a UTC time like "2026-07-05 18:00". Minimum 1 hour out. /cancel to abort.`,
+  );
+  await api.sendMessage(chatId, lines.join("\n"));
+}
+
+/** Parse the start step: a preset number, "in N min/hours/days", or a UTC
+ *  "YYYY-MM-DD HH:MM". Returns seconds-from-now (≥ 1h, ≤ 30d) or null. */
+function parseStartDelay(input: string): number | null {
+  const t = input.trim().toLowerCase();
+  if (/^\d+$/.test(t)) {
+    const n = Number(t);
+    return n >= 1 && n <= START_PRESETS.length ? START_PRESETS[n - 1]!.sec : null;
+  }
+  const rel = /^in\s+(\d+(?:\.\d+)?)\s*(minutes?|mins?|m|hours?|hrs?|h|days?|d)$/.exec(t);
+  if (rel) {
+    const qty = Number(rel[1]);
+    const unit = rel[2]!;
+    const mult = /^m/.test(unit) ? 60 : /^h/.test(unit) ? 3600 : 86400;
+    return clampStartDelay(Math.round(qty * mult));
+  }
+  const abs = /^(\d{4}-\d{2}-\d{2})[ t](\d{2}:\d{2})/.exec(t);
+  if (abs) {
+    const ms = Date.parse(`${abs[1]}T${abs[2]}:00Z`);
+    if (Number.isFinite(ms)) return clampStartDelay(Math.round((ms - Date.now()) / 1000));
+  }
+  return null;
+}
+
+function clampStartDelay(sec: number): number | null {
+  if (!Number.isFinite(sec) || sec < MIN_START_SEC) return null;
+  return Math.min(sec, 30 * 86400); // cap 30 days
+}
+
+/** "<UTC datetime> (in ~Nh)" for confirm/deploy messages. */
+function startSummary(delaySec: number): string {
+  const at = new Date(Date.now() + delaySec * 1000);
+  const when = at.toISOString().slice(0, 16).replace("T", " ");
+  const h = delaySec / 3600;
+  const rel = h < 1 ? `${Math.round(delaySec / 60)}m` : h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`;
+  return `${when} UTC (in ~${rel})`;
 }
 
 /** Numbered token picker for the entry-fee step. */
@@ -1414,6 +1492,7 @@ function confirmText(d: Draft): string {
     ...(d.description ? [`  • Description: ${d.description}`] : []),
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
+    ...(d.startDelaySec ? [`  • Starts: ${startSummary(d.startDelaySec)}`] : []),
     ...(d.entryFee
       ? [
           `  • Entry fee: ${d.entryFee.label} (adds to pool)`,
