@@ -43,4 +43,34 @@ export async function fetchSettings(
   };
 }
 
+/** Fetch one settings entry's full details (incl. the game default, id 0).
+ *  Returns null if it isn't indexed (e.g. a game with no registered settings —
+ *  id 0 is then the contract's built-in default with nothing to show). */
+export async function fetchSetting(
+  chain: Chain,
+  gameAddress: string,
+  id: number,
+): Promise<GameSettingDetails | null> {
+  try {
+    return await getClient(chain).getSetting(id, gameAddress);
+  } catch {
+    return null;
+  }
+}
+
+/** Human-readable dump of a settings entry: name, description, and the actual
+ *  config parameters — so an organizer can see what a setting (incl. "default")
+ *  really does, instead of an opaque id. */
+export function formatSettingsDetails(s: GameSettingDetails): string {
+  const lines = [`⚙️ ${s.name || `Settings #${s.id}`}`];
+  if (s.description) lines.push(s.description);
+  const params = Object.entries(s.settings ?? {});
+  if (params.length > 0) {
+    lines.push("", "Parameters:", ...params.map(([k, v]) => `  • ${k}: ${v}`));
+  } else {
+    lines.push("", "(no parameters recorded — this is the game's built-in default)");
+  }
+  return lines.join("\n");
+}
+
 export type { GameSettingDetails } from "@provable-games/denshokan-sdk";
