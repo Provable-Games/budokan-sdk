@@ -393,9 +393,12 @@ export class TelegramBot {
    * unconnected first-timer lands on a clear next step rather than a dead end.
    */
   /**
-   * Inline-button taps. Currently only the /tournaments list "Enter" buttons,
-   * whose callback_data is `enter:<id>`. We ack the tap (stop the spinner) then
-   * dispatch to the same /enter path a typed command would take.
+   * Inline-button taps. callback_data is `<action>:<arg>`:
+   *   - `enter:<id>`  — /tournaments list "Enter" button
+   *   - `cg:<index>`  — /create game picker selection
+   *   - `bjoin` / `bspon` — bracket join/sponsor (answered with private toasts)
+   * We ack the tap (stop the spinner) then dispatch to the same path a typed
+   * command would take.
    */
   private async handleCallback(cb: TelegramCallbackQuery): Promise<void> {
     const [action, arg] = (cb.data ?? "").split(":");
@@ -423,6 +426,13 @@ export class TelegramBot {
       }
       const chain = await this.chatStates.getChain(chatId);
       return enterCmd.start(this.api, this.config, this.handshakes, chatId, chain, [arg]);
+    }
+
+    // /create game picker: `cg:<index>` selects a game and advances the flow.
+    // Unlike Enter, this is part of the in-progress /create state, so don't
+    // clear pending flows; handleGamePick ignores stale taps.
+    if (action === "cg" && arg !== undefined && /^\d+$/.test(arg)) {
+      return create.handleGamePick(this.api, chatId, Number(arg));
     }
   }
 

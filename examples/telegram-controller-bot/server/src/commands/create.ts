@@ -240,6 +240,16 @@ export function cancel(chatId: string): boolean {
   return states.delete(chatId);
 }
 
+// Game picker as tappable buttons — one per game, name only (no address).
+// Typed numbers still work via handleGame, so this is purely additive UX.
+function gamePickerKeyboard(
+  games: Game[],
+): { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> } {
+  return {
+    inline_keyboard: games.map((g, i) => [{ text: `🎮 ${g.name}`, callback_data: `cg:${i}` }]),
+  };
+}
+
 export async function start(api: TelegramApi, chatId: string, chain: Chain): Promise<void> {
   let games: Game[];
   try {
@@ -256,14 +266,11 @@ export async function start(api: TelegramApi, chatId: string, chain: Chain): Pro
     return;
   }
   states.set(chatId, { step: "game", chain, prizesSoFar: [], gamesList: games });
-  await api.sendMessage(chatId, [
-    `🏟️ Let's create a tournament on ${chain}. /cancel to abort.`,
-    "",
-    "🎮 Pick a game:",
-    ...games.map((g, i) => `  ${i + 1}. ${g.name} — ${shortHex(g.contractAddress)}`),
-    "",
-    "Reply with a number.",
-  ].join("\n"));
+  await api.sendMessage(
+    chatId,
+    `🏟️ Let's create a tournament on ${chain}. /cancel to abort.\n\n🎮 Choose a game:`,
+    { replyMarkup: gamePickerKeyboard(games) },
+  );
 }
 
 export async function handleAnswer(
@@ -353,9 +360,20 @@ export async function handleAnswer(
 async function handleGame(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
   const idx = parsePickIndex(input, state.gamesList.length);
   if (idx === null) {
-    await api.sendMessage(chatId, `Reply with a number 1-${state.gamesList.length}, or /cancel.`);
+    await api.sendMessage(
+      chatId,
+      `Tap a game above, or reply with a number 1-${state.gamesList.length}, or /cancel.`,
+    );
     return;
   }
+  return selectGame(api, state, chatId, idx);
+}
+
+/**
+ * Commit a game choice and advance to the name step. Shared by the typed
+ * picker (handleGame) and the inline-button picker (handleGamePick).
+ */
+async function selectGame(api: TelegramApi, state: State, chatId: string, idx: number): Promise<void> {
   state.game = state.gamesList[idx];
   // Leaderboard ordering + game-over requirement are properties of the
   // game, not the tournament — sourced from the catalog's metadata and
@@ -367,8 +385,20 @@ async function handleGame(api: TelegramApi, state: State, chatId: string, input:
   state.step = "name";
   await api.sendMessage(
     chatId,
-    `✅ Selected: ${state.game!.name} (${shortHex(state.game!.contractAddress)})\n\n🏷️ Tournament name? (≤31 ASCII characters)`,
+    `✅ Selected: ${state.game!.name}\n\n🏷️ Tournament name? (≤31 ASCII characters)`,
   );
+}
+
+/**
+ * Inline-button game pick from the /create picker (callback_data `cg:<index>`).
+ * Ignores stale taps once the flow has moved past the game step (e.g. the user
+ * already chose, or /cancel'd).
+ */
+export async function handleGamePick(api: TelegramApi, chatId: string, idx: number): Promise<void> {
+  const state = states.get(chatId);
+  if (!state || state.step !== "game") return;
+  if (idx < 0 || idx >= state.gamesList.length) return;
+  return selectGame(api, state, chatId, idx);
 }
 
 async function handleName(api: TelegramApi, state: State, chatId: string, input: string): Promise<void> {
@@ -1879,12 +1909,9 @@ export async function back(api: TelegramApi, chatId: string): Promise<void> {
 async function renderStepPrompt(api: TelegramApi, state: State, chatId: string, step: Step): Promise<void> {
   switch (step) {
     case "game":
-      await api.sendMessage(chatId, [
-        "Pick a game:",
-        ...state.gamesList.map((g, i) => `  ${i + 1}. ${g.name} — ${shortHex(g.contractAddress)}`),
-        "",
-        "Reply with a number.",
-      ].join("\n"));
+      await api.sendMessage(chatId, "🎮 Choose a game:", {
+        replyMarkup: gamePickerKeyboard(state.gamesList),
+      });
       return;
     case "name":
       await api.sendMessage(chatId, "Tournament name? (≤31 ASCII characters)");
