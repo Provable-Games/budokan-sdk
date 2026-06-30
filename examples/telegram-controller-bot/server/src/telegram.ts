@@ -31,7 +31,7 @@ import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 import { formatError } from "./format-error.ts";
 
 interface TelegramMessage {
-  chat: { id: number };
+  chat: { id: number; type?: string };
   text?: string;
 }
 
@@ -135,10 +135,29 @@ export class TelegramBot {
 
   private async handleMessage(message: TelegramMessage): Promise<void> {
     const chatId = String(message.chat.id);
+    const isPrivate = (message.chat.type ?? "private") === "private";
     const text = (message.text ?? "").trim();
     const [rawCommand, ...args] = text.split(/\s+/);
     const command = (rawCommand ?? "").split("@")[0]?.toLowerCase();
     const isCommand = command?.startsWith("/") ?? false;
+
+    // In a group/channel the bot is only here to post cards + handle Join taps.
+    // Signing/stateful flows key off the chat id, so they must stay in DMs; and
+    // we must NOT reply to ordinary chatter (it would spam the chat). Allow only
+    // /channel + read-only browse here; everything else is redirected to DM.
+    if (!isPrivate) {
+      if (!isCommand) return; // ignore non-command chatter silently
+      const GROUP_OK = new Set(["/channel", "/tournaments", "/leaderboard", "/help"]);
+      if (!GROUP_OK.has(command ?? "")) {
+        await this.api
+          .sendMessage(chatId, "👋 Connecting, creating, joining and claiming happen in a private chat with me — DM me to do that. Here I just post updates and accept ▶ Join taps.")
+          .catch(() => {});
+        return;
+      }
+      // Allowed read-only / channel command — fall through to the switch below.
+      // (The pending-flow checks are no-ops here: this is a command, and no flow
+      // is ever keyed to a group chat id.)
+    }
 
     // Multi-turn flows take priority for plain text input. A user typing
     // the next answer should not also trigger an unknown-command path.
