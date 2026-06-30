@@ -365,7 +365,7 @@ export async function handleAnswer(
       return;
     }
     drafts.delete(chatId);
-    // Announce target: the channel set via /bracket_channel wins, then the env
+    // Announce target: the channel set via /channel wins, then the env
     // var, then the organizer's DM.
     const announceChatId = (await store.getAnnounceChannel()) ?? config.bracketChannelId ?? chatId;
 
@@ -396,7 +396,7 @@ export async function handleAnswer(
 
 /**
  * Set the chat this command is run in as the bracket announce channel — run
- * /bracket_channel inside the public group. Replaces needing BRACKET_CHANNEL_ID.
+ * /channel inside the public group. Replaces needing BRACKET_CHANNEL_ID.
  */
 export async function setAnnounceChannel(
   api: TelegramApi,
@@ -445,7 +445,7 @@ export async function joinViaButton(
   id: string,
 ): Promise<void> {
   if (fromId === undefined) {
-    await api.answerCallback(callbackQueryId, "Couldn't identify you — try /bracket_join in a DM.", true);
+    await api.answerCallback(callbackQueryId, "Couldn't identify you — try /join in a DM.", true);
     return;
   }
   const b = await store.get(id);
@@ -544,7 +544,7 @@ async function deployResolved(
     }
   } catch (error) {
     await store.save({ state, organizerChatId, announceChatId }).catch(() => {});
-    await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /brackets shows what's live.`);
+    await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /tournaments shows what's live.`);
     return false;
   }
 
@@ -756,7 +756,7 @@ async function paidJoin(
 }
 
 /**
- * /bracket_sponsor <id> <address|username> — pay another player's entry into a
+ * /sponsor <id> <address|username> — pay another player's entry into a
  * paid bracket from your own session (run in DM, where your session lives).
  */
 export async function sponsorPaid(
@@ -843,7 +843,7 @@ export async function sponsorViaButton(
 ): Promise<void> {
   await api.answerCallback(
     callbackQueryId,
-    `To sponsor a player, DM me:  /bracket_sponsor ${id} <address or Cartridge username>`,
+    `To sponsor a player, DM me:  /sponsor ${id} <address or Cartridge username>`,
     true,
   );
 }
@@ -1080,17 +1080,19 @@ export async function list(
   store: BracketStore,
   chatId: string,
   chain: Chain,
+  quietIfEmpty = false,
 ): Promise<void> {
   const deployed = (await store.all()).filter((b) => (b.state.chain as Chain) === chain);
   if (deployed.length === 0) {
-    await api.sendMessage(chatId, `No brackets on ${chain}. Create one with /bracket.`);
+    // quietIfEmpty: when rendered as a section of /tournaments, stay silent.
+    if (!quietIfEmpty) await api.sendMessage(chatId, `No brackets on ${chain}. Start one with /create.`);
     return;
   }
   const lines = [`🥊 Brackets on ${chain}:`, ""];
   for (const b of deployed) {
     const champ = b.state.champion ? ` — 🏆 ${b.state.champion.name ?? short(b.state.champion.address)}` : "";
     const phase = b.phase === "filling" ? `filling ${b.filled ?? 0}/${b.capacity ?? 0}` : b.state.status;
-    lines.push(`  • ${b.state.id} [${phase}] · ${b.state.players.length} players${champ} · /bracket_view ${b.state.id}`);
+    lines.push(`  • ${b.state.id} [${phase}] · ${b.state.players.length} players${champ} · view: /tournaments ${b.state.id}`);
   }
   await api.sendMessage(chatId, lines.join("\n"));
 }
