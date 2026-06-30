@@ -23,6 +23,11 @@ export interface StoredBracket {
   description?: string;
   /** Match ids whose winners the bot has already auto-entered into the next round. */
   entered?: string[];
+  /** Lowercased player address → their Telegram chat id (captured on self-join),
+   *  so the poller can DM players proactive play/submit/claim prompts. */
+  playerChats?: Record<string, string>;
+  /** Notification keys already sent (e.g. "<matchId>:live"), to avoid repeats. */
+  notified?: string[];
   /**
    * Up-front "open" brackets are deployed with placeholder slots before joins.
    * `paid` is the per-entry fee players add on join (absent ⇒ free entry);

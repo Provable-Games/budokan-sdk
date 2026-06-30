@@ -731,6 +731,9 @@ async function enterPaidSlot(
 
   b.filled += 1;
   if (b.filled >= b.capacity) b.phase = "live";
+  // Remember a self-joiner's chat so the poller can DM them play/submit/claim
+  // prompts. (Sponsored players' chats are unknown — they get channel posts.)
+  if (!sponsoring) (b.playerChats ??= {})[addr] = payerChatId;
   await store.save(b);
   await updatePaidCard(api, b);
   const paidPrefix = paid ? `Paid ${paid.label} — ` : "";
@@ -874,6 +877,100 @@ function getOperatorAccount(config: Config, chain: Chain): Advancer | null {
 /** Brackets we've already DM'd the organizer about (no operator + session gone). */
 const stalledNudged = new Set<string>();
 
+/**
+ * Proactive per-player DMs at match transitions so players can drive the bracket
+ * themselves (play → submit scores → claim), with the bot as a backstop rather
+ * than the critical path. Best-effort: only players whose chat we captured on
+ * self-join get DMs; everyone still sees the public channel card. Dedup'd via
+ * `b.notified` so each prompt is sent once.
+ */
+async function notifyBracket(
+  api: TelegramApi,
+  config: Config,
+  store: BracketStore,
+  b: StoredBracket,
+): Promise<void> {
+  const chats = b.playerChats;
+  if (!chats || Object.keys(chats).length === 0) return; // nobody we can DM
+
+  const chain = b.state.chain as Chain;
+  const sent = new Set(b.notified ?? []);
+  let changed = false;
+
+  const dm = async (address: string | undefined, key: string, text: string): Promise<void> => {
+    if (!address) return;
+    const chatId = chats[address.toLowerCase()];
+    if (!chatId || sent.has(key)) return;
+    sent.add(key);
+    changed = true;
+    await api.sendMessage(chatId, text).catch(() => {});
+  };
+
+  let client: ReturnType<typeof createBudokanClient> | undefined;
+  const getClient = () =>
+    (client ??= createBudokanClient({
+      chain,
+      ...(config.apiUrl ? { apiBaseUrl: config.apiUrl } : {}),
+      ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}),
+      ...(config.budokanAddress ? { budokanAddress: config.budokanAddress } : {}),
+      ...(config.viewerAddress ? { viewerAddress: config.viewerAddress } : {}),
+    } as Parameters<typeof createBudokanClient>[0]));
+
+  const name = b.state.namePrefix ?? "Bracket";
+
+  for (const m of b.state.matches) {
+    if (!m.tournamentId) continue;
+    const realPlayers = [m.playerA, m.playerB].filter((p): p is NonNullable<typeof p> => !!p && isReal(p));
+
+    if (m.status === "live") {
+      const url = tournamentPageUrl(chain, m.tournamentId);
+      for (const p of realPlayers) {
+        await dm(p.address, `${m.id}:live`, `▶️ ${name}: your round ${m.round} match is live — play now:\n${url}`);
+      }
+      // Game window closed but the match isn't resolved → scores need submitting.
+      if (!sent.has(`${m.id}:submit`)) {
+        try {
+          const t = await getClient().getTournament(m.tournamentId);
+          const end = Number(t?.gameEndTime ?? 0);
+          if (end > 0 && Math.floor(Date.now() / 1000) >= end) {
+            for (const p of realPlayers) {
+              await dm(
+                p.address,
+                `${m.id}:submit`,
+                `📥 ${name}: round ${m.round} is over — submit the scores so the winner is recorded (anyone can do it once, for both players):\n/submit_score ${m.tournamentId}  → then reply "all"`,
+              );
+            }
+          }
+        } catch {
+          // couldn't read timing this tick — retry next cycle
+        }
+      }
+    }
+
+    if ((m.status === "resolved" || m.status === "walkover") && m.winner) {
+      await dm(
+        m.winner.address,
+        `${m.id}:won`,
+        `🏆 ${name}: you won round ${m.round}! I'll enter you into the next match — watch for the play link.`,
+      );
+    }
+  }
+
+  if (b.state.status === "complete" && b.state.champion) {
+    const finalMatch = b.state.matches.find((m) => !m.feedsInto && m.tournamentId);
+    await dm(
+      b.state.champion.address,
+      "complete",
+      `🏆 ${name}: you won the whole bracket! Claim your prize:\n/claim ${finalMatch?.tournamentId ?? ""}`.trim(),
+    );
+  }
+
+  if (changed) {
+    b.notified = [...sent];
+    await store.save(b);
+  }
+}
+
 export async function advanceStoredBracket(
   api: TelegramApi,
   config: Config,
@@ -884,49 +981,55 @@ export async function advanceStoredBracket(
   if (b.phase === "filling") return;
   const chain = b.state.chain as Chain;
 
-  // Prefer the bot operator (no organizer dependency); fall back to the
-  // organizer's session if no operator is configured.
-  let advancer = getOperatorAccount(config, chain);
-  if (!advancer) {
-    const session = await resolveAccount(b.organizerChatId, chain, config);
-    if (session.ok) advancer = session.data.account as unknown as Advancer;
-  }
-  if (!advancer) {
-    if (!stalledNudged.has(b.state.id)) {
-      stalledNudged.add(b.state.id);
-      await api
-        .sendMessage(
-          b.organizerChatId,
-          `⏳ Bracket ${b.state.id} is waiting to advance — run /connect again so I can enter the round's winners (or set a bot operator account to do it automatically).`,
-        )
-        .catch(() => {});
-    }
-    return;
-  }
-  stalledNudged.delete(b.state.id);
-
+  // 1. Update bracket state from chain (resolve finished matches). No signer
+  //    needed — just reads.
   const before = bracketSummary(b.state);
   const read = buildReader(config, chain);
   const { state } = await advanceBracket(b.state, read);
   b.state = state;
 
-  const entered = new Set<string>(b.entered ?? []);
-  for (const m of state.matches) {
-    if (m.round === 1 || !m.tournamentId || entered.has(m.id)) continue;
-    if (!m.playerA || !m.playerB) continue;
-    try {
-      for (const player of [m.playerA, m.playerB]) {
-        // Skip placeholder (0x0) slots — a walkover auto-advances, and entering
-        // 0x0 would just be a failing tx.
-        if (!isReal(player)) continue;
-        await advancer.execute(bracketEntryCalls(state, m.id, player.address));
-      }
-      entered.add(m.id);
-    } catch (error) {
-      console.error(`bracket ${state.id} enter ${m.id} failed:`, formatError(error));
-    }
+  // 2. Proactive player DMs (play / submit-scores / advanced / claim) —
+  //    independent of whether we can sign, so players can drive it themselves.
+  await notifyBracket(api, config, store, b);
+
+  // 3. Enter the round's winners into the next match. Prefer the bot operator
+  //    (no organizer dependency); fall back to the organizer's session.
+  let advancer = getOperatorAccount(config, chain);
+  if (!advancer) {
+    const session = await resolveAccount(b.organizerChatId, chain, config);
+    if (session.ok) advancer = session.data.account as unknown as Advancer;
   }
-  b.entered = [...entered];
+  if (advancer) {
+    stalledNudged.delete(b.state.id);
+    const entered = new Set<string>(b.entered ?? []);
+    for (const m of state.matches) {
+      if (m.round === 1 || !m.tournamentId || entered.has(m.id)) continue;
+      if (!m.playerA || !m.playerB) continue;
+      try {
+        for (const player of [m.playerA, m.playerB]) {
+          // Skip placeholder (0x0) slots — a walkover auto-advances, and
+          // entering 0x0 would just be a failing tx.
+          if (!isReal(player)) continue;
+          await advancer.execute(bracketEntryCalls(state, m.id, player.address));
+        }
+        entered.add(m.id);
+      } catch (error) {
+        console.error(`bracket ${state.id} enter ${m.id} failed:`, formatError(error));
+      }
+    }
+    b.entered = [...entered];
+  } else if (!stalledNudged.has(b.state.id)) {
+    // Can't auto-advance (no operator + organizer session expired). Players were
+    // still nudged to play/submit above; ask the organizer to reconnect.
+    stalledNudged.add(b.state.id);
+    await api
+      .sendMessage(
+        b.organizerChatId,
+        `⏳ Bracket ${b.state.id} is waiting to advance — run /connect again so I can enter the round's winners (or set a bot operator account to do it automatically).`,
+      )
+      .catch(() => {});
+  }
+
   await store.save(b);
 
   if (bracketSummary(b.state) !== before) {
