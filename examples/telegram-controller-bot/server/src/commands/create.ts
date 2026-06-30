@@ -38,7 +38,7 @@ import {
   tournamentPageUrl,
 } from "@provable-games/budokan-sdk";
 
-import { gamesForChain, gameMetadataFor, type Game } from "../catalog/games.ts";
+import { gamesForChain, gameMetadataFor, fetchGameFeeBps, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, type GameSettingDetails } from "../catalog/settings.ts";
 import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
@@ -1046,7 +1046,7 @@ async function handleEntryReqExtTourTopN(api: TelegramApi, config: Config, state
   return moveToPrizes(api, config, state, chatId);
 }
 
-async function handleEntryFeeAmount(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
+async function handleEntryFeeAmount(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
   const raw = parseTokenAmount(input, state.entryFeeToken!.decimals);
   if (raw === null) {
     await api.sendMessage(chatId, "Couldn't parse that. Try '0.5' or '10'.");
@@ -1054,13 +1054,15 @@ async function handleEntryFeeAmount(api: TelegramApi, _config: Config, state: St
   }
   state.entryFeeAmount = raw;
 
-  // Game creator cut: pull the registry-side minimum from the whitelist
-  // and use it as a floor. The contract's _assert_game_fee_met rejects
-  // anything below this; the client matches with Math.max(minGameFee,
-  // value). User can set it higher (revenue share with the game).
+  // Game creator cut floor: the contract's _assert_game_fee_met rejects a
+  // game_creator_share below the registry-required fee. Read it LIVE from the
+  // registry (authoritative), falling back to the curated catalog value, then
+  // 1%, if the on-chain read fails.
   const meta = gameMetadataFor(state.game!.contractAddress);
-  const minPct = meta?.defaultGameFeePercentage ?? 1;
-  state.entryFeeMinGameBps = Math.round(minPct * 100);
+  const onchainBps = await fetchGameFeeBps(state.chain, state.game!.contractAddress, config.rpcUrl);
+  const minBps = onchainBps ?? Math.round((meta?.defaultGameFeePercentage ?? 1) * 100);
+  state.entryFeeMinGameBps = minBps;
+  const minPct = minBps / 100;
 
   state.step = "entryFeeGameShare";
   await api.sendMessage(
@@ -1258,26 +1260,20 @@ function calculateDistributionPercentages(
   return bp.map((b) => b / 100);
 }
 
-async function moveToPrizes(api: TelegramApi, config: Config, state: State, chatId: string): Promise<void> {
+async function moveToPrizes(api: TelegramApi, _config: Config, state: State, chatId: string): Promise<void> {
   if (await maybeReturnToConfirm(api, state, chatId)) return;
+  // Prize funding is deferred to budokan.gg — the in-session path is capped at
+  // ~$10 (entry fees only), so prizes are sponsored on the web app after the
+  // tournament exists in the indexer.
   state.step = "prizesChoice";
-  if (!config.voyagerProxyUrl) {
-    // Without Voyager, skip prize sponsorship in chat.
-    await api.sendMessage(chatId, [
-      "🏆 Sponsored prizes from chat aren't enabled (BUDOKAN_VOYAGER_PROXY_URL not set).",
-      "You can add prizes after creation via budokan.gg.",
-      "",
-      "⏭️ Continuing to confirmation…",
-    ].join("\n"));
-    return moveToConfirm(api, state, chatId);
-  }
   await api.sendMessage(chatId, [
-    "🏆 Add sponsored prizes from your wallet?",
-    "  1. ⏭️ No",
-    "  2. ✨ Yes (I'll show your token balances)",
+    "🏆 Add a prize pool on budokan.gg after the tournament is created.",
+    "Once it appears in the indexer, open it there and sponsor the prize — that's a",
+    "normal wallet transaction, not something the bot does in-session.",
     "",
-    "Reply with a number.",
+    "⏭️ Continuing to confirmation…",
   ].join("\n"));
+  return moveToConfirm(api, state, chatId);
 }
 
 async function handlePrizesChoice(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {

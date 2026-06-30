@@ -231,6 +231,8 @@ export {
   bracketEntryCalls,
   nextMatchesFor,
   bracketSummary,
+  decodeTournamentValidatorConfig,
+  reconstructBrackets,
 } from "./brackets/index.js";
 export type {
   BracketState,
@@ -243,4 +245,8 @@ export type {
   MatchResult,
   MatchReader,
   BracketFeeSplit,
+  DecodedTournamentValidator,
+  BracketGroup,
+  BracketMatchNode,
+  EntryRequirementLike,
 } from "./brackets/index.js";

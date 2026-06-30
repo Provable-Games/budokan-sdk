@@ -2,16 +2,18 @@
 // bracket over Budokan tournaments, with on-chain gating (each round's entry
 // requires having won the feeder match). See budokan-sdk `src/brackets`.
 //
-// Three rosters:
+// Two rosters:
 //   - closed: organizer pastes every player up front (addresses or Cartridge
-//     usernames) → deploys immediately.
-//   - open:   organizer sets a capacity; players /bracket_join until full,
-//     then it auto-starts.
-//   - mix:    organizer seeds some players + opens the remaining slots.
+//     usernames) → deploys immediately, enters everyone.
+//   - open:   organizer sets a capacity + optional prize pool (sponsor seed
+//     and/or per-entry fee); the tree deploys up front (seed escrowed before
+//     joins), players tap Join to enter their slot. Round 1 starts at the
+//     sign-up deadline (empty slots walk over). To add a specific player,
+//     /bracket_sponsor them in.
 //
-// The whole tree is deployed up front; the bot enters round-1 players on their
-// behalf and, as rounds resolve, enters winners into the next gated match.
-// Progression is handled by the poller (advanceStoredBracket).
+// The whole tree is deployed up front; the bot enters round-1 players (closed)
+// or players enter themselves on Join (open), and as rounds resolve the poller
+// (advanceStoredBracket) enters winners into the next gated match.
 
 import {
   CHAINS,
@@ -30,7 +32,7 @@ import {
   type MatchReader,
 } from "@provable-games/budokan-sdk";
 import { createDenshokanClient } from "@provable-games/denshokan-sdk";
-import { num, RpcProvider } from "starknet";
+import { Account, num, RpcProvider } from "starknet";
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
@@ -41,13 +43,16 @@ import { gamesForChain, type Game } from "../catalog/games.ts";
 import { tokensForChain, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, type SettingsPage } from "../catalog/settings.ts";
 import { formatError } from "../format-error.ts";
-import { BracketStore, type BracketRegistration, type StoredBracket } from "../bracket-store.ts";
+import { BracketStore, type StoredBracket } from "../bracket-store.ts";
 
 type Player = { address: string; name?: string };
 
 // Per-match schedule presets (durations in seconds).
+// Budokan enforces 1-hour minimums on each phase (MIN_REGISTRATION_PERIOD,
+// MIN_TOURNAMENT_LENGTH, MIN_SUBMISSION_PERIOD = 3600s), so every preset must
+// keep reg/game/sub ≥ 3600 or create_tournament reverts in schedule validation.
 const LENGTH_PRESETS = [
-  { label: "Quick — 15m sign-up, 30m matches", reg: 900, game: 1800, sub: 900 },
+  { label: "Quick — 1h sign-up, 1h matches", reg: 3600, game: 3600, sub: 3600 },
   { label: "Standard — 1h sign-up, 6h matches", reg: 3600, game: 21600, sub: 3600 },
   { label: "Daily — 6h sign-up, 24h matches", reg: 21600, game: 86400, sub: 21600 },
 ] as const;
@@ -55,7 +60,6 @@ const LENGTH_PRESETS = [
 const MODES = [
   { key: "closed", label: "Closed — I'll paste all players now" },
   { key: "open", label: "Open — players join until full, then it starts" },
-  { key: "mix", label: "Mix — I seed some, others join the rest" },
 ] as const;
 
 const CAPACITIES = [4, 8, 16, 32] as const;
@@ -64,16 +68,13 @@ interface Draft {
   step:
     | "game"
     | "settings"
+    | "name"
+    | "description"
     | "mode"
     | "capacity"
     | "players"
     | "length"
-    | "prizeToken"
-    | "prizeAmount"
-    | "prizeSplit"
-    | "prizeCustom"
-    | "seedToken"
-    | "seedAmount"
+    | "roundSettings"
     | "feeToken"
     | "feeAmount"
     | "feeSplit"
@@ -85,21 +86,20 @@ interface Draft {
   settingsId?: number;
   settingsName?: string;
   settingsPage?: SettingsPage;
-  // Open prize pool: an up-front sponsor seed (escrowed at deploy, before joins)
-  // and/or a per-entry fee (added on join). Both optional; one shared split.
-  seedToken?: Erc20Token;
-  seed?: { tokenAddress: string; amount: string; label: string };
+  /** Bracket title; prefixes each match name ("<name> R1-1") and titles the card. */
+  namePrefix?: string;
+  /** Optional per-round settings (round 1 → final); falls back to settingsId. */
+  roundSettingsIds?: number[];
+  /** Organizer blurb shown on the card + set as each match's on-chain description. */
+  description?: string;
   mode?: (typeof MODES)[number]["key"];
   capacity?: number;
-  players?: Player[]; // closed: everyone; mix: seeds; open: undefined
+  players?: Player[]; // closed: everyone; open: [] (all join)
   length?: (typeof LENGTH_PRESETS)[number];
-  prizeToken?: Erc20Token;
-  prize?: { tokenAddress: string; amount: string; label: string };
-  /** Sponsored-prize placement split (bps per tier); default champion-takes-all. */
-  prizeTiersBps?: number[];
-  // Paid (open mode only): players pay this fee on tap; it escrows into
-  // placement prizes per tiersBps (basis points per tier). Collected over the
-  // feeToken → feeAmount → feeSplit sub-flow.
+  // Open mode only: players pay this entry fee on join (≤ the ~$10 session cap);
+  // it escrows into placement prizes per tiersBps. Collected over the
+  // feeToken → feeAmount → feeSplit sub-flow. Larger/organizer prizes are added
+  // on budokan.gg, not in-session.
   feeToken?: Erc20Token;
   feeAmountRaw?: string;
   feeAmountLabel?: string;
@@ -181,6 +181,19 @@ export async function handleAnswer(
     return;
   }
 
+  if (d.step === "name") {
+    // ≤24 chars so "<name> R1-1" stays within the 31-char on-chain name limit.
+    if (!/^(skip|none|no)$/i.test(t)) d.namePrefix = t.slice(0, 24);
+    await sendDescriptionPrompt(api, d, chatId);
+    return;
+  }
+
+  if (d.step === "description") {
+    if (!/^(skip|none|no)$/i.test(t)) d.description = t.slice(0, 200);
+    await sendModePrompt(api, d, chatId);
+    return;
+  }
+
   if (d.step === "mode") {
     const n = Number(t);
     if (!/^\d+$/.test(t) || n < 1 || n > MODES.length) {
@@ -208,15 +221,10 @@ export async function handleAnswer(
       return;
     }
     d.capacity = CAPACITIES[n - 1];
-    if (d.mode === "mix") {
-      d.step = "players";
-      await api.sendMessage(chatId, pastePrompt(`up to ${d.capacity! - 1} seeds (leave the rest open)`));
-    } else {
-      // open: no seeds
-      d.players = [];
-      d.step = "length";
-      await sendLengthPrompt(api, chatId);
-    }
+    // open: no pre-seeds — everyone joins.
+    d.players = [];
+    d.step = "length";
+    await sendLengthPrompt(api, chatId);
     return;
   }
 
@@ -230,19 +238,12 @@ export async function handleAnswer(
       await api.sendMessage(chatId, "No players parsed. Paste addresses or Cartridge usernames, or /cancel.");
       return;
     }
-    if (d.mode === "closed") {
-      if (!isPow2(players.length)) {
-        await api.sendMessage(chatId, `Got ${players.length}. A closed bracket needs a power of two (2, 4, 8, 16…). Resend, or /cancel.`);
-        return;
-      }
-      d.capacity = players.length;
-    } else {
-      // mix seeds: must be < capacity and leave a power-of-two final size
-      if (players.length >= d.capacity!) {
-        await api.sendMessage(chatId, `That's ${players.length} seeds for a ${d.capacity}-player bracket — leave at least one open slot, or use a bigger size. /cancel to abort.`);
-        return;
-      }
+    // closed: the pasted roster is the whole bracket (power of two).
+    if (!isPow2(players.length)) {
+      await api.sendMessage(chatId, `Got ${players.length}. A closed bracket needs a power of two (2, 4, 8, 16…). Resend, or /cancel.`);
+      return;
     }
+    d.capacity = players.length;
     d.players = players;
     d.step = "length";
     await sendLengthPrompt(api, chatId);
@@ -256,132 +257,39 @@ export async function handleAnswer(
       return;
     }
     d.length = LENGTH_PRESETS[n - 1];
-    // Open brackets fund a pool from a sponsor seed (locked up front) and/or
-    // per-entry fees → start with the seed. Closed/mix have no per-entry pool,
-    // so offer an optional sponsored prize.
-    if (d.mode === "open") {
-      d.step = "seedToken";
-      await sendTokenList(api, d.chain, chatId, "💰 Seed the prize pool up front? Pick a token:", "No seed");
-      return;
-    }
-    d.step = "prizeToken";
-    await sendTokenList(api, d.chain, chatId, "🏆 Champion prize — pick a token:", "No prize");
+    d.step = "roundSettings";
+    const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
+    const base = d.settingsName ?? `ID ${d.settingsId ?? 0}`;
+    await api.sendMessage(
+      chatId,
+      [
+        `⚙️ Settings per round? This bracket has ${rounds} rounds, all using "${base}".`,
+        `Reply 'skip' to keep that for every round, or give ${rounds} settings ids comma-separated (round 1 → final), e.g. ${Array.from({ length: rounds }, () => d.settingsId ?? 0).join(",")}.`,
+      ].join("\n"),
+    );
     return;
   }
 
-  if (d.step === "seedToken") {
-    if (/^(0|skip|none|no)$/i.test(t)) {
-      d.step = "feeToken";
-      await sendFeeTokenPrompt(api, d.chain, chatId);
-      return;
+  if (d.step === "roundSettings") {
+    const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
+    if (!/^(skip|none|no)$/i.test(t)) {
+      const ids = t.split(/[\s,]+/).filter(Boolean).map(Number);
+      if (ids.length !== rounds || ids.some((x) => !Number.isInteger(x) || x < 0)) {
+        await api.sendMessage(chatId, `Give exactly ${rounds} settings ids (round 1 → final), comma-separated, or 'skip'.`);
+        return;
+      }
+      d.roundSettingsIds = ids;
     }
-    const tokens = spendableTokens(d.chain);
-    const n = Number(t);
-    if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
-      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no seed, or /cancel.`);
-      return;
-    }
-    d.seedToken = tokens[n - 1];
-    d.step = "seedAmount";
-    await api.sendMessage(chatId, `💰 Seed amount in ${d.seedToken!.symbol}? (escrowed up front) /cancel to abort.`);
-    return;
-  }
-
-  if (d.step === "seedAmount") {
-    if (!/^\d+(\.\d+)?$/.test(t)) {
-      await api.sendMessage(chatId, `Enter a number in ${d.seedToken!.symbol} (e.g. 100), or /cancel.`);
-      return;
-    }
-    d.seed = {
-      tokenAddress: d.seedToken!.address,
-      amount: toRawAmount(t, d.seedToken!.decimals),
-      label: `${t} ${d.seedToken!.symbol}`,
-    };
-    d.step = "feeToken";
-    await sendFeeTokenPrompt(api, d.chain, chatId);
-    return;
-  }
-
-  if (d.step === "prizeToken") {
-    if (/^(0|skip|none|no)$/i.test(t)) {
-      d.step = "confirm";
-      await api.sendMessage(chatId, confirmText(d));
-      return;
-    }
-    const tokens = spendableTokens(d.chain);
-    const n = Number(t);
-    if (!/^\d+$/.test(t) || n < 1 || n > tokens.length) {
-      await api.sendMessage(chatId, `Reply 1–${tokens.length} to pick a token, 0 for no prize, or /cancel.`);
-      return;
-    }
-    d.prizeToken = tokens[n - 1];
-    d.step = "prizeAmount";
-    await api.sendMessage(chatId, `🏆 Champion prize amount in ${d.prizeToken!.symbol}? (e.g. 100) /cancel to abort.`);
-    return;
-  }
-
-  if (d.step === "prizeAmount") {
-    if (!/^\d+(\.\d+)?$/.test(t)) {
-      await api.sendMessage(chatId, `Enter a number in ${d.prizeToken!.symbol} (e.g. 100), or /cancel.`);
-      return;
-    }
-    d.prize = {
-      tokenAddress: d.prizeToken!.address,
-      amount: toRawAmount(t, d.prizeToken!.decimals),
-      label: `${t} ${d.prizeToken!.symbol}`,
-    };
-    d.step = "prizeSplit";
-    await sendFeeSplitPrompt(api, chatId);
-    return;
-  }
-
-  if (d.step === "prizeSplit") {
-    if (/^custom$/i.test(t) || Number(t) === FEE_SPLITS.length + 1) {
-      d.step = "prizeCustom";
-      await api.sendMessage(
-        chatId,
-        "Enter the split as whole % summing to 100 — 1st, then 2nd, then semifinalists, then quarterfinalists. E.g. `60 30 10`. /cancel to abort.",
-      );
-      return;
-    }
-    const n = Number(t);
-    if (!/^\d+$/.test(t) || n < 1 || n > FEE_SPLITS.length) {
-      await api.sendMessage(chatId, `Reply 1–${FEE_SPLITS.length + 1}, or /cancel.`);
-      return;
-    }
-    d.prizeTiersBps = [...FEE_SPLITS[n - 1]!.bps];
-    d.step = "confirm";
-    await api.sendMessage(chatId, confirmText(d));
-    return;
-  }
-
-  if (d.step === "prizeCustom") {
-    const places = t.split(/\s+/).map(Number);
-    if (
-      places.length === 0 ||
-      places.some((p) => !Number.isFinite(p) || p < 0) ||
-      places.reduce((a, b) => a + b, 0) !== 100
-    ) {
-      await api.sendMessage(chatId, "Whole percentages summing to 100 (e.g. `60 30 10`). Try again, or /cancel.");
-      return;
-    }
-    d.prizeTiersBps = places.map((p) => Math.round(p * 100));
-    d.step = "confirm";
-    await api.sendMessage(chatId, confirmText(d));
+    await sendFundingPrompt(api, d, chatId);
     return;
   }
 
   if (d.step === "feeToken") {
     if (/^(0|skip|none|no)$/i.test(t)) {
-      // No per-entry fee. If there's a seed, pick how it pays out; else this is
-      // a truly free, no-prize bracket → straight to confirm.
-      if (d.seed) {
-        d.step = "feeSplit";
-        await sendFeeSplitPrompt(api, chatId);
-      } else {
-        d.step = "confirm";
-        await api.sendMessage(chatId, confirmText(d));
-      }
+      // No per-entry fee → a free bracket. Organizers add any prize pool on
+      // budokan.gg (prize funding is deferred there, not done in-session).
+      d.step = "confirm";
+      await api.sendMessage(chatId, confirmText(d));
       return;
     }
     const tokens = spendableTokens(d.chain);
@@ -468,57 +376,20 @@ export async function handleAnswer(
         chain: d.chain,
         game: d.game!,
         settingsId: d.settingsId,
+        roundSettingsIds: d.roundSettingsIds,
+        namePrefix: d.namePrefix,
+        description: d.description,
         length: d.length!,
-        prize: d.prize,
-        prizeTiersBps: d.prizeTiersBps,
         players: d.players!,
       });
       return;
     }
 
-    // open + a prize pool (seed and/or entry fee) → deploy the tree up front so
-    // the seed is escrowed before anyone joins (trustless) and taps can pay.
-    if (d.mode === "open" && (d.entryFee || d.seed)) {
-      await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
-      return;
-    }
-
-    // free, no-prize open / mix → register, fill, then deploy (nothing to lock).
-    const reg: BracketRegistration = {
-      id: `b${Date.now().toString(36)}`,
-      chain: d.chain,
-      organizerChatId: chatId,
-      announceChatId,
-      game: {
-        contractAddress: d.game!.contractAddress,
-        name: d.game!.name,
-        leaderboardAscending: d.game!.leaderboardAscending,
-        leaderboardGameMustBeOver: d.game!.leaderboardGameMustBeOver,
-      },
-      length: { reg: d.length!.reg, game: d.length!.game, sub: d.length!.sub },
-      prize: d.prize,
-      prizeTiersBps: d.prizeTiersBps,
-      settingsId: d.settingsId,
-      settingsName: d.settingsName,
-      capacity: d.capacity!,
-      players: d.players ?? [],
-      createdAt: Date.now(),
-    };
-    await store.saveRegistration(reg);
-    // Post the live registration card (with a Join button) to the public chat
-    // and remember its location so each join can edit it in place.
-    const messageId = await api
-      .sendCard(reg.announceChatId, registrationCard(reg), joinKeyboard(reg))
-      .catch(() => undefined);
-    if (messageId !== undefined) {
-      reg.cardChatId = reg.announceChatId;
-      reg.cardMessageId = messageId;
-      await store.saveRegistration(reg);
-    }
-    await api.sendMessage(
-      chatId,
-      `✅ Registration ${reg.id} open (${reg.players.length}/${reg.capacity}). Players can tap Join on the card, or /bracket_join ${reg.id} after /connect. Auto-starts when full; /bracket_start ${reg.id} to force-start.`,
-    );
+    // Open brackets deploy the tree up front (no register-then-fill): any seed
+    // is escrowed before anyone joins (trustless), and players tap Join to enter
+    // — paying a fee if set, free otherwise. Tournaments are on-chain at
+    // creation, so there's never a "where are my tournaments?" gap.
+    await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
     return;
   }
 }
@@ -540,58 +411,30 @@ export async function setAnnounceChannel(
   );
 }
 
-// ----- join / start (open & mix) -----
+// ----- join (open brackets are deployed up front; players enter their slot) -----
 
 export async function join(
   api: TelegramApi,
   config: Config,
   store: BracketStore,
   chatId: string,
-  chain: Chain,
+  _chain: Chain,
   id: string,
 ): Promise<void> {
-  const reg = await store.getRegistration(id);
-  if (!reg) {
-    // Paid up-front bracket? Join + pay via the player's session.
-    const b = await store.get(id);
-    if (b?.phase === "filling") {
-      const toast = await paidJoin(api, config, store, b, chatId);
-      await api.sendMessage(chatId, toast);
-      return;
-    }
-    await api.sendMessage(chatId, `No open bracket ${id}.`);
+  const b = await store.get(id);
+  if (b?.phase === "filling") {
+    const toast = await paidJoin(api, config, store, b, chatId);
+    await api.sendMessage(chatId, toast);
     return;
   }
-  const session = await resolveAccount(chatId, chain, config);
-  if (!session.ok) {
-    await api.sendMessage(chatId, `Run /connect first so I can register your wallet for bracket ${id}.`);
-    return;
-  }
-  const me = session.data.address.toLowerCase();
-  if (reg.players.some((p) => p.address.toLowerCase() === me)) {
-    await api.sendMessage(chatId, `You're already in bracket ${id} (${reg.players.length}/${reg.capacity}).`);
-    return;
-  }
-  if (reg.players.length >= reg.capacity) {
-    await api.sendMessage(chatId, `Bracket ${id} is already full.`);
-    return;
-  }
-  const name = session.data.username && session.data.username !== "unknown" ? session.data.username : undefined;
-  reg.players.push({ address: session.data.address, name });
-  await store.saveRegistration(reg);
-  await api.sendMessage(chatId, `✅ You're in bracket ${id} (${reg.players.length}/${reg.capacity}).`);
-  await updateCard(api, reg);
-
-  if (reg.players.length >= reg.capacity) {
-    await deployFromRegistration(api, config, store, reg);
-  }
+  await api.sendMessage(chatId, `No open bracket ${id} to join.`);
 }
 
 /**
  * Handle a tap on the public "Join" button. The callback's `fromId` is the
- * player's Telegram user id, which equals their private-chat id — so we can
- * resolve their /connect session and join them without them typing anything.
- * Feedback is a private toast; the public card is edited in place.
+ * player's Telegram user id, which equals their private-chat id — so we resolve
+ * their /connect session and enter them without them typing anything. Feedback
+ * is a private toast; the public card is edited in place.
  */
 export async function joinViaButton(
   api: TelegramApi,
@@ -605,93 +448,13 @@ export async function joinViaButton(
     await api.answerCallback(callbackQueryId, "Couldn't identify you — try /bracket_join in a DM.", true);
     return;
   }
-  const reg = await store.getRegistration(id);
-  if (!reg) {
-    // Paid up-front bracket? Pay + enter via the tapper's session.
-    const b = await store.get(id);
-    if (b?.phase === "filling") {
-      const toast = await paidJoin(api, config, store, b, String(fromId));
-      await api.answerCallback(callbackQueryId, toast, true);
-      return;
-    }
-    await api.answerCallback(callbackQueryId, "This bracket is no longer open.", true);
+  const b = await store.get(id);
+  if (b?.phase === "filling") {
+    const toast = await paidJoin(api, config, store, b, String(fromId));
+    await api.answerCallback(callbackQueryId, toast, true);
     return;
   }
-  if (reg.players.length >= reg.capacity) {
-    await api.answerCallback(callbackQueryId, "Sorry — it just filled up.", true);
-    return;
-  }
-  const session = await resolveAccount(String(fromId), reg.chain, config);
-  if (!session.ok) {
-    await api.answerCallback(
-      callbackQueryId,
-      `DM me first: open @ the bot, run /connect, then tap Join.`,
-      true,
-    );
-    return;
-  }
-  const me = session.data.address.toLowerCase();
-  if (reg.players.some((p) => p.address.toLowerCase() === me)) {
-    await api.answerCallback(callbackQueryId, `You're already in (${reg.players.length}/${reg.capacity}).`);
-    return;
-  }
-  const name = session.data.username && session.data.username !== "unknown" ? session.data.username : undefined;
-  reg.players.push({ address: session.data.address, name });
-  await store.saveRegistration(reg);
-  await api.answerCallback(callbackQueryId, `✅ You're in! (${reg.players.length}/${reg.capacity})`);
-  await updateCard(api, reg);
-  if (reg.players.length >= reg.capacity) {
-    await deployFromRegistration(api, config, store, reg);
-  }
-}
-
-export async function startNow(
-  api: TelegramApi,
-  config: Config,
-  store: BracketStore,
-  chatId: string,
-  id: string,
-): Promise<void> {
-  const reg = await store.getRegistration(id);
-  if (!reg) {
-    await api.sendMessage(chatId, `No open bracket ${id}.`);
-    return;
-  }
-  if (chatId !== reg.organizerChatId) {
-    await api.sendMessage(chatId, `Only the organizer can start bracket ${id}.`);
-    return;
-  }
-  if (!isPow2(reg.players.length)) {
-    await api.sendMessage(chatId, `Bracket ${id} has ${reg.players.length} players — need a power of two (2, 4, 8, 16…) to start. Wait for more joins, or /cancel via a new bracket.`);
-    return;
-  }
-  await deployFromRegistration(api, config, store, reg);
-}
-
-async function deployFromRegistration(
-  api: TelegramApi,
-  config: Config,
-  store: BracketStore,
-  reg: BracketRegistration,
-): Promise<void> {
-  const game: Game = {
-    contractAddress: reg.game.contractAddress,
-    name: reg.game.name,
-    leaderboardAscending: reg.game.leaderboardAscending,
-    leaderboardGameMustBeOver: reg.game.leaderboardGameMustBeOver,
-  };
-  const ok = await deployResolved(api, config, store, {
-    organizerChatId: reg.organizerChatId,
-    announceChatId: reg.announceChatId,
-    chain: reg.chain,
-    game,
-    settingsId: reg.settingsId,
-    length: reg.length,
-    prize: reg.prize,
-    prizeTiersBps: reg.prizeTiersBps,
-    players: reg.players,
-  });
-  if (ok) await store.deleteRegistration(reg.id);
+  await api.answerCallback(callbackQueryId, "This bracket is no longer open.", true);
 }
 
 // ----- deploy (shared) -----
@@ -702,9 +465,10 @@ interface DeployParams {
   chain: Chain;
   game: Game;
   settingsId?: number;
+  roundSettingsIds?: number[];
+  namePrefix?: string;
+  description?: string;
   length: { reg: number; game: number; sub: number };
-  prize?: { tokenAddress: string; amount: string; label: string };
-  prizeTiersBps?: number[];
   players: Player[];
 }
 
@@ -737,7 +501,9 @@ async function deployResolved(
     chain: chain as BracketState["chain"],
     settingsId: p.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
-    namePrefix: p.game.name.slice(0, 12),
+    namePrefix: p.namePrefix ?? p.game.name.slice(0, 12),
+    ...(p.roundSettingsIds ? { roundSettingsIds: p.roundSettingsIds } : {}),
+    ...(p.description ? { description: p.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
       registrationEndDelay: p.length.reg,
@@ -776,16 +542,6 @@ async function deployResolved(
         await session.data.account.execute(bracketEntryCalls(state, m.id, player.address));
       }
     }
-    // Sponsored prize: the organizer's session escrows it across the placement
-    // tiers (default champion-takes-all) now that every match exists.
-    if (p.prize) {
-      const prizeCalls = bracketFeePrizeCalls(state, {
-        tokenAddress: p.prize.tokenAddress,
-        fee: p.prize.amount,
-        tiersBps: p.prizeTiersBps ?? [10000],
-      });
-      if (prizeCalls.length > 0) await session.data.account.execute(prizeCalls);
-    }
   } catch (error) {
     await store.save({ state, organizerChatId, announceChatId }).catch(() => {});
     await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /brackets shows what's live.`);
@@ -793,7 +549,7 @@ async function deployResolved(
   }
 
   await store.save({ state, organizerChatId, announceChatId });
-  await api.sendMessage(organizerChatId, `✅ Bracket ${id} deployed. Round 1 is live and players are entered.`);
+  await api.sendMessage(organizerChatId, `✅ Bracket ${id} deployed. Round 1 is live and players are entered.\n\n${addPrizeHint(state)}`);
   await announceTo(api, announceChatId, `🥊 The bracket is on!\n\n${presentation({ state, organizerChatId, announceChatId })}`);
   return true;
 }
@@ -838,7 +594,9 @@ async function deployPaidUpfront(
     chain: chain as BracketState["chain"],
     settingsId: d.settingsId ?? 0,
     creatorRewardsAddress: session.data.address,
-    namePrefix: game.name.slice(0, 12),
+    namePrefix: d.namePrefix ?? game.name.slice(0, 12),
+    ...(d.roundSettingsIds ? { roundSettingsIds: d.roundSettingsIds } : {}),
+    ...(d.description ? { description: d.description } : {}),
     scheduleTemplate: {
       registrationStartDelay: 0,
       registrationEndDelay: d.length!.reg,
@@ -858,9 +616,12 @@ async function deployPaidUpfront(
   const tiersBps = d.tiersBps ?? [10000];
   const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
   await api.sendMessage(organizerChatId, `⏳ Deploying ${bracketRounds(state)} rounds for a ${capacity}-player bracket…`);
+  let step = "starting";
   try {
     for (let round = 1; round <= bracketRounds(state); round++) {
       for (const { matchId, call } of roundMatchCreateCalls(state, round)) {
+        step = `creating match ${matchId} (round ${round}${round > 1 ? ", gated" : ""})`;
+        console.error(`[bracket ${id}] ${step}: create_tournament settingsId=${d.settingsId ?? 0}`);
         const tx = await session.data.account.execute([call]);
         const receipt = (await rpc.waitForTransaction(tx.transaction_hash)) as {
           events?: Array<{ from_address?: string; keys?: string[] }>;
@@ -870,18 +631,8 @@ async function deployPaidUpfront(
         attachMatchTournament(state, matchId, tid.toString());
       }
     }
-    // Escrow the sponsor seed NOW (before anyone joins) so the prize is locked
-    // and trustlessly visible — distributed across the placement tiers.
-    if (d.seed) {
-      const seedCalls = bracketFeePrizeCalls(state, {
-        tokenAddress: d.seed.tokenAddress,
-        fee: d.seed.amount,
-        tiersBps,
-      });
-      if (seedCalls.length > 0) await session.data.account.execute(seedCalls);
-    }
   } catch (error) {
-    await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}`);
+    await api.sendMessage(organizerChatId, `❌ Deploy stopped while ${step}: ${formatError(error)}`);
     return;
   }
 
@@ -889,10 +640,10 @@ async function deployPaidUpfront(
     state,
     organizerChatId,
     announceChatId,
+    ...(d.description ? { description: d.description } : {}),
     paid: d.entryFee
       ? { tokenAddress: d.entryFee.tokenAddress, fee: d.entryFee.amount, tiersBps, label: d.entryFee.label }
       : undefined,
-    seed: d.seed ? { tokenAddress: d.seed.tokenAddress, amount: d.seed.amount, tiersBps, label: d.seed.label } : undefined,
     capacity,
     filled: 0,
     phase: "filling",
@@ -907,10 +658,9 @@ async function deployPaidUpfront(
   const joinLine = d.entryFee
     ? `Players tap Join to pay ${d.entryFee.label} (adds to the pool) and enter.`
     : `Players tap Join to enter (free).`;
-  const seedLine = d.seed ? ` Seed of ${d.seed.label} is locked.` : "";
   await api.sendMessage(
     organizerChatId,
-    `✅ Bracket ${id} deployed & open (0/${capacity}).${seedLine} ${joinLine} Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).`,
+    `✅ Bracket ${id} deployed & open (0/${capacity}). ${joinLine} Round 1 starts at the sign-up deadline (${Math.round(d.length!.reg / 60)}m).\n\n${addPrizeHint(b.state)}`,
   );
 }
 
@@ -1032,19 +782,28 @@ export async function sponsorPaid(
   await api.sendMessage(chatId, toast);
 }
 
+/** How to add a prize pool — deferred to budokan.gg (the final match). */
+function addPrizeHint(state: BracketState): string {
+  const chain = state.chain as Chain;
+  const final = state.matches.find((m) => m.round === bracketRounds(state) && m.tournamentId);
+  return final?.tournamentId
+    ? `🏆 Add a prize pool on budokan.gg — sponsor it on the final match: ${tournamentPageUrl(chain, final.tournamentId)}`
+    : `🏆 Add a prize pool on budokan.gg once the matches are live.`;
+}
+
 function paidCard(b: StoredBracket): string {
   const cap = b.capacity ?? 0;
   const filled = b.filled ?? 0;
   const remaining = cap - filled;
   const real = b.state.players.filter(isReal);
-  const tiersBps = b.seed?.tiersBps ?? b.paid?.tiersBps;
+  const tiersBps = b.paid?.tiersBps;
   const lines = [
     "━━━━━━━━━━━━━━━━━━",
     `🥊 ${b.state.namePrefix} — 1v1 Bracket`,
     "📊 Registration",
     `👥 Players: ${filled}/${cap}`,
   ];
-  if (b.seed) lines.push(`💰 Seed (locked): ${b.seed.label}`);
+  if (b.description) lines.push(`📝 ${b.description}`);
   if (b.paid) lines.push(`💸 Entry: ${b.paid.label} (adds to pool)`);
   else lines.push(`💸 Entry: free`);
   if (tiersBps) lines.push(`📊 Pays: ${tiersBps.map((bp) => `${(bp / 100).toFixed(0)}%`).join(" / ")}`);
@@ -1093,6 +852,28 @@ async function updatePaidCard(api: TelegramApi, b: StoredBracket): Promise<void>
 
 // ----- advancement (poller) -----
 
+/** Anything that can sign + submit the winner-entry multicalls. */
+type Advancer = { execute: (calls: ReturnType<typeof bracketEntryCalls>) => Promise<{ transaction_hash: string }> };
+
+/**
+ * The bot-operator account, if configured: a funded Starknet account the poller
+ * uses to enter winners on their behalf, so advancement never hinges on the
+ * organizer's session. Entering is permissionless (no fund access) — the
+ * account only needs STRK for gas.
+ */
+function getOperatorAccount(config: Config, chain: Chain): Advancer | null {
+  if (!config.operatorPrivateKey || !config.operatorAddress) return null;
+  const provider = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
+  return new Account({
+    provider,
+    address: config.operatorAddress,
+    signer: config.operatorPrivateKey,
+  }) as unknown as Advancer;
+}
+
+/** Brackets we've already DM'd the organizer about (no operator + session gone). */
+const stalledNudged = new Set<string>();
+
 export async function advanceStoredBracket(
   api: TelegramApi,
   config: Config,
@@ -1102,8 +883,27 @@ export async function advanceStoredBracket(
   // A paid bracket still gathering players isn't running yet — don't advance it.
   if (b.phase === "filling") return;
   const chain = b.state.chain as Chain;
-  const session = await resolveAccount(b.organizerChatId, chain, config);
-  if (!session.ok) return;
+
+  // Prefer the bot operator (no organizer dependency); fall back to the
+  // organizer's session if no operator is configured.
+  let advancer = getOperatorAccount(config, chain);
+  if (!advancer) {
+    const session = await resolveAccount(b.organizerChatId, chain, config);
+    if (session.ok) advancer = session.data.account as unknown as Advancer;
+  }
+  if (!advancer) {
+    if (!stalledNudged.has(b.state.id)) {
+      stalledNudged.add(b.state.id);
+      await api
+        .sendMessage(
+          b.organizerChatId,
+          `⏳ Bracket ${b.state.id} is waiting to advance — run /connect again so I can enter the round's winners (or set a bot operator account to do it automatically).`,
+        )
+        .catch(() => {});
+    }
+    return;
+  }
+  stalledNudged.delete(b.state.id);
 
   const before = bracketSummary(b.state);
   const read = buildReader(config, chain);
@@ -1116,7 +916,10 @@ export async function advanceStoredBracket(
     if (!m.playerA || !m.playerB) continue;
     try {
       for (const player of [m.playerA, m.playerB]) {
-        await session.data.account.execute(bracketEntryCalls(state, m.id, player.address));
+        // Skip placeholder (0x0) slots — a walkover auto-advances, and entering
+        // 0x0 would just be a failing tx.
+        if (!isReal(player)) continue;
+        await advancer.execute(bracketEntryCalls(state, m.id, player.address));
       }
       entered.add(m.id);
     } catch (error) {
@@ -1172,18 +975,15 @@ export async function list(
   chain: Chain,
 ): Promise<void> {
   const deployed = (await store.all()).filter((b) => (b.state.chain as Chain) === chain);
-  const open = (await store.allRegistrations()).filter((r) => r.chain === chain);
-  if (deployed.length === 0 && open.length === 0) {
+  if (deployed.length === 0) {
     await api.sendMessage(chatId, `No brackets on ${chain}. Create one with /bracket.`);
     return;
   }
   const lines = [`🥊 Brackets on ${chain}:`, ""];
-  for (const r of open) {
-    lines.push(`  • ${r.id} [registering ${r.players.length}/${r.capacity}] · join: /bracket_join ${r.id}`);
-  }
   for (const b of deployed) {
     const champ = b.state.champion ? ` — 🏆 ${b.state.champion.name ?? short(b.state.champion.address)}` : "";
-    lines.push(`  • ${b.state.id} [${b.state.status}] · ${b.state.players.length} players${champ} · /bracket_view ${b.state.id}`);
+    const phase = b.phase === "filling" ? `filling ${b.filled ?? 0}/${b.capacity ?? 0}` : b.state.status;
+    lines.push(`  • ${b.state.id} [${phase}] · ${b.state.players.length} players${champ} · /bracket_view ${b.state.id}`);
   }
   await api.sendMessage(chatId, lines.join("\n"));
 }
@@ -1200,11 +1000,6 @@ export async function view(
     else await api.sendMessage(chatId, presentation(b));
     return;
   }
-  const reg = await store.getRegistration(id);
-  if (reg) {
-    await api.sendCard(chatId, registrationCard(reg), joinKeyboard(reg));
-    return;
-  }
   await api.sendMessage(chatId, `No bracket ${id}.`);
 }
 
@@ -1214,50 +1009,6 @@ async function announceTo(api: TelegramApi, chatId: string, text: string): Promi
   } catch (error) {
     console.error("bracket announce failed:", formatError(error));
   }
-}
-
-/** The live, public registration card (edited in place as players join). */
-function registrationCard(reg: BracketRegistration): string {
-  const remaining = reg.capacity - reg.players.length;
-  const lines = [
-    "━━━━━━━━━━━━━━━━━━",
-    `🥊 ${reg.game.name} — 1v1 Bracket`,
-    "📊 Registration",
-    `👥 Players: ${reg.players.length}/${reg.capacity}`,
-  ];
-  if (reg.prize) lines.push(`🏆 Prize: ${reg.prize.label}${splitSuffix(reg.prizeTiersBps)}`);
-  lines.push("", "Registered:");
-  if (reg.players.length === 0) {
-    lines.push("  (be the first!)");
-  } else {
-    reg.players.forEach((p, i) => lines.push(`  ${i + 1}. ${p.name ?? short(p.address)}`));
-  }
-  lines.push("");
-  if (remaining > 0) {
-    lines.push(`🪑 ${remaining} spot${remaining === 1 ? "" : "s"} remaining!`);
-    lines.push("🎮 Tap Join below — first /connect in a DM with me.");
-  } else {
-    lines.push("🚀 Full — starting the bracket!");
-  }
-  return lines.join("\n");
-}
-
-/** Inline keyboard with the Join button (omitted once full). */
-function joinKeyboard(
-  reg: BracketRegistration,
-): { inline_keyboard: InlineKeyboardButton[][] } | undefined {
-  if (reg.players.length >= reg.capacity) return undefined;
-  return {
-    inline_keyboard: [
-      [{ text: `🎮 Join (${reg.players.length}/${reg.capacity})`, callback_data: `bjoin:${reg.id}` }],
-    ],
-  };
-}
-
-/** Re-render the public registration card in place after a roster change. */
-async function updateCard(api: TelegramApi, reg: BracketRegistration): Promise<void> {
-  if (!reg.cardChatId || reg.cardMessageId === undefined) return;
-  await api.editCard(reg.cardChatId, reg.cardMessageId, registrationCard(reg), joinKeyboard(reg));
 }
 
 function presentation(b: StoredBracket): string {
@@ -1294,7 +1045,7 @@ async function sendLengthPrompt(api: TelegramApi, chatId: string): Promise<void>
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
-/** Numbered token picker shared by the entry-fee and sponsored-prize steps. */
+/** Numbered token picker for the entry-fee step. */
 async function sendTokenList(
   api: TelegramApi,
   chain: Chain,
@@ -1312,8 +1063,8 @@ async function sendTokenList(
 
 /**
  * Tokens the /connect session can actually escrow — i.e. those with an `approve`
- * spend cap in the session policy (see policies.ts). Seed / entry-fee / prize
- * must come from here, or the in-session escrow would be unauthorized.
+ * spend cap in the session policy (see policies.ts). Entry fees must come from
+ * here, or the in-session escrow would be unauthorized.
  */
 function spendableTokens(chain: Chain): readonly Erc20Token[] {
   return tokensForChain(chain).filter((t) => t.spendLimit);
@@ -1331,10 +1082,35 @@ async function sendFeeSplitPrompt(api: TelegramApi, chatId: string): Promise<voi
   await api.sendMessage(chatId, lines.join("\n"));
 }
 
-/** " → 60/30/10%" for a multi-tier split; "" for champion-takes-all. */
-function splitSuffix(tiersBps?: number[]): string {
-  if (!tiersBps || tiersBps.length <= 1) return "";
-  return ` → ${tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join("/")}`;
+/**
+ * Funding step. Open brackets take an optional per-entry fee (in-session, ≤ the
+ * ~$10 session cap) that builds the placement pool. Closed brackets have no
+ * in-bot funding — the organizer adds any prize on budokan.gg after creation.
+ */
+async function sendFundingPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  if (d.mode === "open") {
+    d.step = "feeToken";
+    await sendFeeTokenPrompt(api, d.chain, chatId);
+  } else {
+    d.step = "confirm";
+    await api.sendMessage(chatId, confirmText(d));
+  }
+}
+
+async function sendNamePrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  d.step = "name";
+  await api.sendMessage(
+    chatId,
+    `🏷️ Bracket name? (titles the card + each match, e.g. "Friday Cup") Reply with text, or 'skip' to use "${d.game!.name}". /cancel to abort.`,
+  );
+}
+
+async function sendDescriptionPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  d.step = "description";
+  await api.sendMessage(
+    chatId,
+    "📝 Bracket description? It shows on the card + budokan.gg. Reply with text, or 'skip'. /cancel to abort.",
+  );
 }
 
 async function sendModePrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
@@ -1362,7 +1138,7 @@ async function renderBracketSettings(api: TelegramApi, d: Draft, chatId: string,
     d.settingsId = 0;
     d.settingsName = "(default)";
     await api.sendMessage(chatId, "No settings registered for this game — using settings ID 0.");
-    await sendModePrompt(api, d, chatId);
+    await sendNamePrompt(api, d, chatId);
     return;
   }
   const pages = Math.max(1, Math.ceil(page.total / page.limit));
@@ -1381,7 +1157,7 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   if (lower === "skip") {
     d.settingsId = 0;
     d.settingsName = "(default)";
-    await sendModePrompt(api, d, chatId);
+    await sendNamePrompt(api, d, chatId);
     return;
   }
   if (lower === "retry") {
@@ -1418,36 +1194,33 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
   const chosen = page.data[n - 1]!;
   d.settingsId = chosen.id;
   d.settingsName = chosen.name ?? `ID ${chosen.id}`;
-  await sendModePrompt(api, d, chatId);
+  await sendNamePrompt(api, d, chatId);
 }
 
 function confirmText(d: Draft): string {
   const roster =
     d.mode === "open"
       ? `open, capacity ${d.capacity}`
-      : d.mode === "mix"
-        ? `mix — ${d.players!.length} seeded, capacity ${d.capacity}`
-        : `closed — ${d.players!.length} players`;
+      : `closed — ${d.players!.length} players`;
   return [
     "🧾 Confirm bracket:",
     `  • Game: ${d.game!.name}`,
-    `  • Settings: ${d.settingsName ?? "(default)"}`,
+    `  • Name: ${d.namePrefix ?? d.game!.name}`,
+    `  • Settings: ${d.settingsName ?? "(default)"}${d.roundSettingsIds ? ` (per round: ${d.roundSettingsIds.join(", ")})` : ""}`,
+    ...(d.description ? [`  • Description: ${d.description}`] : []),
     `  • Roster: ${roster}`,
     `  • Match length: ${d.length!.label}`,
-    ...(d.seed ? [`  • Seed (locked up front): ${d.seed.label}`] : []),
-    ...(d.entryFee ? [`  • Entry fee: ${d.entryFee.label} (adds to pool)`] : []),
-    ...((d.seed || d.entryFee) && d.tiersBps
-      ? [`  • Pays: ${d.tiersBps.map((b) => `${(b / 100).toFixed(0)}%`).join(" / ")}`]
-      : []),
-    ...(d.prize ? [`  • Prize: ${d.prize.label}${splitSuffix(d.prizeTiersBps)}`] : []),
-    ...(d.mode !== "open" && !d.prize ? [`  • Prize: none`] : []),
-    ...(d.mode === "open" && !d.seed && !d.entryFee ? [`  • Prize: none (free)`] : []),
+    ...(d.entryFee
+      ? [
+          `  • Entry fee: ${d.entryFee.label} (adds to pool)`,
+          `  • Pays: ${(d.tiersBps ?? [10000]).map((b) => `${(b / 100).toFixed(0)}%`).join(" / ")}`,
+        ]
+      : [`  • Entry: free`]),
+    `  • Prize pool: add on budokan.gg after creation`,
     "",
-    d.mode === "open" && (d.seed || d.entryFee)
-      ? "Deploys the gated tree now (seed locked up front); players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
-      : d.mode === "closed"
-        ? "Deploys the gated tree now and enters round 1 for the players."
-        : "Opens registration; deploys automatically when it fills.",
+    d.mode === "open"
+      ? "Deploys the gated tree now; players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
+      : "Deploys the gated tree now and enters round 1 for the players.",
     "",
     "Reply 'yes', or /cancel.",
   ].join("\n");

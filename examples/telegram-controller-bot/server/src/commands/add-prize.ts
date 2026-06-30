@@ -56,6 +56,31 @@ export function cancel(chatId: string): boolean {
 
 export async function start(
   api: TelegramApi,
+  _config: Config,
+  chatId: string,
+  chain: Chain,
+  args: string[],
+): Promise<void> {
+  // Prize funding is deferred to budokan.gg — the in-session path is capped at
+  // ~$10 (entry fees only), so larger prizes are sponsored on the web app.
+  const id = args[0] && /^\d+$/.test(args[0]) ? args[0] : undefined;
+  const link = id ? tournamentPageUrl(chain, id) : `https://budokan.gg/?network=${chain}`;
+  await api.sendMessage(
+    chatId,
+    [
+      "🏆 Prizes are added on budokan.gg now (not in the bot).",
+      id
+        ? `Sponsor this tournament's prize pool here: ${link}`
+        : `Open your tournament on budokan.gg and add a prize there: ${link}`,
+      "(The bot keeps in-session spending to small entry fees.)",
+    ].join("\n"),
+  );
+}
+
+// Legacy in-session add-prize flow below is retained but no longer reached
+// (start() defers to budokan.gg). Kept for reference / future re-enable.
+async function startLegacy(
+  api: TelegramApi,
   config: Config,
   chatId: string,
   chain: Chain,

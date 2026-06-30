@@ -25,6 +25,16 @@ export interface Config {
   voyagerProxyToken?: string;
   /** Optional public chat id for bracket announcements; falls back to DM. */
   bracketChannelId?: string;
+  /**
+   * Optional bot-operator account (a funded Starknet account: private key +
+   * address) that the poller uses to advance brackets — entering each round's
+   * winners into the next match on their behalf — so advancement never depends
+   * on the organizer's session staying alive. Permissionless action (no fund
+   * access); only needs STRK for gas. Falls back to the organizer session when
+   * unset.
+   */
+  operatorPrivateKey?: string;
+  operatorAddress?: string;
 }
 
 export function loadConfig(): Config {
@@ -72,6 +82,8 @@ export function loadConfig(): Config {
     // Optional public chat (group/channel id) to post bracket trees + updates
     // to. Falls back to the organizer's DM when unset.
     bracketChannelId: env("BRACKET_CHANNEL_ID"),
+    operatorPrivateKey: env("BOT_OPERATOR_PRIVATE_KEY"),
+    operatorAddress: env("BOT_OPERATOR_ADDRESS"),
   };
 }
 
