@@ -95,9 +95,15 @@ export class BracketStore {
     }
     const out: StoredBracket[] = [];
     for (const entry of entries) {
-      if (!entry.endsWith(".json")) continue;
+      // Only bracket files. The announce-channel setting lives in this same dir
+      // as announce-channel.json — reading it as a bracket would crash callers
+      // (it has no `.state`), which previously killed the poller once /channel
+      // was set.
+      if (!entry.endsWith(".json") || entry === "announce-channel.json") continue;
       try {
-        out.push(JSON.parse(await readFile(join(dir, entry), "utf8")) as StoredBracket);
+        const parsed = JSON.parse(await readFile(join(dir, entry), "utf8")) as StoredBracket;
+        // Guard against any other non-bracket / partial file.
+        if (parsed?.state?.status) out.push(parsed);
       } catch {
         // skip corrupt/partial files
       }
