@@ -799,6 +799,19 @@ async function enterPaidSlot(
   if (!sponsoring) (b.playerChats ??= {})[addr] = payerChatId;
   await store.save(b);
   await updatePaidCard(api, b);
+
+  // DM the joiner a direct Play link right away, so they never hunt for the id.
+  // (Their match starts at the sign-up deadline; the tournament page shows when.)
+  if (!sponsoring && match.tournamentId) {
+    const url = tournamentPageUrl(b.state.chain as Chain, match.tournamentId);
+    await api
+      .sendMessage(
+        payerChatId,
+        `✅ You're in ${b.state.namePrefix ?? "the bracket"}! ▶️ Play your round-1 match here (opens when round 1 starts):\n${url}`,
+        { replyMarkup: { inline_keyboard: [[{ text: "▶️ Play", url }]] } },
+      )
+      .catch(() => {});
+  }
   const paidPrefix = paid ? `Paid ${paid.label} — ` : "";
   if (b.phase === "live") {
     return `✅ ${paidPrefix}${sponsoring ? "sponsored entry added" : "you're in"}; the bracket is starting!`;
