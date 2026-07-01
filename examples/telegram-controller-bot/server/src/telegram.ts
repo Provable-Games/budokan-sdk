@@ -53,6 +53,7 @@ export class TelegramBot {
   private readonly api: TelegramApi;
   private readonly abort = new AbortController();
   private stopping = false;
+  private botUsername = ""; // learned via getMe at startup; used for DM deeplinks
 
   constructor(
     private readonly config: Config,
@@ -84,7 +85,10 @@ export class TelegramBot {
     await this.api
       .call<{ username?: string }>("getMe", {})
       .then((me) => {
-        if (me?.username) bracketCmd.setBotUsername(me.username);
+        if (me?.username) {
+          this.botUsername = me.username;
+          bracketCmd.setBotUsername(me.username);
+        }
       })
       .catch((error: unknown) => {
         console.error("getMe failed:", error instanceof Error ? error.message : error);
@@ -159,8 +163,13 @@ export class TelegramBot {
       if (!isCommand) return; // ignore non-command chatter silently
       const GROUP_OK = new Set(["/channel", "/tournaments", "/leaderboard", "/help"]);
       if (!GROUP_OK.has(command ?? "")) {
+        const link = this.dmDeeplink(command ?? "");
         await this.api
-          .sendMessage(chatId, "👋 Connecting, creating, joining and claiming happen in a private chat with me — DM me to do that. Here I just post updates and accept ▶ Join taps.")
+          .sendMessage(
+            chatId,
+            "👋 Connecting, creating, joining and claiming happen in a private chat with me — tap below to open our DM. Here I just post updates and accept ▶ Join taps.",
+            link ? { replyMarkup: { inline_keyboard: [[{ text: "💬 Open a DM with me", url: link }]] } } : {},
+          )
           .catch(() => {});
         return;
       }
@@ -446,6 +455,15 @@ export class TelegramBot {
    * The dispatched command prompts /connect when there's no session yet, so an
    * unconnected first-timer lands on a clear next step rather than a dead end.
    */
+  /** A t.me link into the bot's DM, pre-starting the flow for create/connect. */
+  private dmDeeplink(command: string): string | undefined {
+    if (!this.botUsername) return undefined;
+    const base = `https://t.me/${this.botUsername}`;
+    if (command === "/create") return `${base}?start=create`;
+    if (command === "/connect") return `${base}?start=connect`;
+    return base; // generic: just open the DM
+  }
+
   /**
    * Posts in a broadcast channel arrive as `channel_post` (the bot must be an
    * admin to receive them). Only `/channel` is actionable here — it registers
