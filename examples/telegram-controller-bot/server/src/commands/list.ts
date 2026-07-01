@@ -50,25 +50,35 @@ export async function tournaments(
   args: string[],
 ): Promise<void> {
   const chain = await chatStates.getChain(chatId);
-  const { phase, page } = parseListArgs(args);
-  if (phase === "invalid") {
+  const parsed = parseListArgs(args);
+  if (parsed.phase === "invalid") {
     await api.sendMessage(
       chatId,
-      `Usage: /tournaments [phase] [page]\nPhases: ${ALL_PHASES.join(", ")}`,
+      `Usage: /tournaments [phase|all] [page]\nNo phase = active only. Phases: ${ALL_PHASES.join(", ")}`,
     );
     return;
   }
+  const { phase, page } = parsed;
+  const gameNames = await gameInfoMap(chain);
+
+  // Default (no phase) → an active-only overview, so finished tournaments don't
+  // bury the ones you can act on. `all` or a specific phase give the full,
+  // paginated view.
+  if (phase === undefined) {
+    return activeOverview(api, config, chatId, chain, gameNames);
+  }
+
+  const apiPhase = phase === "all" ? undefined : phase;
+  const label = phase === "all" ? "all" : phase;
   const offset = (page - 1) * PAGE_SIZE;
 
   let result;
   try {
     result = await sdkClient(config, chain).getTournaments({
-      ...(phase ? { phase } : {}),
+      ...(apiPhase ? { phase: apiPhase } : {}),
       limit: PAGE_SIZE,
       offset,
       sort: "created_at",
-      // Populate prizeAggregation per tournament so we can show the top
-      // tokens inline without N+1 fetches.
       includePrizeSummary: true,
     });
   } catch (error) {
@@ -78,35 +88,67 @@ export async function tournaments(
 
   if (result.data.length === 0) {
     const hint = page > 1 ? "  (try a lower page)" : "";
-    await api.sendMessage(
-      chatId,
-      phase
-        ? `🎯 No ${phase} tournaments on ${chain}.${hint}`
-        : `🎯 No tournaments on ${chain}.${hint}`,
-    );
+    await api.sendMessage(chatId, `🎯 No ${label} tournaments on ${chain}.${hint}`);
     return;
   }
 
-  const gameNames = await gameInfoMap(chain);
   const total = result.total ?? result.data.length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const header = [
-    `🏟️ Tournaments on ${chain}`,
-    phase ? `· ${phase}` : "",
-    `· page ${page}/${totalPages} · ${total} total`,
-  ].filter(Boolean).join(" ");
-
+  const header = `🏟️ Tournaments on ${chain} · ${label} · page ${page}/${totalPages} · ${total} total`;
   const lines = [header, "", ...result.data.flatMap((t) => formatTournamentBlock(t, gameNames, chain))];
+  if (page < totalPages) lines.push("", `Next page: /tournaments ${label} ${page + 1}`);
 
-  if (totalPages > 1) {
-    const args = [phase, page + 1].filter(Boolean).join(" ");
-    if (page < totalPages) lines.push("", `Reply '/tournaments ${args}' for the next page.`);
+  const enterButtons: InlineKeyboardButton[][] = result.data
+    .filter((t) => isEnterable(t))
+    .map((t) => [{ text: `▶ Enter #${t.id}`, callback_data: `enter:${t.id}` }]);
+
+  await api.sendMessage(
+    chatId,
+    lines.join("\n"),
+    enterButtons.length > 0 ? { replyMarkup: { inline_keyboard: enterButtons } } : {},
+  );
+}
+
+// The phases users can act on now. Shown by default so finished tournaments
+// don't drown them out.
+const ACTIVE_PHASES: Phase[] = ["registration", "live", "submission"];
+
+/** Default /tournaments view: the active phases merged, most-recent first. */
+async function activeOverview(
+  api: TelegramApi,
+  config: Config,
+  chatId: string,
+  chain: Chain,
+  gameNames: Map<string, GameInfo>,
+): Promise<void> {
+  const results = await Promise.all(
+    ACTIVE_PHASES.map((ph) =>
+      sdkClient(config, chain)
+        .getTournaments({ phase: ph, limit: 15, sort: "created_at", includePrizeSummary: true })
+        .catch(() => ({ data: [], total: 0 })),
+    ),
+  );
+  const merged = results.flatMap((r) => r.data).sort((a, b) => Number(b.id) - Number(a.id));
+
+  const more = "🔎 /tournaments scheduled (upcoming) · /tournaments finalized (past) · /tournaments all";
+  if (merged.length === 0) {
+    await api.sendMessage(chatId, [`🎯 No active tournaments on ${chain}.`, "", more].join("\n"));
+    return;
   }
 
-  // One "Enter" button per currently-enterable tournament on the page. Tapping
-  // it fires a callback the bot turns into /enter <id> (see telegram.ts
-  // handleCallback). Buttons only appear for registration/staging/live phases.
-  const enterButtons: InlineKeyboardButton[][] = result.data
+  const CAP = 15;
+  const shown = merged.slice(0, CAP);
+  const lines = [
+    `🏟️ Active tournaments on ${chain} — ${merged.length} (registration · live · submission)`,
+    "",
+    ...shown.flatMap((t) => formatTournamentBlock(t, gameNames, chain)),
+  ];
+  if (merged.length > CAP) {
+    lines.push("", `…and ${merged.length - CAP} more — narrow with /tournaments registration | live | submission.`);
+  }
+  lines.push("", more);
+
+  const enterButtons: InlineKeyboardButton[][] = shown
     .filter((t) => isEnterable(t))
     .map((t) => [{ text: `▶ Enter #${t.id}`, callback_data: `enter:${t.id}` }]);
 
@@ -280,8 +322,10 @@ function formatTournamentBlock(
   return lines;
 }
 
-function parseListArgs(args: string[]): { phase?: Phase; page: number } | { phase: "invalid"; page: number } {
-  let phase: Phase | undefined;
+function parseListArgs(
+  args: string[],
+): { phase?: Phase | "all"; page: number } | { phase: "invalid"; page: number } {
+  let phase: Phase | "all" | undefined;
   let page = 1;
   for (const arg of args) {
     if (!arg) continue;
@@ -290,8 +334,9 @@ function parseListArgs(args: string[]): { phase?: Phase; page: number } | { phas
       if (n >= 1) page = n;
     } else {
       const lower = arg.toLowerCase();
-      if (!isPhase(lower)) return { phase: "invalid", page };
-      phase = lower;
+      if (lower === "all") phase = "all";
+      else if (isPhase(lower)) phase = lower;
+      else return { phase: "invalid", page };
     }
   }
   return { phase, page };
