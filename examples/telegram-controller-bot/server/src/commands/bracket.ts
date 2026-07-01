@@ -612,7 +612,11 @@ async function deployResolved(
   }
 
   await store.save({ state, organizerChatId, announceChatId });
-  await api.sendMessage(organizerChatId, `✅ Bracket ${id} deployed, players entered. Round 1 starts ${startSummary(p.startDelaySec)}.\n\n${addPrizeHint(state)}`);
+  await api.sendMessage(
+    organizerChatId,
+    `✅ Bracket ${id} deployed, players entered. Round 1 starts ${startSummary(p.startDelaySec)}.\n\n${addPrizeHint(state)}`,
+    addPrizeButton(state) ? { replyMarkup: addPrizeButton(state) } : {},
+  );
   await announceTo(api, announceChatId, `🥊 The bracket is on!\n\n${presentation({ state, organizerChatId, announceChatId })}`);
   return true;
 }
@@ -724,6 +728,7 @@ async function deployPaidUpfront(
   await api.sendMessage(
     organizerChatId,
     `✅ Bracket ${id} deployed & open (0/${capacity}). ${joinLine} Round 1 starts ${startSummary(d.startDelaySec!)}.\n\n${addPrizeHint(b.state)}`,
+    addPrizeButton(b.state) ? { replyMarkup: addPrizeButton(b.state) } : {},
   );
 }
 
@@ -893,13 +898,25 @@ export async function sponsorPaid(
   await api.sendMessage(chatId, toast);
 }
 
-/** How to add a prize pool — deferred to budokan.gg (the final match). */
-function addPrizeHint(state: BracketState): string {
-  const chain = state.chain as Chain;
+/** budokan.gg URL of the bracket's FINAL match (its winner is the champion, so
+ *  that's where the prize pool goes). Undefined until the final is created. */
+function bracketFinalUrl(state: BracketState): string | undefined {
   const final = state.matches.find((m) => m.round === bracketRounds(state) && m.tournamentId);
-  return final?.tournamentId
-    ? `🏆 Add a prize pool on budokan.gg — sponsor it on the final match: ${tournamentPageUrl(chain, final.tournamentId)}`
-    : `🏆 Add a prize pool on budokan.gg once the matches are live.`;
+  return final?.tournamentId ? tournamentPageUrl(state.chain as Chain, final.tournamentId) : undefined;
+}
+
+/** Guidance for adding a prize pool — always to the FINAL match on budokan.gg. */
+function addPrizeHint(state: BracketState): string {
+  const url = bracketFinalUrl(state);
+  return url
+    ? `🏆 Want a prize pool? Add it on budokan.gg to the bracket's FINAL match — its winner is the champion, so the pool lives there. Tap the button below (or open ${url}).`
+    : `🏆 To add a prize pool, sponsor the FINAL match on budokan.gg once the tree is live.`;
+}
+
+/** Inline button linking straight to the final match's budokan.gg page. */
+function addPrizeButton(state: BracketState): { inline_keyboard: InlineKeyboardButton[][] } | undefined {
+  const url = bracketFinalUrl(state);
+  return url ? { inline_keyboard: [[{ text: "🏆 Add prize (final match)", url }]] } : undefined;
 }
 
 function paidCard(b: StoredBracket): string {
