@@ -578,12 +578,16 @@ async function deployResolved(
       }
       await store.save({ state, organizerChatId, announceChatId });
     }
-    for (const m of state.matches.filter((x) => x.round === 1 && x.tournamentId)) {
-      for (const player of [m.playerA, m.playerB]) {
-        if (!player) continue;
-        await session.data.account.execute(bracketEntryCalls(state, m.id, player.address));
-      }
-    }
+    // Enter (= mint the game token for) every round-1 player in ONE multicall,
+    // instead of a separate tx per player.
+    const entryCalls = state.matches
+      .filter((x) => x.round === 1 && x.tournamentId)
+      .flatMap((m) =>
+        [m.playerA, m.playerB]
+          .filter((pl): pl is NonNullable<typeof pl> => !!pl)
+          .flatMap((player) => bracketEntryCalls(state, m.id, player.address)),
+      );
+    if (entryCalls.length > 0) await session.data.account.execute(entryCalls);
   } catch (error) {
     await store.save({ state, organizerChatId, announceChatId }).catch(() => {});
     await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /tournaments shows what's live.`);
