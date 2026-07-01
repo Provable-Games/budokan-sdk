@@ -141,12 +141,22 @@ const FEE_SPLITS = [
 ] as const;
 
 const drafts = new Map<string, Draft>();
+// chatId -> bracketId, for the DM sponsor flow (started via a channel deeplink).
+const sponsorPending = new Map<string, string>();
 
 export function isPending(chatId: string): boolean {
-  return drafts.has(chatId);
+  return drafts.has(chatId) || sponsorPending.has(chatId);
 }
 export function cancel(chatId: string): boolean {
-  return drafts.delete(chatId);
+  const had = drafts.delete(chatId);
+  return sponsorPending.delete(chatId) || had;
+}
+
+// The bot's own @username, set at startup (via getMe). Used to build the Sponsor
+// deeplink so the channel button carries the bracket id — no long id to type.
+let botUsername = "";
+export function setBotUsername(u: string): void {
+  botUsername = u;
 }
 
 const isPow2 = (n: number) => n >= 2 && (n & (n - 1)) === 0;
@@ -183,6 +193,13 @@ export async function handleAnswer(
   chatId: string,
   text: string,
 ): Promise<void> {
+  // Sponsor flow (opened from a channel deeplink): the reply is the target player.
+  const sponsorId = sponsorPending.get(chatId);
+  if (sponsorId !== undefined) {
+    sponsorPending.delete(chatId);
+    await sponsorPaid(api, config, store, chatId, sponsorId, text.trim());
+    return;
+  }
   const d = drafts.get(chatId);
   if (!d) return;
   const t = text.trim();
@@ -801,6 +818,38 @@ async function paidJoin(
  * /sponsor <id> <address|username> — pay another player's entry into a
  * paid bracket from your own session (run in DM, where your session lives).
  */
+/**
+ * Start the DM sponsor flow from a channel deeplink (t.me/<bot>?start=sponsor_<id>).
+ * The bracket id rides in the deeplink, so the sponsor only supplies the player —
+ * no long id to type. The reply is handled at the top of handleAnswer.
+ */
+export async function startSponsorFlow(
+  api: TelegramApi,
+  config: Config,
+  store: BracketStore,
+  chatId: string,
+  bracketId: string,
+): Promise<void> {
+  const b = await store.get(bracketId);
+  if (!b || b.phase !== "filling") {
+    await api.sendMessage(chatId, "That bracket isn't open for sponsoring right now.");
+    return;
+  }
+  const chain = b.state.chain as Chain;
+  const session = await resolveAccount(chatId, chain, config);
+  if (!session.ok) {
+    await api.sendMessage(chatId, "Connect first — run /connect, then tap 🎁 Sponsor again.");
+    return;
+  }
+  sponsorPending.set(chatId, bracketId);
+  const name = b.state.namePrefix ?? `bracket ${bracketId}`;
+  const fee = b.paid ? ` — you'll pay ${b.paid.label}` : "";
+  await api.sendMessage(
+    chatId,
+    `🎁 Sponsoring a player into ${name}${fee}.\nWho? Reply with a 0x address or a Cartridge username. /cancel to abort.`,
+  );
+}
+
 export async function sponsorPaid(
   api: TelegramApi,
   config: Config,
@@ -869,10 +918,17 @@ function paidCard(b: StoredBracket): string {
 function paidJoinKeyboard(b: StoredBracket): { inline_keyboard: InlineKeyboardButton[][] } | undefined {
   if ((b.filled ?? 0) >= (b.capacity ?? 0)) return undefined;
   const joinLabel = b.paid ? `🎮 Join — ${b.paid.label}` : `🎮 Join (free)`;
+  // Sponsor needs a target player (typed), so it opens a DM already scoped to
+  // this bracket via a deeplink — the user only supplies the player, never the
+  // long id. Falls back to a callback (points to the DM command) if we don't
+  // know our own @username yet.
+  const sponsorBtn: InlineKeyboardButton = botUsername
+    ? { text: `🎁 Sponsor a player`, url: `https://t.me/${botUsername}?start=sponsor_${b.state.id}` }
+    : { text: `🎁 Sponsor a player`, callback_data: `bspon:${b.state.id}` };
   return {
     inline_keyboard: [
       [{ text: `${joinLabel} (${b.filled ?? 0}/${b.capacity ?? 0})`, callback_data: `bjoin:${b.state.id}` }],
-      [{ text: `🎁 Sponsor a player`, callback_data: `bspon:${b.state.id}` }],
+      [sponsorBtn],
     ],
   };
 }

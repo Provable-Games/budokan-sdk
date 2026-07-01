@@ -79,6 +79,16 @@ export class TelegramBot {
       .catch((error: unknown) => {
         console.error("setMyCommands failed:", error instanceof Error ? error.message : error);
       });
+    // Learn our own @username so channel cards can build the Sponsor deeplink
+    // (t.me/<username>?start=sponsor_<id>). Best-effort.
+    await this.api
+      .call<{ username?: string }>("getMe", {})
+      .then((me) => {
+        if (me?.username) bracketCmd.setBotUsername(me.username);
+      })
+      .catch((error: unknown) => {
+        console.error("getMe failed:", error instanceof Error ? error.message : error);
+      });
     await this.poll();
   }
 
@@ -519,6 +529,14 @@ export class TelegramBot {
       }
       await this.api.sendMessage(chatId, `🏆 Let's claim your rewards for tournament #${id} on ${chain}.`);
       return this.claim(chatId, [id]);
+    }
+
+    // Bracket sponsor handoff. Shape: sponsor_<bracketId>. The id can contain
+    // '_'/'-', so take everything after the "sponsor_" prefix.
+    if (action === "sponsor") {
+      const bracketId = payload.slice("sponsor_".length);
+      if (!bracketId) return this.sendHelp(chatId);
+      return bracketCmd.startSponsorFlow(this.api, this.config, this.brackets, chatId, bracketId);
     }
 
     // Unknown/garbled payload — fall back to a normal welcome.
