@@ -57,7 +57,13 @@ export interface BuildRegisterAllowlistTreeParams {
   chain: WhitelistChain;
   /** Addresses allowed to enter. */
   addresses: string[];
-  /** Per-address entry allowance baked into the tree leaf (default 1). */
+  /**
+   * Per-address entry allowance baked into the tree leaf (default 1). Note the
+   * validator applies `effective = min(count, entry_limit)` when the
+   * tournament's `entry_requirement.entryLimit > 0`, so raising this above the
+   * tournament's `entryLimit` has no effect — set both consistently. For
+   * brackets both are 1.
+   */
   entriesPerAddress?: number;
   /** Override the merkle API URL for this chain. */
   apiUrl?: string;
