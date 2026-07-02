@@ -27,6 +27,7 @@ import {
   extensionAddressFor,
 } from "../extensions/index.js";
 import type { WhitelistChain } from "../games/whitelist.js";
+import { normalizeAddress } from "../utils/address.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -409,25 +410,28 @@ export function addRegistrant(state: BracketState, registrant: Registrant): Brac
     throw new Error(`Bracket ${state.id} is not registering (status: ${state.status})`);
   }
   const list = (state.registrants ??= []);
-  const key = registrant.address.toLowerCase();
-  if (list.some((r) => r.address.toLowerCase() === key)) {
+  // Normalize (canonical padded-lowercase) so `0x1` and `0x01` dedupe as one
+  // wallet — `.toLowerCase()` alone misses leading-zero variants. Store the
+  // normalized form so downstream comparisons stay consistent.
+  const key = normalizeAddress(registrant.address);
+  if (list.some((r) => normalizeAddress(r.address) === key)) {
     return state; // already signed up — idempotent
   }
   if (list.length >= state.size) {
     throw new Error(`Bracket ${state.id} is full (${state.size} slots)`);
   }
-  list.push({ address: registrant.address, ...(registrant.name ? { name: registrant.name } : {}) });
+  list.push({ address: key, ...(registrant.name ? { name: registrant.name } : {}) });
   return state;
 }
 
-/** Remove a signup by address (case-insensitive). Mutates and returns `state`. */
+/** Remove a signup by address (representation-insensitive). Mutates and returns `state`. */
 export function removeRegistrant(state: BracketState, address: string): BracketState {
   if (state.status !== "registering") {
     throw new Error(`Bracket ${state.id} is not registering (status: ${state.status})`);
   }
-  const key = address.toLowerCase();
+  const key = normalizeAddress(address);
   state.registrants = (state.registrants ?? []).filter(
-    (r) => r.address.toLowerCase() !== key,
+    (r) => normalizeAddress(r.address) !== key,
   );
   return state;
 }
@@ -476,6 +480,9 @@ export function assignRegistrants(
     seeding: opts.seeding ?? "random",
     ...(opts.shuffleSeed !== undefined ? { shuffleSeed: opts.shuffleSeed } : {}),
     gated: state.gated,
+    // Preserve any pre-attached round-1 tree ids across the transition —
+    // otherwise those matches would silently deploy ungated.
+    ...(state.roundOneTreeIds ? { roundOneTreeIds: state.roundOneTreeIds } : {}),
     ...(state.finalPrize ? { finalPrize: state.finalPrize } : {}),
   });
 }
@@ -830,10 +837,13 @@ export function bracketEntryCalls(
   if (!m.tournamentId) {
     throw new Error(`Match ${matchIdToEnter} has no tournament yet`);
   }
+  // Normalize both sides so a differently-represented `playerAddress`
+  // (leading zeros / casing) still matches the stored competitor.
+  const wanted = normalizeAddress(playerAddress);
   const player =
-    m.playerA?.address === playerAddress
+    m.playerA && normalizeAddress(m.playerA.address) === wanted
       ? m.playerA
-      : m.playerB?.address === playerAddress
+      : m.playerB && normalizeAddress(m.playerB.address) === wanted
         ? m.playerB
         : undefined;
   if (!player) {
@@ -848,13 +858,17 @@ export function bracketEntryCalls(
   const roundOneTreeId = m.round === 1 ? state.roundOneTreeIds?.[m.id] : undefined;
   if (roundOneTreeId !== undefined) {
     // Round-1 allowlist: prove the entrant is on the match's merkle tree. The
-    // proof span comes from the caller (fetched via `getAllowlistProof`); the
-    // entrant is their own qualifier, so `qualifier` stays None.
+    // proof span comes from the caller (fetched via `getAllowlistProof`). Set
+    // `qualifier` to the player so the validator checks THEM against the tree,
+    // not the caller — required when someone enters on the player's behalf (the
+    // organizer deploying a closed bracket); harmless for self-entry. Mirrors
+    // the round>1 branch below.
     if (!proof || proof.length === 0) {
       throw new Error(
         `Match ${matchIdToEnter} is merkle-gated (round-1 allowlist) — pass the proof span from getAllowlistProof(...) as the \`proof\` argument.`,
       );
     }
+    qualifier = player.address;
     qualification = { kind: "extension", data: proof };
   } else if (state.gated && m.round > 1) {
     const feeder = bracketFeeders(state, m.id).find(

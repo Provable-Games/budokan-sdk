@@ -25,6 +25,7 @@
 import { createMerkleClient, type MerkleEntry } from "@provable-games/metagame-sdk/merkle";
 import type { Call } from "../calldata/index.js";
 import type { WhitelistChain } from "../games/whitelist.js";
+import { normalizeAddress } from "../utils/address.js";
 
 /** Map our short chain names to the chain IDs metagame-sdk uses. */
 function sdkChainId(chain: WhitelistChain): string {
@@ -40,10 +41,16 @@ function toEntries(addresses: string[], entriesPerAddress: number): MerkleEntry[
   if (addresses.length === 0) {
     throw new Error("An allowlist needs at least one address");
   }
-  if (entriesPerAddress < 1) {
-    throw new Error("entriesPerAddress must be ≥ 1");
+  // `NaN < 1` is false, so guard integer-ness explicitly — a fractional/NaN
+  // count would flow into the on-chain tree leaf.
+  if (!Number.isInteger(entriesPerAddress) || entriesPerAddress < 1) {
+    throw new Error("entriesPerAddress must be a positive integer");
   }
-  return addresses.map((address) => ({ address, count: entriesPerAddress }));
+  // Normalize to the canonical form and dedupe so representation variants
+  // (leading zeros / casing) don't produce redundant leaves, and so the tree
+  // agrees with the normalized address used for proof lookup.
+  const unique = Array.from(new Set(addresses.map(normalizeAddress)));
+  return unique.map((address) => ({ address, count: entriesPerAddress }));
 }
 
 export interface BuildRegisterAllowlistTreeParams {
@@ -84,7 +91,7 @@ export function buildRegisterAllowlistTreeCall(
   const { call, entries } = merkleClient(params.chain, params.apiUrl).buildRegisterTreeCall(
     toEntries(params.addresses, params.entriesPerAddress ?? 1),
   );
-  return { call: { ...call }, entries };
+  return { call: { ...call, calldata: [...call.calldata] }, entries };
 }
 
 export interface ParseAllowlistTreeIdParams {
@@ -143,5 +150,10 @@ export interface GetAllowlistProofParams {
  * the merkle service is unreachable (rather than reporting "not allowlisted").
  */
 export async function getAllowlistProof(params: GetAllowlistProofParams): Promise<string[]> {
-  return merkleClient(params.chain, params.apiUrl).getProofSpan(params.treeId, params.address);
+  // Normalize so the lookup matches the (normalized) address the tree was built
+  // with — the service keys proofs by lowercased-but-unpadded address.
+  return merkleClient(params.chain, params.apiUrl).getProofSpan(
+    params.treeId,
+    normalizeAddress(params.address),
+  );
 }
