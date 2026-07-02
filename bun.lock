@@ -5,7 +5,7 @@
     "": {
       "name": "@provable-games/budokan-sdk",
       "dependencies": {
-        "@provable-games/metagame-sdk": "0.1.13",
+        "@provable-games/metagame-sdk": "^0.1.14",
       },
       "devDependencies": {
         "@provable-games/denshokan-sdk": "^0.1.33",
@@ -133,7 +133,7 @@
 
     "@provable-games/denshokan-sdk": ["@provable-games/denshokan-sdk@0.1.33", "", { "dependencies": { "@rollup/rollup-linux-arm64-gnu": "^4.59.0" }, "peerDependencies": { "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-Ld9nFE58LGSlyQYBWPlk7gDZd/qmyo0SJa9hP4A26Oxr44Njo2XkzeTTb+EafX83eYqoSWy4WyQZyCzIyEFEwA=="],
 
-    "@provable-games/metagame-sdk": ["@provable-games/metagame-sdk@0.1.13", "", { "dependencies": { "@ericnordelo/strk-merkle-tree": "^1.0.1", "@rollup/rollup-linux-arm64-gnu": "^4.59.0" }, "peerDependencies": { "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-xXhm/VAuRD8f5h1dX4OUA5Rqy3S83NE8KI7T6Tlbse2O/B0E15fw5HPrtRgU0kbbK9bG5XKEJXhv6Pihtss28Q=="],
+    "@provable-games/metagame-sdk": ["@provable-games/metagame-sdk@0.1.14", "", { "dependencies": { "@ericnordelo/strk-merkle-tree": "^1.0.1", "@rollup/rollup-linux-arm64-gnu": "^4.59.0" }, "peerDependencies": { "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-pBxpjvj5iF8pCz0mhUfgFLiL8epGDHh0BcOwfKpFpRe9VDGahes1Ft0sfBc4KnWzap0R5ZqHh2a2SzxdJk3g/Q=="],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.60.1", "", { "os": "android", "cpu": "arm" }, "sha512-d6FinEBLdIiK+1uACUttJKfgZREXrF0Qc2SmLII7W2AD8FfiZ9Wjd+rD/iRuf5s5dWrr1GgwXCvPqOuDquOowA=="],
 

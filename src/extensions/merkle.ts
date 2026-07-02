@@ -1,45 +1,38 @@
 /**
- * Merkle allowlist helpers — app-agnostic wrappers over the metagame-sdk
- * `MerkleClient` for the deployed budokan merkle validator.
+ * Merkle allowlist helpers for budokan brackets.
  *
- * These let any consumer (web client, Telegram, Discord) gate a tournament on
- * an address allowlist without re-implementing the merkle plumbing. As with
- * the rest of the SDK, the signing step is left to the caller: creating a tree
- * is a two-step, on-chain flow, so we return the registration `Call` rather
- * than signing it.
+ * These are thin, budokan-flavored adapters over `@provable-games/metagame-sdk`'s
+ * `MerkleClient` — they map budokan's short chain names (`"mainnet"`/`"sepolia"`)
+ * to the SDK's chain ids and keep the same call-returning shape as the rest of
+ * this SDK. The generic merkle logic (validator address lookup, the on-chain
+ * `create_tree` call, proof serving, service-error handling) lives in
+ * metagame-sdk so any app gating a contract on an allowlist can reuse it.
  *
- *   1. `buildRegisterAllowlistTreeCall({ chain, addresses })`
- *        → `{ call, entries }`. The caller signs/executes `call` (registers the
- *          tree on the merkle validator, which assigns it an id).
- *   2. `parseAllowlistTreeId({ chain, events })`
- *        → the `treeId` from the transaction receipt's events.
- *   3. `storeAllowlistTree({ chain, treeId, name, description, entries })`
- *        → persists the tree in the merkle API so proofs can be served.
- *   4. `getAllowlistProof({ chain, treeId, address })`
- *        → the `Span<felt252>` proof to pass as `qualification` when entering.
+ * As with the rest of the SDK the signing step is the caller's: creating a tree
+ * is a two-step on-chain flow, so `buildRegisterAllowlistTreeCall` returns the
+ * registration `Call` rather than signing it.
+ *
+ *   1. `buildRegisterAllowlistTreeCall({ chain, addresses })` → `{ call, entries }`
+ *   2. sign/execute `call` (registers the tree; the validator assigns an id)
+ *   3. `parseAllowlistTreeId({ chain, events })` → the `treeId` from the receipt
+ *   4. `storeAllowlistTree({ chain, treeId, name, description, entries })`
+ *   5. `getAllowlistProof({ chain, treeId, address })` → the proof span to enter
  *
  * Pair `treeId` with `buildMerkleConfig({ treeId })` + `extensionAddressFor(
- * chain, "merkle")` to build the tournament's `entry_requirement`. See
- * `src/brackets/index.ts` (`roundOneTreeIds`) for the bracket integration.
- *
- * Note: the merkle proof format (`getAllowlistProof` returns the API's
- * `qualification` span, i.e. `[count, ...proof]`) should be verified end-to-end
- * on sepolia against the deployed validator's `validate_entry` before relying
- * on it in production — see the plan's open decisions.
+ * chain, "merkle")` to build the tournament's `entry_requirement`.
  */
 
-import { MerkleClient, type MerkleEntry } from "@provable-games/metagame-sdk/merkle";
+import { createMerkleClient, type MerkleEntry } from "@provable-games/metagame-sdk/merkle";
 import type { Call } from "../calldata/index.js";
 import type { WhitelistChain } from "../games/whitelist.js";
-import { extensionAddressFor } from "./index.js";
 
 /** Map our short chain names to the chain IDs metagame-sdk uses. */
 function sdkChainId(chain: WhitelistChain): string {
   return chain === "mainnet" ? "SN_MAIN" : "SN_SEPOLIA";
 }
 
-function merkleClient(chain: WhitelistChain, apiUrl?: string): MerkleClient {
-  return new MerkleClient({ chainId: sdkChainId(chain), ...(apiUrl ? { apiUrl } : {}) });
+function merkleClient(chain: WhitelistChain, apiUrl?: string) {
+  return createMerkleClient({ chainId: sdkChainId(chain), ...(apiUrl ? { apiUrl } : {}) });
 }
 
 /** Turn an allowlist into merkle entries, each with a per-address entry count. */
@@ -88,11 +81,8 @@ export interface RegisterAllowlistTreeResult {
 export function buildRegisterAllowlistTreeCall(
   params: BuildRegisterAllowlistTreeParams,
 ): RegisterAllowlistTreeResult {
-  const validator = extensionAddressFor(params.chain, "merkle");
-  const entries = toEntries(params.addresses, params.entriesPerAddress ?? 1);
-  const { call } = merkleClient(params.chain, params.apiUrl).buildTreeCalldata(
-    entries,
-    validator,
+  const { call, entries } = merkleClient(params.chain, params.apiUrl).buildRegisterTreeCall(
+    toEntries(params.addresses, params.entriesPerAddress ?? 1),
   );
   return { call: { ...call }, entries };
 }
@@ -109,10 +99,8 @@ export interface ParseAllowlistTreeIdParams {
  * Returns null if the validator's tree-created event can't be found.
  */
 export function parseAllowlistTreeId(params: ParseAllowlistTreeIdParams): number | null {
-  const validator = extensionAddressFor(params.chain, "merkle");
   return merkleClient(params.chain, params.apiUrl).parseTreeIdFromEvents(
     params.events as unknown[],
-    validator,
   );
 }
 
@@ -151,17 +139,9 @@ export interface GetAllowlistProofParams {
  * Fetch the `Span<felt252>` merkle proof for an allowlisted address. Pass the
  * result as `qualification: { kind: "extension", data }` to
  * `buildEnterTournamentCall` (or as the `proof` arg to `bracketEntryCalls`).
- * Throws if the address isn't in the tree.
+ * Throws if the address isn't on the allowlist; propagates a service error if
+ * the merkle service is unreachable (rather than reporting "not allowlisted").
  */
 export async function getAllowlistProof(params: GetAllowlistProofParams): Promise<string[]> {
-  const res = await merkleClient(params.chain, params.apiUrl).getProof(
-    params.treeId,
-    params.address,
-  );
-  if (!res) {
-    throw new Error(
-      `No merkle proof for ${params.address} in tree ${params.treeId} (not on the allowlist, or the tree isn't stored yet).`,
-    );
-  }
-  return res.qualification;
+  return merkleClient(params.chain, params.apiUrl).getProofSpan(params.treeId, params.address);
 }
