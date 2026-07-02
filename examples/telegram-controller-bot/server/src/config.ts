@@ -35,6 +35,13 @@ export interface Config {
    */
   operatorPrivateKey?: string;
   operatorAddress?: string;
+  /**
+   * Optional top-up app endpoint (e.g. `https://app.yourgame.xyz/topup`). When
+   * set, `/topup` hands the user a deeplink to it with their address +
+   * returnUrl; when unset, `/topup` says top-up isn't configured. The app takes
+   * the destination straight from the link, so the bot just passes the address.
+   */
+  topupUrl?: string;
 }
 
 export function loadConfig(): Config {
@@ -84,6 +91,7 @@ export function loadConfig(): Config {
     bracketChannelId: env("BRACKET_CHANNEL_ID"),
     operatorPrivateKey: env("BOT_OPERATOR_PRIVATE_KEY"),
     operatorAddress: env("BOT_OPERATOR_ADDRESS"),
+    topupUrl: env("TOPUP_URL"),
   };
 }
 
