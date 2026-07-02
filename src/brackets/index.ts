@@ -21,6 +21,7 @@ import {
   type EntryRequirementArgs,
 } from "../calldata/index.js";
 import {
+  buildMerkleConfig,
   buildTournamentQualificationProof,
   buildTournamentValidatorConfig,
   extensionAddressFor,
@@ -46,6 +47,12 @@ export interface BracketPlayer {
   name?: string;
   /** 1-based seed; 1 = strongest. */
   seed: number;
+}
+
+/** A signed-up player during the `registering` phase (pre-assignment). */
+export interface Registrant {
+  address: string;
+  name?: string;
 }
 
 export interface BracketMatch {
@@ -112,13 +119,27 @@ export interface BracketState {
    * schedules are staggered so each round opens after the previous finishes.
    */
   gated: boolean;
+  /**
+   * Optional per-match round-1 merkle allowlist, keyed by match id → on-chain
+   * `treeId`. When a round-1 match has a `treeId`, it's created with a merkle
+   * `entry_requirement` (allowlist gating, `entryLimit` 1) so only the
+   * allowlisted addresses can enter that match — closing the round-1 client
+   * bypass. Populate after registering the trees (see `attachRoundOneTree`).
+   */
+  roundOneTreeIds?: Record<string, number>;
   /** Optional ERC20 prize escrowed on the final match for the champion. */
   finalPrize?: { tokenAddress: string; amount: string };
-  /** Bracket size = next power of two ≥ players.length. */
+  /** Bracket size = next power of two ≥ players.length (or the registration capacity). */
   size: number;
   players: BracketPlayer[];
   matches: BracketMatch[];
-  status: "running" | "complete";
+  /**
+   * Signups captured during the `registering` phase, before they're shuffled
+   * and assigned to round-1 slots by `assignRegistrants`. Empty/undefined once
+   * running.
+   */
+  registrants?: Registrant[];
+  status: "registering" | "running" | "complete";
   champion?: BracketPlayer;
 }
 
@@ -149,6 +170,12 @@ export interface CreateBracketOptions {
    * bracket with no entry_requirement.
    */
   gated?: boolean;
+  /**
+   * Optional per-match round-1 merkle allowlist (match id → on-chain `treeId`).
+   * Usually attached after creation via `attachRoundOneTree` once the trees are
+   * registered, but may be provided up front if the ids are already known.
+   */
+  roundOneTreeIds?: Record<string, number>;
   /** Optional ERC20 prize escrowed on the final match for the champion. */
   finalPrize?: { tokenAddress: string; amount: string };
 }
@@ -306,6 +333,7 @@ export function createBracket(opts: CreateBracketOptions): BracketState {
     ...(opts.roundSettingsIds ? { roundSettingsIds: opts.roundSettingsIds } : {}),
     ...(opts.description ? { description: opts.description } : {}),
     gated,
+    ...(opts.roundOneTreeIds ? { roundOneTreeIds: opts.roundOneTreeIds } : {}),
     finalPrize: opts.finalPrize,
     size,
     players,
@@ -317,6 +345,139 @@ export function createBracket(opts: CreateBracketOptions): BracketState {
   resolveByes(state);
   refreshMatchStatuses(state);
   return state;
+}
+
+// ---------------------------------------------------------------------------
+// Registration phase (open brackets: sign up → shuffle → assign → deploy)
+//
+// A registering bracket has capacity (`size`) but no players/matches yet.
+// Players sign up (`addRegistrant`) until it fills; `assignRegistrants` then
+// shuffles the signups (deterministically) into round-1 slots and returns a
+// normal running bracket. Signing/UI/persistence live in the consumer; these
+// transitions are pure so any client (web / Telegram / Discord) reuses them.
+// ---------------------------------------------------------------------------
+
+/** Options for an open bracket that starts in the `registering` phase. */
+export interface CreateRegisteringBracketOptions
+  extends Omit<CreateBracketOptions, "players" | "seeding" | "shuffleSeed"> {
+  /** Bracket capacity in slots — a power of two ≥ 2 (2, 4, 8, 16, …). */
+  size: number;
+}
+
+/**
+ * Create an open bracket in the `registering` phase: capacity is fixed but no
+ * players are assigned yet. Collect signups with `addRegistrant`, then call
+ * `assignRegistrants` once full (or at a deadline) to build the round-1 tree.
+ */
+export function createRegisteringBracket(
+  opts: CreateRegisteringBracketOptions,
+): BracketState {
+  if (opts.size < 2 || opts.size !== nextPowerOfTwo(opts.size)) {
+    throw new Error(
+      `Registration capacity must be a power of two ≥ 2 (got ${opts.size}; use 2, 4, 8, 16, …).`,
+    );
+  }
+  return {
+    id: opts.id,
+    budokanAddress: opts.budokanAddress,
+    game: opts.game,
+    chain: opts.chain,
+    settingsId: opts.settingsId,
+    creatorRewardsAddress: opts.creatorRewardsAddress,
+    scheduleTemplate: opts.scheduleTemplate,
+    leaderboard: opts.leaderboard,
+    namePrefix: opts.namePrefix ?? "Match",
+    ...(opts.roundSettingsIds ? { roundSettingsIds: opts.roundSettingsIds } : {}),
+    ...(opts.description ? { description: opts.description } : {}),
+    gated: opts.gated ?? true,
+    ...(opts.roundOneTreeIds ? { roundOneTreeIds: opts.roundOneTreeIds } : {}),
+    finalPrize: opts.finalPrize,
+    size: opts.size,
+    players: [],
+    matches: [],
+    registrants: [],
+    status: "registering",
+  };
+}
+
+/**
+ * Add a signup to a registering bracket. Dedupes by address (case-insensitive)
+ * and enforces capacity (`size`). Mutates and returns `state`.
+ */
+export function addRegistrant(state: BracketState, registrant: Registrant): BracketState {
+  if (state.status !== "registering") {
+    throw new Error(`Bracket ${state.id} is not registering (status: ${state.status})`);
+  }
+  const list = (state.registrants ??= []);
+  const key = registrant.address.toLowerCase();
+  if (list.some((r) => r.address.toLowerCase() === key)) {
+    return state; // already signed up — idempotent
+  }
+  if (list.length >= state.size) {
+    throw new Error(`Bracket ${state.id} is full (${state.size} slots)`);
+  }
+  list.push({ address: registrant.address, ...(registrant.name ? { name: registrant.name } : {}) });
+  return state;
+}
+
+/** Remove a signup by address (case-insensitive). Mutates and returns `state`. */
+export function removeRegistrant(state: BracketState, address: string): BracketState {
+  if (state.status !== "registering") {
+    throw new Error(`Bracket ${state.id} is not registering (status: ${state.status})`);
+  }
+  const key = address.toLowerCase();
+  state.registrants = (state.registrants ?? []).filter(
+    (r) => r.address.toLowerCase() !== key,
+  );
+  return state;
+}
+
+/** Options controlling how registrants are assigned to round-1 slots. */
+export interface AssignRegistrantsOptions {
+  /** "random" (default) shuffles signups; "as-given" keeps signup order. */
+  seeding?: "as-given" | "random";
+  /** Deterministic shuffle seed (used when seeding === "random"). */
+  shuffleSeed?: number;
+}
+
+/**
+ * Close registration and build the running bracket: shuffle the signups
+ * (deterministically, via the caller-supplied `shuffleSeed`) into seed order
+ * and construct the round-1 tree. Returns a fresh `running` bracket built with
+ * the registering bracket's config — round-1 merkle trees are attached
+ * afterwards with `attachRoundOneTree` (their addresses are only known now).
+ */
+export function assignRegistrants(
+  state: BracketState,
+  opts: AssignRegistrantsOptions = {},
+): BracketState {
+  if (state.status !== "registering") {
+    throw new Error(`Bracket ${state.id} is not registering (status: ${state.status})`);
+  }
+  const registrants = state.registrants ?? [];
+  if (registrants.length < 2) {
+    throw new Error(`Bracket ${state.id} needs at least 2 registrants to assign (got ${registrants.length})`);
+  }
+  // Reuse createBracket so seeding, byes, tree construction, and gating rules
+  // stay in one place — including the deterministic shuffle.
+  return createBracket({
+    id: state.id,
+    budokanAddress: state.budokanAddress,
+    game: state.game,
+    chain: state.chain,
+    settingsId: state.settingsId,
+    creatorRewardsAddress: state.creatorRewardsAddress,
+    scheduleTemplate: state.scheduleTemplate,
+    leaderboard: state.leaderboard,
+    namePrefix: state.namePrefix,
+    ...(state.roundSettingsIds ? { roundSettingsIds: state.roundSettingsIds } : {}),
+    ...(state.description ? { description: state.description } : {}),
+    players: registrants.map((r) => ({ address: r.address, ...(r.name ? { name: r.name } : {}) })),
+    seeding: opts.seeding ?? "random",
+    ...(opts.shuffleSeed !== undefined ? { shuffleSeed: opts.shuffleSeed } : {}),
+    gated: state.gated,
+    ...(state.finalPrize ? { finalPrize: state.finalPrize } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +577,29 @@ export function attachMatchTournament(
   return state;
 }
 
+/**
+ * Record the merkle allowlist tree id for a round-1 match, so it's created
+ * with an allowlist `entry_requirement`. Call after registering the tree
+ * on-chain (see `buildRegisterAllowlistTreeCall` / `parseAllowlistTreeId`) and
+ * before `roundMatchCreateCalls(state, 1)`. Mutates and returns `state`.
+ */
+export function attachRoundOneTree(
+  state: BracketState,
+  matchIdToAttach: string,
+  treeId: number,
+): BracketState {
+  const m = findMatch(state, matchIdToAttach);
+  if (!m) throw new Error(`Unknown match: ${matchIdToAttach}`);
+  if (m.round !== 1) {
+    throw new Error(`Merkle allowlist gating is round-1 only; ${matchIdToAttach} is round ${m.round}`);
+  }
+  if (m.tournamentId) {
+    throw new Error(`Match ${matchIdToAttach} is already created — attach the tree before creating it`);
+  }
+  state.roundOneTreeIds = { ...(state.roundOneTreeIds ?? {}), [matchIdToAttach]: treeId };
+  return state;
+}
+
 // ---------------------------------------------------------------------------
 // Upfront gated deploy
 //
@@ -450,7 +634,19 @@ function roundSchedule(t: MatchScheduleTemplate, round: number): MatchScheduleTe
 /** Build a match's create_tournament Call with staggered schedule + gating. */
 function gatedMatchCreateCall(state: BracketState, match: BracketMatch): Call {
   let entryRequirement: EntryRequirementArgs | undefined;
-  if (state.gated && match.round > 1) {
+  const roundOneTreeId = match.round === 1 ? state.roundOneTreeIds?.[match.id] : undefined;
+  if (roundOneTreeId !== undefined) {
+    // Round-1 allowlist gating: only the match's assigned players (the tree's
+    // entries) can enter, each once. Independent of the round>1 feeder gating.
+    entryRequirement = {
+      entryLimit: 1,
+      type: {
+        kind: "extension",
+        address: extensionAddressFor(state.chain, "merkle"),
+        config: buildMerkleConfig({ treeId: roundOneTreeId }),
+      },
+    };
+  } else if (state.gated && match.round > 1) {
     const feeders = bracketFeeders(state, match.id);
     const feederIds = feeders.map((f) => f.tournamentId).filter((id): id is string => !!id);
     if (feeders.length === 0 || feederIds.length !== feeders.length) {
@@ -615,11 +811,19 @@ export function bracketFinalPrizeCalls(state: BracketState): Call[] {
   ];
 }
 
-/** Build the enter call(s) for a player joining their (live) match. */
+/**
+ * Build the enter call(s) for a player joining their (live) match.
+ *
+ * For a round-1 merkle-gated match (one with a `roundOneTreeIds` entry), pass
+ * `proof` — the allowlist proof span from `getAllowlistProof` — so it's
+ * attached as the `QualificationProof::Extension` the merkle validator expects.
+ * Gated rounds >1 build their proof internally from the feeder result.
+ */
 export function bracketEntryCalls(
   state: BracketState,
   matchIdToEnter: string,
   playerAddress: string,
+  proof?: string[],
 ): Call[] {
   const m = findMatch(state, matchIdToEnter);
   if (!m) throw new Error(`Unknown match: ${matchIdToEnter}`);
@@ -641,7 +845,18 @@ export function bracketEntryCalls(
   // the tournament validator; the feeder is the player's winning feeder match.
   let qualifier: string | undefined;
   let qualification: { kind: "extension"; data: string[] } | undefined;
-  if (state.gated && m.round > 1) {
+  const roundOneTreeId = m.round === 1 ? state.roundOneTreeIds?.[m.id] : undefined;
+  if (roundOneTreeId !== undefined) {
+    // Round-1 allowlist: prove the entrant is on the match's merkle tree. The
+    // proof span comes from the caller (fetched via `getAllowlistProof`); the
+    // entrant is their own qualifier, so `qualifier` stays None.
+    if (!proof || proof.length === 0) {
+      throw new Error(
+        `Match ${matchIdToEnter} is merkle-gated (round-1 allowlist) — pass the proof span from getAllowlistProof(...) as the \`proof\` argument.`,
+      );
+    }
+    qualification = { kind: "extension", data: proof };
+  } else if (state.gated && m.round > 1) {
     const feeder = bracketFeeders(state, m.id).find(
       (f) => f.winner?.address === player.address,
     );

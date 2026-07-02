@@ -1,21 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import {
+  addRegistrant,
   advanceBracket,
+  assignRegistrants,
   attachMatchTournament,
+  attachRoundOneTree,
   bracketEntryCalls,
   bracketFeeders,
   bracketFinalPrizeCalls,
   bracketFeePrizeCalls,
   bracketRounds,
   createBracket,
+  createRegisteringBracket,
   decodeTournamentValidatorConfig,
   nextMatchesFor,
   pendingMatchCreateCalls,
   reconstructBrackets,
+  removeRegistrant,
   roundMatchCreateCalls,
   type CreateBracketOptions,
+  type CreateRegisteringBracketOptions,
   type MatchReader,
 } from "../src/brackets/index.ts";
+import { extensionAddressFor } from "../src/extensions/index.ts";
 
 const baseOpts = (
   players: Array<{ address: string; name?: string }>,
@@ -356,5 +363,158 @@ describe("gated upfront deploy", () => {
     });
     expect(brackets).toHaveLength(0);
     expect(standalone.map((t) => t.id).sort()).toEqual(["5", "6", "7"]);
+  });
+});
+
+describe("round-1 merkle allowlist gating", () => {
+  const norm = (s: string) => BigInt(s).toString();
+
+  test("attachRoundOneTree records a tree id for a round-1 match", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const r1 = s.matches.filter((m) => m.round === 1)[0]!;
+    attachRoundOneTree(s, r1.id, 7);
+    expect(s.roundOneTreeIds).toEqual({ [r1.id]: 7 });
+  });
+
+  test("attachRoundOneTree rejects non-round-1 and already-created matches", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const final = s.matches.find((m) => !m.feedsInto)!;
+    expect(() => attachRoundOneTree(s, final.id, 1)).toThrow(); // round 2
+    const r1 = s.matches.filter((m) => m.round === 1)[0]!;
+    attachMatchTournament(s, r1.id, "100");
+    expect(() => attachRoundOneTree(s, r1.id, 1)).toThrow(); // already created
+  });
+
+  test("a gated round-1 create call embeds the merkle validator + tree id", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const gatedMatch = s.matches.filter((m) => m.round === 1)[0]!;
+    attachRoundOneTree(s, gatedMatch.id, 7);
+
+    const calls = roundMatchCreateCalls(s, 1);
+    const gated = calls.find((c) => c.matchId === gatedMatch.id)!;
+    const ungated = calls.find((c) => c.matchId !== gatedMatch.id)!;
+
+    const cd = (gated.call.calldata as string[]).map(norm);
+    expect(cd).toContain(norm(extensionAddressFor("sepolia", "merkle")));
+    expect(cd).toContain("7");
+    // The allowlist entry_requirement makes it longer than an ungated create.
+    expect((gated.call.calldata as string[]).length).toBeGreaterThan(
+      (ungated.call.calldata as string[]).length,
+    );
+  });
+
+  test("entry into a merkle-gated round-1 match requires and attaches the proof", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const m = s.matches.filter((mm) => mm.round === 1)[0]!;
+    attachRoundOneTree(s, m.id, 7);
+    attachMatchTournament(s, m.id, "100");
+    const addr = m.playerA!.address;
+
+    // No proof → throws.
+    expect(() => bracketEntryCalls(s, m.id, addr)).toThrow();
+
+    // With proof → enter_tournament carrying the proof felts.
+    const proof = ["1", "0xdeadbeef"];
+    const call = bracketEntryCalls(s, m.id, addr, proof)[0]!;
+    expect(call.entrypoint).toBe("enter_tournament");
+    const cd = (call.calldata as string[]).map(norm);
+    expect(cd).toContain(norm("0xdeadbeef"));
+  });
+
+  test("ungated round-1 entry is unaffected (no proof needed)", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const m = s.matches.filter((mm) => mm.round === 1)[0]!;
+    attachMatchTournament(s, m.id, "100");
+    const call = bracketEntryCalls(s, m.id, m.playerA!.address)[0]!;
+    expect(call.entrypoint).toBe("enter_tournament");
+  });
+});
+
+describe("registration phase", () => {
+  const regOpts = (size: number): CreateRegisteringBracketOptions => ({
+    id: "reg1",
+    budokanAddress: "0xbudokan",
+    game: "0xgame",
+    chain: "sepolia",
+    settingsId: 0,
+    creatorRewardsAddress: "0xcreator",
+    scheduleTemplate: {
+      registrationStartDelay: 0,
+      registrationEndDelay: 600,
+      gameStartDelay: 0,
+      gameEndDelay: 600,
+      submissionDuration: 600,
+    },
+    leaderboard: { ascending: false, gameMustBeOver: false },
+    size,
+  });
+
+  test("createRegisteringBracket starts empty in the registering phase", () => {
+    const s = createRegisteringBracket(regOpts(4));
+    expect(s.status).toBe("registering");
+    expect(s.size).toBe(4);
+    expect(s.players).toEqual([]);
+    expect(s.matches).toEqual([]);
+    expect(s.registrants).toEqual([]);
+  });
+
+  test("rejects a non-power-of-two capacity", () => {
+    expect(() => createRegisteringBracket(regOpts(3))).toThrow();
+    expect(() => createRegisteringBracket(regOpts(1))).toThrow();
+  });
+
+  test("addRegistrant dedupes (case-insensitive) and enforces capacity", () => {
+    const s = createRegisteringBracket(regOpts(2));
+    addRegistrant(s, { address: "0xAbC", name: "A" });
+    addRegistrant(s, { address: "0xabc" }); // dup → ignored
+    expect(s.registrants).toHaveLength(1);
+    addRegistrant(s, { address: "0x2" });
+    expect(s.registrants).toHaveLength(2);
+    expect(() => addRegistrant(s, { address: "0x3" })).toThrow(); // full
+  });
+
+  test("removeRegistrant drops a signup by address", () => {
+    const s = createRegisteringBracket(regOpts(4));
+    addRegistrant(s, { address: "0x1" });
+    addRegistrant(s, { address: "0x2" });
+    removeRegistrant(s, "0X1");
+    expect(s.registrants!.map((r) => r.address)).toEqual(["0x2"]);
+  });
+
+  test("assignRegistrants builds a running bracket, deterministic by seed", () => {
+    const build = () => {
+      const s = createRegisteringBracket(regOpts(4));
+      for (const a of ["0x1", "0x2", "0x3", "0x4"]) addRegistrant(s, { address: a });
+      return assignRegistrants(s, { shuffleSeed: 42 });
+    };
+    const a = build();
+    const b = build();
+    expect(a.status).toBe("running");
+    expect(a.players).toHaveLength(4);
+    expect(a.matches.filter((m) => m.round === 1)).toHaveLength(2);
+    expect(a.registrants).toBeUndefined();
+    // Same seed → same assignment.
+    expect(a.players.map((p) => p.address)).toEqual(b.players.map((p) => p.address));
+  });
+
+  test("assignRegistrants with as-given preserves signup order and gates round>1", () => {
+    const s = createRegisteringBracket(regOpts(4));
+    for (const a of ["0x1", "0x2", "0x3", "0x4"]) addRegistrant(s, { address: a });
+    const running = assignRegistrants(s, { seeding: "as-given" });
+    expect(running.players.map((p) => p.address)).toEqual(["0x1", "0x2", "0x3", "0x4"]);
+    expect(running.gated).toBe(true);
+  });
+
+  test("assignRegistrants needs at least two registrants", () => {
+    const s = createRegisteringBracket(regOpts(4));
+    addRegistrant(s, { address: "0x1" });
+    expect(() => assignRegistrants(s)).toThrow();
+  });
+
+  test("registration transitions reject a non-registering bracket", () => {
+    const running = createBracket(baseOpts(players(4)));
+    expect(() => addRegistrant(running, { address: "0x9" })).toThrow();
+    expect(() => removeRegistrant(running, "0x9")).toThrow();
+    expect(() => assignRegistrants(running)).toThrow();
   });
 });

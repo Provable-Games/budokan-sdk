@@ -5,8 +5,10 @@ import {
   buildOpusTrovesConfig,
   buildTournamentValidatorConfig,
   buildTournamentQualificationProof,
+  extensionAddressFor,
   u256ToLowHigh,
 } from "../src/extensions/index.ts";
+import { buildRegisterAllowlistTreeCall } from "../src/extensions/merkle.ts";
 
 describe("buildTournamentQualificationProof", () => {
   test("encodes [qualifyingTournamentId, tokenId, position]", () => {
@@ -91,6 +93,48 @@ describe("buildOpusTrovesConfig layout", () => {
 describe("buildMerkleConfig", () => {
   test("[tree_id]", () => {
     expect(buildMerkleConfig({ treeId: 7 })).toEqual(["7"]);
+  });
+});
+
+describe("buildRegisterAllowlistTreeCall", () => {
+  const norm = (s: string) => BigInt(s).toString();
+
+  test("returns a create_tree call to the merkle validator + count-1 entries", () => {
+    const { call, entries } = buildRegisterAllowlistTreeCall({
+      chain: "sepolia",
+      addresses: ["0x1", "0x2"],
+    });
+    expect(call.entrypoint).toBe("create_tree");
+    expect(norm(call.contractAddress)).toBe(norm(extensionAddressFor("sepolia", "merkle")));
+    expect(entries).toEqual([
+      { address: "0x1", count: 1 },
+      { address: "0x2", count: 1 },
+    ]);
+  });
+
+  test("honors entriesPerAddress", () => {
+    const { entries } = buildRegisterAllowlistTreeCall({
+      chain: "mainnet",
+      addresses: ["0xa"],
+      entriesPerAddress: 3,
+    });
+    expect(entries).toEqual([{ address: "0xa", count: 3 }]);
+  });
+
+  test("rejects an empty allowlist", () => {
+    expect(() =>
+      buildRegisterAllowlistTreeCall({ chain: "sepolia", addresses: [] }),
+    ).toThrow();
+  });
+
+  test("rejects entriesPerAddress < 1", () => {
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "sepolia",
+        addresses: ["0x1"],
+        entriesPerAddress: 0,
+      }),
+    ).toThrow();
   });
 });
 
