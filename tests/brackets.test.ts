@@ -23,7 +23,6 @@ import {
   type MatchReader,
 } from "../src/brackets/index.ts";
 import { extensionAddressFor } from "../src/extensions/index.ts";
-import { normalizeAddress } from "../src/utils/address.ts";
 
 const baseOpts = (
   players: Array<{ address: string; name?: string }>,
@@ -404,6 +403,18 @@ describe("round-1 merkle allowlist gating", () => {
     );
   });
 
+  test("pendingMatchCreateCalls also gates round-1 (both create paths apply it)", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const gatedMatch = s.matches.filter((m) => m.round === 1)[0]!;
+    attachRoundOneTree(s, gatedMatch.id, 7);
+
+    const calls = pendingMatchCreateCalls(s);
+    const gated = calls.find((c) => c.matchId === gatedMatch.id)!;
+    const cd = (gated.call.calldata as string[]).map(norm);
+    expect(cd).toContain(norm(extensionAddressFor("sepolia", "merkle")));
+    expect(cd).toContain("7");
+  });
+
   test("entry into a merkle-gated round-1 match requires and attaches the proof", () => {
     const s = createBracket(baseOpts(players(4)));
     const m = s.matches.filter((mm) => mm.round === 1)[0]!;
@@ -483,7 +494,7 @@ describe("registration phase", () => {
     addRegistrant(s, { address: "0xabc" }); // casing dup → ignored
     addRegistrant(s, { address: "0x0abc" }); // leading-zero dup → ignored
     expect(s.registrants).toHaveLength(1);
-    expect(s.registrants![0]!.address).toBe(normalizeAddress("0xabc")); // stored normalized
+    expect(s.registrants![0]!.address).toBe("0xAbC"); // stores the original (first-added) form
     addRegistrant(s, { address: "0x2" });
     expect(s.registrants).toHaveLength(2);
     expect(() => addRegistrant(s, { address: "0x3" })).toThrow(); // full
@@ -494,7 +505,7 @@ describe("registration phase", () => {
     addRegistrant(s, { address: "0x1" });
     addRegistrant(s, { address: "0x2" });
     removeRegistrant(s, "0X01"); // different casing + leading zero
-    expect(s.registrants!.map((r) => r.address)).toEqual([normalizeAddress("0x2")]);
+    expect(s.registrants!.map((r) => r.address)).toEqual(["0x2"]); // original form kept
   });
 
   test("assignRegistrants builds a running bracket, deterministic by seed", () => {
@@ -517,18 +528,32 @@ describe("registration phase", () => {
     const s = createRegisteringBracket(regOpts(4));
     for (const a of ["0x1", "0x2", "0x3", "0x4"]) addRegistrant(s, { address: a });
     const running = assignRegistrants(s, { seeding: "as-given" });
-    expect(running.players.map((p) => p.address)).toEqual(
-      ["0x1", "0x2", "0x3", "0x4"].map(normalizeAddress),
-    );
+    // Registrants (and thus players) keep their original address form.
+    expect(running.players.map((p) => p.address)).toEqual(["0x1", "0x2", "0x3", "0x4"]);
     expect(running.gated).toBe(true);
   });
 
-  test("assignRegistrants preserves pre-attached roundOneTreeIds", () => {
+  test("assignRegistrants preserves pre-attached roundOneTreeIds (as-given only)", () => {
     const s = createRegisteringBracket({ ...regOpts(2), roundOneTreeIds: { "reg1-r1-m0": 7 } });
     addRegistrant(s, { address: "0x1" });
     addRegistrant(s, { address: "0x2" });
     const running = assignRegistrants(s, { seeding: "as-given" });
     expect(running.roundOneTreeIds).toEqual({ "reg1-r1-m0": 7 });
+  });
+
+  test("assignRegistrants rejects pre-attached roundOneTreeIds under a random shuffle", () => {
+    // A shuffle re-binds match slots, so keyed-by-slot trees would gate the wrong pair.
+    const s = createRegisteringBracket({ ...regOpts(2), roundOneTreeIds: { "reg1-r1-m0": 7 } });
+    addRegistrant(s, { address: "0x1" });
+    addRegistrant(s, { address: "0x2" });
+    expect(() => assignRegistrants(s, { seeding: "random" })).toThrow(/random shuffle/);
+    expect(() => assignRegistrants(s)).toThrow(); // random is the default
+  });
+
+  test("assignRegistrants rejects a non-power-of-two gated registration with a clear error", () => {
+    const s = createRegisteringBracket(regOpts(4)); // capacity 4, but only 3 sign up
+    for (const a of ["0x1", "0x2", "0x3"]) addRegistrant(s, { address: a });
+    expect(() => assignRegistrants(s)).toThrow(/power-of-two/);
   });
 
   test("assignRegistrants needs at least two registrants", () => {
