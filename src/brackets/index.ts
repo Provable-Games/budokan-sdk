@@ -27,6 +27,7 @@ import {
   extensionAddressFor,
 } from "../extensions/index.js";
 import type { WhitelistChain } from "../games/whitelist.js";
+import { normalizeAddress } from "../utils/address.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -409,8 +410,14 @@ export function addRegistrant(state: BracketState, registrant: Registrant): Brac
     throw new Error(`Bracket ${state.id} is not registering (status: ${state.status})`);
   }
   const list = (state.registrants ??= []);
-  const key = registrant.address.toLowerCase();
-  if (list.some((r) => r.address.toLowerCase() === key)) {
+  // Dedup on the canonical (padded-lowercase) form so `0x1` and `0x01` count as
+  // one wallet — `.toLowerCase()` alone misses leading-zero variants. But STORE
+  // the original address: `createBracket` and winner resolution compare raw
+  // addresses, so keeping registrants raw (like every other bracket) avoids a
+  // raw-vs-normalized mismatch there. Normalization stays where it's actually
+  // required — the dedup key here, the merkle tree/proof, and entry lookups.
+  const key = normalizeAddress(registrant.address);
+  if (list.some((r) => normalizeAddress(r.address) === key)) {
     return state; // already signed up — idempotent
   }
   if (list.length >= state.size) {
@@ -420,14 +427,14 @@ export function addRegistrant(state: BracketState, registrant: Registrant): Brac
   return state;
 }
 
-/** Remove a signup by address (case-insensitive). Mutates and returns `state`. */
+/** Remove a signup by address (representation-insensitive). Mutates and returns `state`. */
 export function removeRegistrant(state: BracketState, address: string): BracketState {
   if (state.status !== "registering") {
     throw new Error(`Bracket ${state.id} is not registering (status: ${state.status})`);
   }
-  const key = address.toLowerCase();
+  const key = normalizeAddress(address);
   state.registrants = (state.registrants ?? []).filter(
-    (r) => r.address.toLowerCase() !== key,
+    (r) => normalizeAddress(r.address) !== key,
   );
   return state;
 }
@@ -458,6 +465,27 @@ export function assignRegistrants(
   if (registrants.length < 2) {
     throw new Error(`Bracket ${state.id} needs at least 2 registrants to assign (got ${registrants.length})`);
   }
+  const seeding = opts.seeding ?? "random";
+  // A gated bracket can't express byes, so the field must be a power of two.
+  // Validate here for a clear message instead of leaking createBracket's error.
+  if (state.gated && registrants.length !== nextPowerOfTwo(registrants.length)) {
+    throw new Error(
+      `Bracket ${state.id}: a gated bracket needs a power-of-two registrant count to assign ` +
+        `(got ${registrants.length}/${state.size} filled). Fill to a power of two (ideally the ` +
+        `capacity ${state.size}), or create it with gated: false to allow byes.`,
+    );
+  }
+  // Pre-attached round-1 trees are keyed by positional match id, so a random
+  // shuffle would re-bind them to the wrong players. Only carry them through a
+  // deterministic assignment; otherwise attach trees AFTER assignment (their
+  // players are only known then) via attachRoundOneTree.
+  if (state.roundOneTreeIds && Object.keys(state.roundOneTreeIds).length > 0 && seeding !== "as-given") {
+    throw new Error(
+      `Bracket ${state.id}: pre-attached roundOneTreeIds can't survive a random shuffle ` +
+        `(they're keyed by match slot). Use seeding: "as-given", or attach trees after ` +
+        `assignment with attachRoundOneTree.`,
+    );
+  }
   // Reuse createBracket so seeding, byes, tree construction, and gating rules
   // stay in one place — including the deterministic shuffle.
   return createBracket({
@@ -473,9 +501,12 @@ export function assignRegistrants(
     ...(state.roundSettingsIds ? { roundSettingsIds: state.roundSettingsIds } : {}),
     ...(state.description ? { description: state.description } : {}),
     players: registrants.map((r) => ({ address: r.address, ...(r.name ? { name: r.name } : {}) })),
-    seeding: opts.seeding ?? "random",
+    seeding,
     ...(opts.shuffleSeed !== undefined ? { shuffleSeed: opts.shuffleSeed } : {}),
     gated: state.gated,
+    // Preserve any pre-attached round-1 tree ids across the transition —
+    // otherwise those matches would silently deploy ungated.
+    ...(state.roundOneTreeIds ? { roundOneTreeIds: state.roundOneTreeIds } : {}),
     ...(state.finalPrize ? { finalPrize: state.finalPrize } : {}),
   });
 }
@@ -540,7 +571,30 @@ function refreshMatchStatuses(state: BracketState): void {
 // ---------------------------------------------------------------------------
 
 /** Build the `create_tournament` Call for a single match. */
+/**
+ * The round-1 merkle allowlist entry requirement for a match, or undefined when
+ * it has no allowlist tree. Applied by BOTH create paths (`matchCreateCall` and
+ * `gatedMatchCreateCall`) so round-1 gating is never silently dropped depending
+ * on which one the caller happens to use.
+ */
+function roundOneMerkleRequirement(
+  state: BracketState,
+  match: BracketMatch,
+): EntryRequirementArgs | undefined {
+  const treeId = match.round === 1 ? state.roundOneTreeIds?.[match.id] : undefined;
+  if (treeId === undefined) return undefined;
+  return {
+    entryLimit: 1,
+    type: {
+      kind: "extension",
+      address: extensionAddressFor(state.chain, "merkle"),
+      config: buildMerkleConfig({ treeId }),
+    },
+  };
+}
+
 function matchCreateCall(state: BracketState, match: BracketMatch): Call {
+  const entryRequirement = roundOneMerkleRequirement(state, match);
   const args: CreateTournamentArgs = {
     creatorRewardsAddress: state.creatorRewardsAddress,
     name: `${state.namePrefix} R${match.round}-${match.indexInRound + 1}`.slice(0, 31),
@@ -549,6 +603,7 @@ function matchCreateCall(state: BracketState, match: BracketMatch): Call {
     settingsId: state.roundSettingsIds?.[match.round - 1] ?? state.settingsId,
     schedule: { ...state.scheduleTemplate },
     leaderboard: { ...state.leaderboard },
+    ...(entryRequirement ? { entryRequirement } : {}),
   };
   return buildCreateTournamentCall(state.budokanAddress, args);
 }
@@ -633,20 +688,10 @@ function roundSchedule(t: MatchScheduleTemplate, round: number): MatchScheduleTe
 
 /** Build a match's create_tournament Call with staggered schedule + gating. */
 function gatedMatchCreateCall(state: BracketState, match: BracketMatch): Call {
-  let entryRequirement: EntryRequirementArgs | undefined;
-  const roundOneTreeId = match.round === 1 ? state.roundOneTreeIds?.[match.id] : undefined;
-  if (roundOneTreeId !== undefined) {
-    // Round-1 allowlist gating: only the match's assigned players (the tree's
-    // entries) can enter, each once. Independent of the round>1 feeder gating.
-    entryRequirement = {
-      entryLimit: 1,
-      type: {
-        kind: "extension",
-        address: extensionAddressFor(state.chain, "merkle"),
-        config: buildMerkleConfig({ treeId: roundOneTreeId }),
-      },
-    };
-  } else if (state.gated && match.round > 1) {
+  // Round-1 allowlist gating (shared with matchCreateCall): only the match's
+  // assigned players can enter, each once. Independent of round>1 feeder gating.
+  let entryRequirement: EntryRequirementArgs | undefined = roundOneMerkleRequirement(state, match);
+  if (!entryRequirement && state.gated && match.round > 1) {
     const feeders = bracketFeeders(state, match.id);
     const feederIds = feeders.map((f) => f.tournamentId).filter((id): id is string => !!id);
     if (feeders.length === 0 || feederIds.length !== feeders.length) {
@@ -830,10 +875,13 @@ export function bracketEntryCalls(
   if (!m.tournamentId) {
     throw new Error(`Match ${matchIdToEnter} has no tournament yet`);
   }
+  // Normalize both sides so a differently-represented `playerAddress`
+  // (leading zeros / casing) still matches the stored competitor.
+  const wanted = normalizeAddress(playerAddress);
   const player =
-    m.playerA?.address === playerAddress
+    m.playerA && normalizeAddress(m.playerA.address) === wanted
       ? m.playerA
-      : m.playerB?.address === playerAddress
+      : m.playerB && normalizeAddress(m.playerB.address) === wanted
         ? m.playerB
         : undefined;
   if (!player) {
@@ -848,13 +896,17 @@ export function bracketEntryCalls(
   const roundOneTreeId = m.round === 1 ? state.roundOneTreeIds?.[m.id] : undefined;
   if (roundOneTreeId !== undefined) {
     // Round-1 allowlist: prove the entrant is on the match's merkle tree. The
-    // proof span comes from the caller (fetched via `getAllowlistProof`); the
-    // entrant is their own qualifier, so `qualifier` stays None.
+    // proof span comes from the caller (fetched via `getAllowlistProof`). Set
+    // `qualifier` to the player so the validator checks THEM against the tree,
+    // not the caller — required when someone enters on the player's behalf (the
+    // organizer deploying a closed bracket); harmless for self-entry. Mirrors
+    // the round>1 branch below.
     if (!proof || proof.length === 0) {
       throw new Error(
         `Match ${matchIdToEnter} is merkle-gated (round-1 allowlist) — pass the proof span from getAllowlistProof(...) as the \`proof\` argument.`,
       );
     }
+    qualifier = player.address;
     qualification = { kind: "extension", data: proof };
   } else if (state.gated && m.round > 1) {
     const feeder = bracketFeeders(state, m.id).find(

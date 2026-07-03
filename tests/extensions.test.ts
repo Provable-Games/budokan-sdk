@@ -9,6 +9,7 @@ import {
   u256ToLowHigh,
 } from "../src/extensions/index.ts";
 import { buildRegisterAllowlistTreeCall } from "../src/extensions/merkle.ts";
+import { normalizeAddress } from "../src/utils/address.ts";
 
 describe("buildTournamentQualificationProof", () => {
   test("encodes [qualifyingTournamentId, tokenId, position]", () => {
@@ -106,9 +107,10 @@ describe("buildRegisterAllowlistTreeCall", () => {
     });
     expect(call.entrypoint).toBe("create_tree");
     expect(norm(call.contractAddress)).toBe(norm(extensionAddressFor("sepolia", "merkle")));
+    // Addresses are normalized to the canonical form in the tree entries.
     expect(entries).toEqual([
-      { address: "0x1", count: 1 },
-      { address: "0x2", count: 1 },
+      { address: normalizeAddress("0x1"), count: 1 },
+      { address: normalizeAddress("0x2"), count: 1 },
     ]);
   });
 
@@ -118,7 +120,18 @@ describe("buildRegisterAllowlistTreeCall", () => {
       addresses: ["0xa"],
       entriesPerAddress: 3,
     });
-    expect(entries).toEqual([{ address: "0xa", count: 3 }]);
+    expect(entries).toEqual([{ address: normalizeAddress("0xa"), count: 3 }]);
+  });
+
+  test("normalizes + dedupes representation variants of the same address", () => {
+    const { entries } = buildRegisterAllowlistTreeCall({
+      chain: "sepolia",
+      addresses: ["0x1", "0x01", "0xABC", "0xabc"],
+    });
+    expect(entries).toEqual([
+      { address: normalizeAddress("0x1"), count: 1 },
+      { address: normalizeAddress("0xabc"), count: 1 },
+    ]);
   });
 
   test("rejects an empty allowlist", () => {
@@ -127,14 +140,16 @@ describe("buildRegisterAllowlistTreeCall", () => {
     ).toThrow();
   });
 
-  test("rejects entriesPerAddress < 1", () => {
-    expect(() =>
-      buildRegisterAllowlistTreeCall({
-        chain: "sepolia",
-        addresses: ["0x1"],
-        entriesPerAddress: 0,
-      }),
-    ).toThrow();
+  test("rejects a non-positive-integer entriesPerAddress (incl. NaN / fractional)", () => {
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      expect(() =>
+        buildRegisterAllowlistTreeCall({
+          chain: "sepolia",
+          addresses: ["0x1"],
+          entriesPerAddress: bad,
+        }),
+      ).toThrow();
+    }
   });
 });
 

@@ -27,6 +27,7 @@ import * as listCmds from "./commands/list.ts";
 import * as claimCmd from "./commands/claim.ts";
 import { distribute } from "./commands/distribute.ts";
 import * as leaderboardCmd from "./commands/leaderboard.ts";
+import { topup as topupCmd } from "./commands/topup.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 import { formatError } from "./format-error.ts";
 
@@ -235,6 +236,12 @@ export class TelegramBot {
         return this.disconnect(chatId);
       case "/whoami":
         return this.whoami(chatId);
+      case "/topup":
+      case "/top_up":
+      case "/topUp": {
+        const chain = await this.chatStates.getChain(chatId);
+        return topupCmd(this.api, this.config, this.sessions, chatId, chain, args, this.botUsername);
+      }
       case "/cancel":
         return this.cancel(chatId);
       case "/back":
@@ -572,6 +579,9 @@ export class TelegramBot {
         "  /connect — authorize the bot via Cartridge",
         "  /disconnect — clear your stored session",
         "  /whoami — show the connected account",
+        ...(this.config.topupUrl
+          ? ["  /topup [address] — add funds to your wallet (or a given address)"]
+          : []),
         `  /chain [${SUPPORTED_CHAINS.join("|")}] — show or switch your active chain`,
         "",
         "Browse:",

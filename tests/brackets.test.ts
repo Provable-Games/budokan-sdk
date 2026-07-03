@@ -403,6 +403,18 @@ describe("round-1 merkle allowlist gating", () => {
     );
   });
 
+  test("pendingMatchCreateCalls also gates round-1 (both create paths apply it)", () => {
+    const s = createBracket(baseOpts(players(4)));
+    const gatedMatch = s.matches.filter((m) => m.round === 1)[0]!;
+    attachRoundOneTree(s, gatedMatch.id, 7);
+
+    const calls = pendingMatchCreateCalls(s);
+    const gated = calls.find((c) => c.matchId === gatedMatch.id)!;
+    const cd = (gated.call.calldata as string[]).map(norm);
+    expect(cd).toContain(norm(extensionAddressFor("sepolia", "merkle")));
+    expect(cd).toContain("7");
+  });
+
   test("entry into a merkle-gated round-1 match requires and attaches the proof", () => {
     const s = createBracket(baseOpts(players(4)));
     const m = s.matches.filter((mm) => mm.round === 1)[0]!;
@@ -418,6 +430,19 @@ describe("round-1 merkle allowlist gating", () => {
     const call = bracketEntryCalls(s, m.id, addr, proof)[0]!;
     expect(call.entrypoint).toBe("enter_tournament");
     const cd = (call.calldata as string[]).map(norm);
+    expect(cd).toContain(norm("0xdeadbeef"));
+  });
+
+  test("merkle-gated entry sets the player as qualifier (needed for on-behalf entry)", () => {
+    // Distinctive addresses so the qualifier felt is unmistakable in calldata.
+    const s = createBracket(baseOpts([{ address: "0xaaa1" }, { address: "0xbbb2" }]));
+    const m = s.matches.filter((mm) => mm.round === 1)[0]!;
+    attachRoundOneTree(s, m.id, 7);
+    attachMatchTournament(s, m.id, "100");
+    const player = m.playerA!.address;
+    const cd = (bracketEntryCalls(s, m.id, player, ["1", "0xdeadbeef"])[0]!.calldata as string[]).map(norm);
+    // qualifier = the entrant, so the validator checks THEM (not the caller) against the tree.
+    expect(cd).toContain(norm(player));
     expect(cd).toContain(norm("0xdeadbeef"));
   });
 
@@ -463,22 +488,24 @@ describe("registration phase", () => {
     expect(() => createRegisteringBracket(regOpts(1))).toThrow();
   });
 
-  test("addRegistrant dedupes (case-insensitive) and enforces capacity", () => {
+  test("addRegistrant dedupes representation variants and enforces capacity", () => {
     const s = createRegisteringBracket(regOpts(2));
     addRegistrant(s, { address: "0xAbC", name: "A" });
-    addRegistrant(s, { address: "0xabc" }); // dup → ignored
+    addRegistrant(s, { address: "0xabc" }); // casing dup → ignored
+    addRegistrant(s, { address: "0x0abc" }); // leading-zero dup → ignored
     expect(s.registrants).toHaveLength(1);
+    expect(s.registrants![0]!.address).toBe("0xAbC"); // stores the original (first-added) form
     addRegistrant(s, { address: "0x2" });
     expect(s.registrants).toHaveLength(2);
     expect(() => addRegistrant(s, { address: "0x3" })).toThrow(); // full
   });
 
-  test("removeRegistrant drops a signup by address", () => {
+  test("removeRegistrant drops a signup regardless of representation", () => {
     const s = createRegisteringBracket(regOpts(4));
     addRegistrant(s, { address: "0x1" });
     addRegistrant(s, { address: "0x2" });
-    removeRegistrant(s, "0X1");
-    expect(s.registrants!.map((r) => r.address)).toEqual(["0x2"]);
+    removeRegistrant(s, "0X01"); // different casing + leading zero
+    expect(s.registrants!.map((r) => r.address)).toEqual(["0x2"]); // original form kept
   });
 
   test("assignRegistrants builds a running bracket, deterministic by seed", () => {
@@ -501,8 +528,32 @@ describe("registration phase", () => {
     const s = createRegisteringBracket(regOpts(4));
     for (const a of ["0x1", "0x2", "0x3", "0x4"]) addRegistrant(s, { address: a });
     const running = assignRegistrants(s, { seeding: "as-given" });
+    // Registrants (and thus players) keep their original address form.
     expect(running.players.map((p) => p.address)).toEqual(["0x1", "0x2", "0x3", "0x4"]);
     expect(running.gated).toBe(true);
+  });
+
+  test("assignRegistrants preserves pre-attached roundOneTreeIds (as-given only)", () => {
+    const s = createRegisteringBracket({ ...regOpts(2), roundOneTreeIds: { "reg1-r1-m0": 7 } });
+    addRegistrant(s, { address: "0x1" });
+    addRegistrant(s, { address: "0x2" });
+    const running = assignRegistrants(s, { seeding: "as-given" });
+    expect(running.roundOneTreeIds).toEqual({ "reg1-r1-m0": 7 });
+  });
+
+  test("assignRegistrants rejects pre-attached roundOneTreeIds under a random shuffle", () => {
+    // A shuffle re-binds match slots, so keyed-by-slot trees would gate the wrong pair.
+    const s = createRegisteringBracket({ ...regOpts(2), roundOneTreeIds: { "reg1-r1-m0": 7 } });
+    addRegistrant(s, { address: "0x1" });
+    addRegistrant(s, { address: "0x2" });
+    expect(() => assignRegistrants(s, { seeding: "random" })).toThrow(/random shuffle/);
+    expect(() => assignRegistrants(s)).toThrow(); // random is the default
+  });
+
+  test("assignRegistrants rejects a non-power-of-two gated registration with a clear error", () => {
+    const s = createRegisteringBracket(regOpts(4)); // capacity 4, but only 3 sign up
+    for (const a of ["0x1", "0x2", "0x3"]) addRegistrant(s, { address: a });
+    expect(() => assignRegistrants(s)).toThrow(/power-of-two/);
   });
 
   test("assignRegistrants needs at least two registrants", () => {

@@ -48,6 +48,13 @@ export interface Config {
    * serving). Defaults to the metagame-sdk default for the chain when unset.
    */
   merkleApiUrl?: string;
+  /**
+   * Optional top-up app endpoint (e.g. `https://app.yourgame.xyz/topup`). When
+   * set, `/topup` hands the user a deeplink to it with their address +
+   * returnUrl; when unset, `/topup` says top-up isn't configured. The app takes
+   * the destination straight from the link, so the bot just passes the address.
+   */
+  topupUrl?: string;
 }
 
 export function loadConfig(): Config {
@@ -99,6 +106,7 @@ export function loadConfig(): Config {
     operatorAddress: env("BOT_OPERATOR_ADDRESS"),
     bracketMerkleGating: /^(1|true|yes)$/i.test(env("BRACKET_MERKLE_GATING") ?? ""),
     merkleApiUrl: env("MERKLE_API_URL"),
+    topupUrl: env("TOPUP_URL"),
   };
 }
 
