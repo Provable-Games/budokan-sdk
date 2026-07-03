@@ -9,7 +9,7 @@
 //     bot approves the exact fee and enters in one in-session multicall, no
 //     per-tx popup. The cap bounds what the session can ever spend.
 
-import { CHAINS } from "@provable-games/budokan-sdk";
+import { CHAINS, extensionAddressFor } from "@provable-games/budokan-sdk";
 
 import type { Chain } from "./chat-state.ts";
 import { tokensForChain } from "./catalog/tokens.ts";
@@ -54,6 +54,24 @@ export function buildSessionPolicies(
       ],
     },
   };
+
+  // Merkle allowlist validator — `create_tree` registers a round-1 allowlist
+  // when bracket merkle gating is on (BRACKET_MERKLE_GATING). Authorized
+  // unconditionally so flipping the flag doesn't change the policy set (which
+  // would force every session to re-/connect). Skipped only if the chain has no
+  // merkle validator deployed. Entry with a proof still uses `enter_tournament`
+  // above — the validator's check is an internal call, no separate policy.
+  try {
+    const merkleValidator = extensionAddressFor(chain, "merkle");
+    contracts[merkleValidator] = {
+      name: "Merkle Allowlist",
+      methods: [
+        { entrypoint: "create_tree", description: "Register a bracket round-1 allowlist" },
+      ],
+    };
+  } catch {
+    // No merkle validator on this chain — leave it out.
+  }
 
   // Spending limits for the common tokens. Authorizing `approve` with an
   // `amount` makes the keychain show a spending-limit card and enforce the

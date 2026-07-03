@@ -36,6 +36,19 @@ export interface Config {
   operatorPrivateKey?: string;
   operatorAddress?: string;
   /**
+   * Enable round-1 merkle allowlist gating on brackets: each round-1 match is
+   * created with a merkle `entry_requirement` so only its two assigned players
+   * can enter (closing the round-1 client-bypass hole). Off by default — it
+   * hard-depends on the merkle allowlist service being reachable, so flip it on
+   * only once that's verified. See budokan-sdk `src/extensions/merkle.ts`.
+   */
+  bracketMerkleGating?: boolean;
+  /**
+   * Optional override for the merkle allowlist API (tree storage + proof
+   * serving). Defaults to the metagame-sdk default for the chain when unset.
+   */
+  merkleApiUrl?: string;
+  /**
    * Optional top-up app endpoint (e.g. `https://app.yourgame.xyz/topup`). When
    * set, `/topup` hands the user a deeplink to it with their address +
    * returnUrl; when unset, `/topup` says top-up isn't configured. The app takes
@@ -91,6 +104,8 @@ export function loadConfig(): Config {
     bracketChannelId: env("BRACKET_CHANNEL_ID"),
     operatorPrivateKey: env("BOT_OPERATOR_PRIVATE_KEY"),
     operatorAddress: env("BOT_OPERATOR_ADDRESS"),
+    bracketMerkleGating: /^(1|true|yes)$/i.test(env("BRACKET_MERKLE_GATING") ?? ""),
+    merkleApiUrl: env("MERKLE_API_URL"),
     topupUrl: env("TOPUP_URL"),
   };
 }

@@ -21,12 +21,17 @@ import {
   createBracket,
   advanceBracket,
   attachMatchTournament,
+  attachRoundOneTree,
   bracketEntryCalls,
   bracketFeePrizeCalls,
   bracketRounds,
   bracketSummary,
+  buildRegisterAllowlistTreeCall,
+  getAllowlistProof,
+  parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
   roundMatchCreateCalls,
+  storeAllowlistTree,
   tournamentPageUrl,
   type BracketState,
   type MatchReader,
@@ -531,6 +536,70 @@ interface DeployParams {
   players: Player[];
 }
 
+/** Signs + submits calls (the organizer's Cartridge session or a raw Account). */
+type BracketCall = { contractAddress: string; entrypoint: string; calldata: string[] };
+type Executor = { execute: (calls: BracketCall[]) => Promise<{ transaction_hash: string }> };
+
+/**
+ * Phase 3/4b — register a per-match merkle allowlist for round 1 so only each
+ * match's assigned players can enter it (closing the round-1 client bypass).
+ * One on-chain `create_tree` per match (batching is a future optimization),
+ * stored in the merkle API, then attached to the state. No-op unless
+ * `config.bracketMerkleGating` is on. MUST run before the round-1
+ * create_tournament calls — they embed the tree id in the entry requirement.
+ */
+async function registerRoundOneAllowlists(
+  state: BracketState,
+  executor: Executor,
+  rpc: RpcProvider,
+  config: Config,
+): Promise<void> {
+  if (!config.bracketMerkleGating) return;
+  const chain = state.chain;
+  const apiUrl = config.merkleApiUrl;
+  for (const m of state.matches.filter((x) => x.round === 1)) {
+    const addresses = [m.playerA, m.playerB]
+      .filter((pl): pl is NonNullable<typeof pl> => isReal(pl))
+      .map((pl) => pl.address);
+    if (addresses.length === 0) continue; // fully-placeholder slot (open, pre-fill)
+    const { call, entries } = buildRegisterAllowlistTreeCall({
+      chain,
+      addresses,
+      ...(apiUrl ? { apiUrl } : {}),
+    });
+    const tx = await executor.execute([call]);
+    const receipt = (await rpc.waitForTransaction(tx.transaction_hash)) as { events?: unknown[] };
+    const treeId = parseAllowlistTreeId({ chain, events: receipt.events ?? [], ...(apiUrl ? { apiUrl } : {}) });
+    if (treeId == null) throw new Error(`Couldn't read merkle tree id for ${m.id}`);
+    await storeAllowlistTree({
+      chain,
+      treeId,
+      name: `${state.namePrefix} ${m.id}`.slice(0, 60),
+      description: `Bracket ${state.id} round-1 allowlist (${m.id})`,
+      entries,
+      ...(apiUrl ? { apiUrl } : {}),
+    });
+    attachRoundOneTree(state, m.id, treeId);
+  }
+}
+
+/** The round-1 merkle proof for a player, or undefined when the match is ungated. */
+async function roundOneProof(
+  state: BracketState,
+  matchId: string,
+  address: string,
+  config: Config,
+): Promise<string[] | undefined> {
+  const treeId = state.roundOneTreeIds?.[matchId];
+  if (treeId === undefined) return undefined;
+  return getAllowlistProof({
+    chain: state.chain,
+    treeId,
+    address,
+    ...(config.merkleApiUrl ? { apiUrl: config.merkleApiUrl } : {}),
+  });
+}
+
 async function deployResolved(
   api: TelegramApi,
   config: Config,
@@ -583,6 +652,12 @@ async function deployResolved(
   const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
   await api.sendMessage(organizerChatId, `⏳ Deploying ${bracketRounds(state)} rounds of match tournaments…`);
   try {
+    // Phase 3: gate round 1 on a per-match allowlist (no-op unless enabled).
+    // Must precede the round-1 creates so their entry requirement carries the id.
+    if (config.bracketMerkleGating) {
+      await api.sendMessage(organizerChatId, `🔒 Registering round-1 allowlists…`);
+      await registerRoundOneAllowlists(state, session.data.account, rpc, config);
+    }
     for (let round = 1; round <= bracketRounds(state); round++) {
       for (const { matchId, call } of roundMatchCreateCalls(state, round)) {
         const tx = await session.data.account.execute([call]);
@@ -596,15 +671,23 @@ async function deployResolved(
       await store.save({ state, organizerChatId, announceChatId });
     }
     // Enter (= mint the game token for) every round-1 player in ONE multicall,
-    // instead of a separate tx per player.
-    const entryCalls = state.matches
-      .filter((x) => x.round === 1 && x.tournamentId)
-      .flatMap((m) =>
-        [m.playerA, m.playerB]
-          .filter((pl): pl is NonNullable<typeof pl> => !!pl)
-          .flatMap((player) => bracketEntryCalls(state, m.id, player.address)),
-      );
-    if (entryCalls.length > 0) await session.data.account.execute(entryCalls);
+    // instead of a separate tx per player. Merkle-gated matches attach the
+    // player's allowlist proof (fetched from the merkle service).
+    const entryCalls: ReturnType<typeof bracketEntryCalls> = [];
+    for (const m of state.matches.filter((x) => x.round === 1 && x.tournamentId)) {
+      for (const player of [m.playerA, m.playerB]) {
+        if (!isReal(player)) continue;
+        const proof = await roundOneProof(state, m.id, player!.address, config);
+        entryCalls.push(...bracketEntryCalls(state, m.id, player!.address, proof));
+      }
+    }
+    if (entryCalls.length > 0) {
+      // Wait for acceptance (like the create/register txs) so a reverted entry —
+      // e.g. a merkle proof/qualifier mismatch — surfaces as a deploy failure
+      // instead of the bot reporting "players entered" prematurely.
+      const entryTx = await session.data.account.execute(entryCalls);
+      await rpc.waitForTransaction(entryTx.transaction_hash);
+    }
   } catch (error) {
     await store.save({ state, organizerChatId, announceChatId }).catch(() => {});
     await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /tournaments shows what's live.`);
