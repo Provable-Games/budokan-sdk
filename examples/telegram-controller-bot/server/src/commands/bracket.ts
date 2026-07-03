@@ -681,7 +681,13 @@ async function deployResolved(
         entryCalls.push(...bracketEntryCalls(state, m.id, player!.address, proof));
       }
     }
-    if (entryCalls.length > 0) await session.data.account.execute(entryCalls);
+    if (entryCalls.length > 0) {
+      // Wait for acceptance (like the create/register txs) so a reverted entry —
+      // e.g. a merkle proof/qualifier mismatch — surfaces as a deploy failure
+      // instead of the bot reporting "players entered" prematurely.
+      const entryTx = await session.data.account.execute(entryCalls);
+      await rpc.waitForTransaction(entryTx.transaction_hash);
+    }
   } catch (error) {
     await store.save({ state, organizerChatId, announceChatId }).catch(() => {});
     await api.sendMessage(organizerChatId, `❌ Deploy stopped: ${formatError(error)}\nProgress saved — /tournaments shows what's live.`);
