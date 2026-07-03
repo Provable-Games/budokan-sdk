@@ -214,14 +214,36 @@ export type {
   TournamentRequirementType,
 } from "./extensions/index.js";
 
+// Merkle allowlist helpers — build the on-chain tree-registration call, parse
+// the assigned tree id, store the tree in the merkle API, and fetch entry
+// proofs. Signing is left to the caller (see src/extensions/merkle.ts).
+export {
+  buildRegisterAllowlistTreeCall,
+  parseAllowlistTreeId,
+  storeAllowlistTree,
+  getAllowlistProof,
+} from "./extensions/merkle.js";
+export type {
+  BuildRegisterAllowlistTreeParams,
+  RegisterAllowlistTreeResult,
+  ParseAllowlistTreeIdParams,
+  StoreAllowlistTreeParams,
+  GetAllowlistProofParams,
+} from "./extensions/merkle.js";
+
 // 1v1 single-elimination brackets, orchestrated off-chain over ordinary
 // leaderboard tournaments (one match = one 2-player tournament). Pure
 // state + Call builders; the caller persists state and signs. See
 // src/brackets/DESIGN.md.
 export {
   createBracket,
+  createRegisteringBracket,
+  addRegistrant,
+  removeRegistrant,
+  assignRegistrants,
   advanceBracket,
   attachMatchTournament,
+  attachRoundOneTree,
   pendingMatchCreateCalls,
   roundMatchCreateCalls,
   bracketFeeders,
@@ -238,9 +260,12 @@ export type {
   BracketState,
   BracketMatch,
   BracketPlayer,
+  Registrant,
   MatchStatus,
   MatchScheduleTemplate,
   CreateBracketOptions,
+  CreateRegisteringBracketOptions,
+  AssignRegistrantsOptions,
   CreateMatchCall,
   MatchResult,
   MatchReader,
