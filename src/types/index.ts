@@ -29,6 +29,7 @@ export type { PlayerRewards, PlayerPlacement } from "./player.js";
 export type { PaginatedResult } from "./common.js";
 export type {
   WSChannel,
+  WSSubmissionData,
   WSSubscribeMessage,
   WSUnsubscribeMessage,
   WSEventMessage,

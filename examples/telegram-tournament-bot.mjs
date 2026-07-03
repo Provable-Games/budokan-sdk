@@ -225,7 +225,7 @@ function refreshBudokanSubscription() {
 
   client.connect();
   unsubscribeBudokan = client.subscribe(
-    ["tournaments", "registrations", "prizes", "rewards"],
+    ["tournaments", "registrations", "submissions", "prizes", "rewards"],
     (message) => {
       handleBudokanMessage(message).catch((error) => {
         console.error(`WS handler failed: ${formatError(error)}`);
@@ -240,6 +240,7 @@ async function handleBudokanMessage(message) {
   if (
     message.channel !== "tournaments" &&
     message.channel !== "registrations" &&
+    message.channel !== "submissions" &&
     message.channel !== "prizes" &&
     message.channel !== "rewards"
   ) return;
@@ -735,6 +736,16 @@ function formatEvent(channel, event) {
     if (event.entryNumber !== null) lines.push(`Entry #: ${event.entryNumber}`);
     if (event.score !== null) lines.push(`Score: ${event.score}`);
     if (event.position !== null) lines.push(`Position: ${event.position}`);
+    lines.push(link);
+    return lines.join("\n");
+  }
+
+  if (channel === "submissions") {
+    // Payload identifies the entry only — scores live on-chain; read the
+    // leaderboard for the value.
+    const lines = ["Score submitted", header];
+    if (event.gameTokenId) lines.push(`Token: ${shortHex(event.gameTokenId)}`);
+    if (event.entryNumber !== null) lines.push(`Entry #: ${event.entryNumber}`);
     lines.push(link);
     return lines.join("\n");
   }
