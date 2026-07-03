@@ -612,10 +612,11 @@ async function deployResolved(
   }
 
   await store.save({ state, organizerChatId, announceChatId });
+  const prizeButton = addPrizeButton(state);
   await api.sendMessage(
     organizerChatId,
     `✅ Bracket ${id} deployed, players entered. Round 1 starts ${startSummary(p.startDelaySec)}.\n\n${addPrizeHint(state)}`,
-    addPrizeButton(state) ? { replyMarkup: addPrizeButton(state) } : {},
+    prizeButton ? { replyMarkup: prizeButton } : {},
   );
   await announceTo(api, announceChatId, `🥊 The bracket is on!\n\n${presentation({ state, organizerChatId, announceChatId })}`);
   return true;
@@ -725,10 +726,11 @@ async function deployPaidUpfront(
   const joinLine = d.entryFee
     ? `Players tap Join to pay ${d.entryFee.label} (adds to the pool) and enter.`
     : `Players tap Join to enter (free).`;
+  const prizeButton = addPrizeButton(b.state);
   await api.sendMessage(
     organizerChatId,
     `✅ Bracket ${id} deployed & open (0/${capacity}). ${joinLine} Round 1 starts ${startSummary(d.startDelaySec!)}.\n\n${addPrizeHint(b.state)}`,
-    addPrizeButton(b.state) ? { replyMarkup: addPrizeButton(b.state) } : {},
+    prizeButton ? { replyMarkup: prizeButton } : {},
   );
 }
 
