@@ -40,6 +40,8 @@ import {
 
 import * as bracketCmd from "./bracket.ts";
 import { readAnnounceChannel } from "../bracket-store.ts";
+import { TournamentWatchStore } from "../tournament-watch-store.ts";
+import { addWatch } from "./watch.ts";
 import { gamesForChain, gameMetadataFor, fetchGameFeeBps, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, fetchSetting, formatSettingsDetails, type GameSettingDetails } from "../catalog/settings.ts";
@@ -1590,6 +1592,17 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
         },
       )
       .catch(() => {});
+
+    // Broadcast this tournament's lifecycle edges (live / submission /
+    // finalized, + prize/score events) to the same channel. The watch store is
+    // filesystem-backed, so a fresh instance here shares state with the poller.
+    await addWatch(
+      config,
+      new TournamentWatchStore(config.dataDir),
+      state.chain,
+      String(tournamentId),
+      announce,
+    ).catch(() => {});
   }
 }
 

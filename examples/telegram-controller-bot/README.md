@@ -8,13 +8,16 @@ A Telegram bot that lets users create, enter, and claim Budokan tournaments enti
 
 **Implemented.** The bot drives the full tournament lifecycle from inside Telegram:
 
-- Auth (Cartridge session): `/connect`, `/disconnect`, `/whoami`
+- Auth (Cartridge session): `/connect`, `/disconnect`, `/whoami`, `/wallet`
 - Manage: `/create`, `/add_prize`
 - Play: `/enter`, `/submit_score`
 - Settle: `/claim` (auto or by reward kind), `/distribute`
 - Browse: `/tournaments`, `/my_tournaments`, `/leaderboard`, `/chain`
+- Broadcast: `/follow`, `/unfollow`, `/following`
 
 All on-chain encoding and reward resolution go through `@provable-games/budokan-sdk` — the example does not re-implement calldata.
+
+> **Channel broadcasts:** run `/channel` in a group/channel to make it the announce target. Tournaments created via `/create` are auto-followed; add others with `/follow <id>`. A 60s poller posts a card on each **time-driven** lifecycle edge — **entry open → live → games over (submit scores) → finalized** — derived from the tournament's boundary timestamps (nothing on-chain fires for them). At finalize it also posts a **winner card** (top finishers within the prize spots, with amounts won). **Event-driven** updates — score submissions and prize additions — stream low-latency over the SDK `submissions` / `prizes` WebSocket channels (debounced into one aggregated card per burst) when the runtime has a global WebSocket (Node ≥ 22 / Bun); otherwise they fall back to the poller's count-diff. After finalize the watch is kept to drain reward claims, posting **"all rewards distributed"** once everything is claimed (or dropping after a 14-day cap). A card send that Telegram rejects as a dead chat (bot kicked / chat gone) drops that watch.
 
 The dependency-free read-only example at `examples/telegram-tournament-bot.mjs` remains the simpler reference.
 

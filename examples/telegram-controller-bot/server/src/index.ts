@@ -8,11 +8,14 @@ import { ChatStateStore } from "./chat-state.ts";
 import { HandshakeStore } from "./handshake.ts";
 import { SessionStore } from "./session-store.ts";
 import { BracketStore } from "./bracket-store.ts";
+import { TournamentWatchStore } from "./tournament-watch-store.ts";
 import { buildHttpServer } from "./http.ts";
 import { TelegramBot } from "./telegram.ts";
 
 // How often to advance running brackets (resolve matches, enter winners).
 const BRACKET_TICK_MS = 60_000;
+// How often to check watched tournaments for lifecycle edges to broadcast.
+const TOURNAMENT_TICK_MS = 60_000;
 
 async function main() {
   const config = loadConfig();
@@ -20,6 +23,7 @@ async function main() {
   const sessions = new SessionStore(config.dataDir);
   const chatStates = new ChatStateStore(config.dataDir, config.chain);
   const brackets = new BracketStore(config.dataDir);
+  const watch = new TournamentWatchStore(config.dataDir);
 
   // One-shot migration from the pre-chain-namespaced session layout.
   // Idempotent on subsequent boots.
@@ -30,7 +34,7 @@ async function main() {
     );
   }
 
-  const bot = new TelegramBot(config, handshakes, sessions, chatStates, brackets);
+  const bot = new TelegramBot(config, handshakes, sessions, chatStates, brackets, watch);
   const http = await buildHttpServer({
     config,
     handshakes,
@@ -45,6 +49,11 @@ async function main() {
   const bracketTimer = setInterval(() => void bot.bracketTick(), BRACKET_TICK_MS);
   bracketTimer.unref?.();
 
+  // Broadcast watched tournaments' lifecycle edges (live / submission /
+  // finalized, + prize/score events) to their announce channel.
+  const tournamentTimer = setInterval(() => void bot.tournamentTick(), TOURNAMENT_TICK_MS);
+  tournamentTimer.unref?.();
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
@@ -53,6 +62,7 @@ async function main() {
     bot.shutdown();
     handshakes.stop();
     clearInterval(bracketTimer);
+    clearInterval(tournamentTimer);
     try {
       await http.close();
     } catch (error) {

@@ -61,7 +61,7 @@ export async function topup(
 }
 
 /** Append `address` + `returnUrl` to the configured top-up endpoint. */
-function buildTopupUrl(base: string, address: string, returnUrl: string): string {
+export function buildTopupUrl(base: string, address: string, returnUrl: string): string {
   const u = new URL(base);
   u.searchParams.set("address", address);
   u.searchParams.set("returnUrl", returnUrl);
