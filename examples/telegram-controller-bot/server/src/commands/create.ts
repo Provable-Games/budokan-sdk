@@ -1344,6 +1344,15 @@ async function handlePrizesChoice(api: TelegramApi, config: Config, state: State
   if (idx === null) { await api.sendMessage(chatId, "Reply 1 or 2."); return; }
   if (idx === 0) return moveToConfirm(api, state, chatId);
 
+  // Reading wallet balances needs the Voyager proxy bearer token. Without it the
+  // proxy 401s, so skip the picker cleanly (same as when it's unconfigured)
+  // rather than surfacing a fetch error — the URL now has a default, so the
+  // token is what actually gates this feature.
+  if (!config.voyagerProxyToken) {
+    await api.sendMessage(chatId, "Prize sponsorship isn't available here — you can add prizes on budokan.gg after creating. Skipping.");
+    return moveToConfirm(api, state, chatId);
+  }
+
   const result = await resolveAccount(chatId, state.chain, config);
   if (!result.ok) {
     await api.sendMessage(chatId, "Need a connected session to read your balances. Run /connect first, then retry /create.");

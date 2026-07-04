@@ -127,10 +127,13 @@ const PHASE_CARDS: Record<string, (name: string) => string> = {
 };
 
 export interface TickOptions {
-  /** WS handles submissions — don't also count-diff them here. */
-  skipSubmissionCards?: boolean;
-  /** WS handles prize additions — don't also count-diff them here. */
-  skipPrizeCards?: boolean;
+  /**
+   * Returns true when the WS `submissions`/`prizes` stream is *actively
+   * delivering* for a chain — the poller then skips its count-diff for those
+   * events. When the socket is down (or absent), this is false and the poller
+   * covers them, so a dropped WS never silently swallows updates.
+   */
+  wsStreaming?: (chain: Chain) => boolean;
 }
 
 /** Runs every tick from index.ts. Best-effort per tournament — one failure
@@ -190,31 +193,27 @@ async function tickOne(
   }
 
   // Event-driven counts. Only announce increases (a re-index could briefly
-  // report fewer; don't spam a "prize removed" card off that). Each is skipped
-  // when its WS channel is handling it (the snapshot still advances so a later
-  // WS outage doesn't replay a backlog).
-  if (
-    !opts.skipPrizeCards &&
-    w.lastPrizeCount !== undefined &&
-    prizeCount > w.lastPrizeCount
-  ) {
+  // report fewer; don't spam a "prize removed" card off that). Skipped only
+  // while the WS stream is live for this chain — otherwise the poller covers it.
+  const wsLive = opts.wsStreaming?.(w.chain) ?? false;
+  if (!wsLive && w.lastPrizeCount !== undefined && prizeCount > w.lastPrizeCount) {
     const added = prizeCount - w.lastPrizeCount;
     cards.push(`🏆 ${added} new prize${added === 1 ? "" : "s"} added to ${name}.\n🔗 ${url}`);
   }
-  if (
-    !opts.skipSubmissionCards &&
-    w.lastSubmissionCount !== undefined &&
-    submissionCount > w.lastSubmissionCount
-  ) {
+  if (!wsLive && w.lastSubmissionCount !== undefined && submissionCount > w.lastSubmissionCount) {
     const added = submissionCount - w.lastSubmissionCount;
     cards.push(`📥 ${added} new score${added === 1 ? "" : "s"} submitted in ${name}.`);
   }
 
   for (const text of cards) {
-    if ((await postCard(api, w, text, url)) === "dead") {
+    const res = await postCard(api, w, text, url);
+    if (res === "dead") {
       await dropDeadWatch(store, w);
       return;
     }
+    // Transient send failure: leave the snapshot untouched so the card retries
+    // next tick rather than being silently lost by an advanced snapshot.
+    if (res === "error") return;
   }
 
   // Post-finalize: keep watching to drain claims. Once every reward is claimed,
@@ -222,12 +221,19 @@ async function tickOne(
   const finalizedAt = w.finalizedAt ?? (phase === "finalized" ? nowSec() : undefined);
   if (phase === "finalized") {
     const summary = await client.getTournamentRewardClaimsSummary(w.tournamentId).catch(() => null);
-    if (summary && summary.totalPrizes > 0 && summary.totalUnclaimed === 0) {
-      if ((await postCard(api, w, `🏁 All rewards distributed in ${name}.`, url)) === "dead") {
-        await dropDeadWatch(store, w);
-      } else {
-        await store.delete(w.chain, w.tournamentId).catch(() => {});
+    // Nothing left to claim → we're done. Post the wrap-up only if there were
+    // prizes at all (free/no-prize tournaments drop silently, no 14-day poll).
+    if (summary && summary.totalUnclaimed === 0) {
+      if (summary.totalPrizes > 0) {
+        const res = await postCard(api, w, `🏁 All rewards distributed in ${name}.`, url);
+        if (res === "dead") {
+          await dropDeadWatch(store, w);
+          return;
+        }
+        // Transient failure — keep the watch so the card retries next tick.
+        if (res === "error") return;
       }
+      await store.delete(w.chain, w.tournamentId).catch(() => {});
       return;
     }
     if (finalizedAt !== undefined && nowSec() - finalizedAt > FINALIZED_RETENTION_SECONDS) {
@@ -247,55 +253,70 @@ async function tickOne(
 }
 
 /**
- * Winner card for a just-finalized tournament: the top finishers *within the
- * prize spots* (max 3), each with the amount they won. Returns null when there
- * are no prize spots, no scored entrants, or the data can't be read.
+ * Winner card for a just-finalized tournament: the top ≤3 *paying* positions,
+ * each with the finisher and the amount they won. Prize positions come from the
+ * reward resolution (so sponsor-only pools count, not just entry-fee
+ * `paidPlaces`); the finisher for each position comes from the authoritative
+ * on-chain leaderboard, so amounts are never mislabeled by a filtered rank.
+ * Returns null when there are no paying positions or the core data can't be read.
  */
 async function buildWinnerCard(config: Config, chain: Chain, t: Tournament): Promise<string | null> {
-  const spots = t.paidPlaces ?? 0;
-  if (spots <= 0) return null;
-  const topN = Math.min(3, spots);
-
   const budokan = config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
   if (!budokan) return null;
+  // denshokan's contextId is a JS number; reject ids that would lose precision.
+  if (!Number.isSafeInteger(Number(t.id))) return null;
 
-  // Ranked entrants — denshokan tokens carry score + playerName + owner.
-  let winners: Array<{ owner: string; playerName: string | null; score: number }>;
+  const client = sdkClient(config, chain);
+  let prizes, claims, leaderboard;
+  try {
+    [prizes, claims, leaderboard] = await Promise.all([
+      client.getTournamentPrizes(t.id),
+      fetchAllRewardClaims(client, t.id),
+      client.getTournamentLeaderboard(t.id),
+    ]);
+  } catch {
+    return null;
+  }
+
+  const winningsByPos = winningsByPosition(chain, getDistributableRewards({ tournament: t, prizes, existingClaims: claims }));
+  const prizePositions = [...winningsByPos.keys()].sort((a, b) => a - b).slice(0, 3);
+  if (prizePositions.length === 0) return null;
+
+  // Authoritative position → tokenId (on-chain), then tokenId → player (best-
+  // effort; falls back to "position N" if the name lookup fails).
+  const tokenByPosition = new Map(leaderboard.map((e) => [e.position, normId(e.tokenId)]));
+  const playerByToken = new Map<string, { playerName: string | null; owner: string }>();
   try {
     const denshokan = createDenshokanClient({ chain } as Parameters<typeof createDenshokanClient>[0]);
     const res = await denshokan.getTokens({
       minterAddress: normalizeAddress(budokan),
       contextId: Number(t.id),
-      sort: { field: "score", direction: t.leaderboardAscending ? "asc" : "desc" },
-      limit: Math.max(topN * 4, 12),
+      limit: 500,
     });
-    winners = res.data.filter((x) => x.score > 0 || x.gameOver).slice(0, topN);
+    for (const tok of res.data) playerByToken.set(normId(tok.tokenId), { playerName: tok.playerName, owner: tok.owner });
   } catch {
-    return null;
-  }
-  if (winners.length === 0) return null;
-
-  // Amount won per position (best-effort — names-only if this read fails).
-  let amountByPos = new Map<number, string>();
-  try {
-    const client = sdkClient(config, chain);
-    const [prizes, claims] = await Promise.all([
-      client.getTournamentPrizes(t.id),
-      fetchAllRewardClaims(client, t.id),
-    ]);
-    amountByPos = winningsByPosition(chain, getDistributableRewards({ tournament: t, prizes, existingClaims: claims }));
-  } catch {
-    // leave amounts empty
+    // names degrade to "position N"
   }
 
   const medals = ["🥇", "🥈", "🥉"];
   const lines = [`🏆 ${t.name || `#${t.id}`} — final results:`];
-  winners.forEach((wn, i) => {
-    const who = wn.playerName?.trim() || shortAddr(wn.owner);
-    const won = amountByPos.get(i + 1);
-    lines.push(`${medals[i] ?? `#${i + 1}`} ${who}${won ? ` — won ${won}` : ""}`);
+  prizePositions.forEach((pos, i) => {
+    const tokenId = tokenByPosition.get(pos);
+    const player = tokenId ? playerByToken.get(tokenId) : undefined;
+    const who = player?.playerName?.trim() || (player ? shortAddr(player.owner) : `position ${pos}`);
+    const won = winningsByPos.get(pos);
+    lines.push(`${medals[i] ?? `#${pos}`} ${who}${won ? ` — won ${won}` : ""}`);
   });
   return lines.join("\n");
+}
+
+/** Normalize a felt token id (hex or decimal) to a canonical decimal key. */
+function normId(x: string | number): string {
+  try {
+    return BigInt(x).toString();
+  } catch {
+    return String(x);
+  }
 }
 
 /** Sum ERC-20 position winnings per leaderboard position, formatted per token. */
@@ -306,7 +327,7 @@ function winningsByPosition(chain: Chain, rewards: ClaimableReward[]): Map<numbe
     if (!POSITION_SOURCES.has(r.source)) continue;
     if (r.tokenType !== "erc20" || r.amount === undefined || !r.tokenAddress) continue;
     const toks = byPos.get(r.position) ?? new Map<string, bigint>();
-    toks.set(r.tokenAddress, (toks.get(r.tokenAddress) ?? 0n) + r.amount);
+    toks.set(r.tokenAddress, (toks.get(r.tokenAddress) ?? 0n) + BigInt(r.amount));
     byPos.set(r.position, toks);
   }
   const out = new Map<number, string>();

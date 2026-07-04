@@ -102,13 +102,19 @@ export async function wallet(
     );
   });
 
+  // A missing/garbled expiry must not crash the command — new Date(NaN)
+  // .toISOString() throws. Fall back to treating it as expired/unknown.
   const expiresAt = new Date(Number(stored.session.expiresAt) * 1000);
-  const expired = expiresAt.getTime() <= Date.now();
+  const validExpiry = !Number.isNaN(expiresAt.getTime());
+  const expired = !validExpiry || expiresAt.getTime() <= Date.now();
+  const expiryStr = validExpiry
+    ? `${expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC`
+    : "an unknown time";
   lines.push(
     "",
     expired
-      ? `⚠️ Session expired ${expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC — Re-connect to restore your spending limits.`
-      : `Session valid until ${expiresAt.toISOString().slice(0, 16).replace("T", " ")} UTC.`,
+      ? `⚠️ Session expired ${expiryStr} — Re-connect to restore your spending limits.`
+      : `Session valid until ${expiryStr}.`,
     "",
     "Low on a token? Top up. Approvals are granted per-payment up to the session cap; if the session lapsed, Re-connect.",
   );

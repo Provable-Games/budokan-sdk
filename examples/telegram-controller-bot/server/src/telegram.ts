@@ -427,15 +427,16 @@ export class TelegramBot {
 
   /** Broadcast watched tournaments' lifecycle edges to their channel. */
   async tournamentTick(): Promise<void> {
-    // When WS handles submissions + prizes, don't also post them from the poller.
-    await watchCmd.tournamentTick(this.api, this.config, this.watch, {
-      skipSubmissionCards: !!this.watchWs,
-      skipPrizeCards: !!this.watchWs,
-    });
-    // Keep the WS subscription set in sync with the watch list (picks up
-    // /create auto-follows and finalize-drops within one tick).
+    // Sync the WS subscription set to the watch list first (picks up /create
+    // auto-follows and finalize-drops), so isStreaming() below is up to date.
     await this.watchWs?.refresh().catch((error) => {
       console.error("watchWs refresh failed:", formatError(error));
+    });
+    // Skip the poller's count-diff for a chain only while its WS is actually
+    // streaming — if the socket is down, the poller must cover the gap.
+    const ws = this.watchWs;
+    await watchCmd.tournamentTick(this.api, this.config, this.watch, {
+      wsStreaming: ws ? (chain) => ws.isStreaming(chain) : undefined,
     });
   }
 

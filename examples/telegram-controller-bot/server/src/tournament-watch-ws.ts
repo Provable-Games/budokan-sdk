@@ -39,6 +39,8 @@ export class TournamentWatchWs {
   private readonly submissions = new Map<string, number>();
   /** Buffered prize descriptions keyed `chain:tournamentId`, flushed on a timer. */
   private readonly prizes = new Map<string, string[]>();
+  /** Live WS connection state per chain (from onWsConnectionChange). */
+  private readonly connected = new Map<Chain, boolean>();
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
 
@@ -105,6 +107,15 @@ export class TournamentWatchWs {
     this.clients.clear();
   }
 
+  /**
+   * Is this chain's stream live — connected AND actively subscribed? The poller
+   * uses this to decide whether it still needs to count-diff events for the
+   * chain, so a dropped WS doesn't silently swallow submissions/prizes.
+   */
+  isStreaming(chain: Chain): boolean {
+    return this.sig.has(chain) && this.connected.get(chain) === true;
+  }
+
   private clientFor(chain: Chain): BudokanClient {
     let client = this.clients.get(chain);
     if (!client) {
@@ -113,6 +124,7 @@ export class TournamentWatchWs {
         ...(this.config.apiUrl ? { apiBaseUrl: this.config.apiUrl } : {}),
         ...(this.config.wsUrl ? { wsUrl: this.config.wsUrl } : {}),
       } as Parameters<typeof createBudokanClient>[0]);
+      client.onWsConnectionChange((up) => this.connected.set(chain, up));
       client.connect();
       this.clients.set(chain, client);
     }
@@ -124,7 +136,14 @@ export class TournamentWatchWs {
     const data = msg.data as Record<string, unknown>;
     const raw = data?.tournament_id ?? data?.tournamentId;
     if (raw === undefined || raw === null) return;
-    const key = `${chain}:${String(raw)}`;
+    // Normalize the id (a hex felt and a decimal must key the same watch).
+    let tid: string;
+    try {
+      tid = BigInt(raw as string | number).toString();
+    } catch {
+      return;
+    }
+    const key = `${chain}:${tid}`;
 
     if (msg.channel === "submissions") {
       this.submissions.set(key, (this.submissions.get(key) ?? 0) + 1);
@@ -152,15 +171,20 @@ export class TournamentWatchWs {
     this.submissions.clear();
     this.prizes.clear();
 
+    // Post concurrently so one slow send doesn't hold up the rest.
+    const posts: Array<Promise<void>> = [];
     for (const [key, count] of submissions) {
-      await this.post(key, (name) => `📥 ${count} new score${count === 1 ? "" : "s"} submitted in ${name}.`);
+      posts.push(this.post(key, (name) => `📥 ${count} new score${count === 1 ? "" : "s"} submitted in ${name}.`));
     }
     for (const [key, list] of prizes) {
-      await this.post(
-        key,
-        (name) => `🏆 ${list.length} new prize${list.length === 1 ? "" : "s"} added to ${name}: ${list.join(", ")}`,
+      posts.push(
+        this.post(
+          key,
+          (name) => `🏆 ${list.length} new prize${list.length === 1 ? "" : "s"} added to ${name}: ${list.join(", ")}`,
+        ),
       );
     }
+    await Promise.allSettled(posts);
   }
 
   /** Post a card for a buffered key, re-checking the watch and pruning dead chats. */
