@@ -29,6 +29,7 @@ export type {
   PlayerPlacement,
   PaginatedResult,
   WSChannel,
+  WSSubmissionData,
   WSSubscribeMessage,
   WSUnsubscribeMessage,
   WSEventMessage,
