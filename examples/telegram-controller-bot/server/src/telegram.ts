@@ -23,11 +23,15 @@ import * as enterCmd from "./commands/enter.ts";
 import * as submitCmd from "./commands/submit.ts";
 import * as bracketCmd from "./commands/bracket.ts";
 import type { BracketStore } from "./bracket-store.ts";
+import type { TournamentWatchStore } from "./tournament-watch-store.ts";
+import { TournamentWatchWs } from "./tournament-watch-ws.ts";
 import * as listCmds from "./commands/list.ts";
 import * as claimCmd from "./commands/claim.ts";
 import { distribute } from "./commands/distribute.ts";
 import * as leaderboardCmd from "./commands/leaderboard.ts";
 import { topup as topupCmd } from "./commands/topup.ts";
+import { wallet as walletCmd } from "./commands/wallet.ts";
+import * as watchCmd from "./commands/watch.ts";
 import { buildAuthUrl, generateSessionKeypair } from "./cartridge-link.ts";
 import { formatError } from "./format-error.ts";
 
@@ -55,6 +59,9 @@ export class TelegramBot {
   private readonly abort = new AbortController();
   private stopping = false;
   private botUsername = ""; // learned via getMe at startup; used for DM deeplinks
+  // Low-latency submission broadcasting; set at startup only when the runtime
+  // has a global WebSocket. When unset, the poller broadcasts submissions.
+  private watchWs?: TournamentWatchWs;
 
   constructor(
     private readonly config: Config,
@@ -62,6 +69,7 @@ export class TelegramBot {
     private readonly sessions: SessionStore,
     private readonly chatStates: ChatStateStore,
     private readonly brackets: BracketStore,
+    private readonly watch: TournamentWatchStore,
   ) {
     this.api = new TelegramApi(config.telegramBotToken);
   }
@@ -94,6 +102,19 @@ export class TelegramBot {
       .catch((error: unknown) => {
         console.error("getMe failed:", error instanceof Error ? error.message : error);
       });
+
+    // Consume the `submissions` WS channel when the runtime supports it (Node
+    // ≥ 22 / Bun); otherwise the poller handles submissions via count-diff.
+    if (typeof WebSocket !== "undefined") {
+      this.watchWs = new TournamentWatchWs(this.config, this.api, this.watch);
+      await this.watchWs.refresh().catch((error) => {
+        console.error("watchWs initial refresh failed:", formatError(error));
+      });
+      console.log("Submissions: live via WebSocket.");
+    } else {
+      console.log("Submissions: polled (no global WebSocket in this runtime).");
+    }
+
     await this.poll();
   }
 
@@ -101,6 +122,7 @@ export class TelegramBot {
     if (this.stopping) return;
     this.stopping = true;
     this.abort.abort();
+    this.watchWs?.stop();
   }
 
   private async poll(): Promise<void> {
@@ -236,6 +258,12 @@ export class TelegramBot {
         return this.disconnect(chatId);
       case "/whoami":
         return this.whoami(chatId);
+      case "/wallet":
+      case "/balances":
+      case "/balance": {
+        const chain = await this.chatStates.getChain(chatId);
+        return walletCmd(this.api, this.config, this.sessions, chatId, chain, this.botUsername);
+      }
       case "/topup":
       case "/top_up":
       case "/topUp": {
@@ -338,6 +366,22 @@ export class TelegramBot {
       case "/my-tournaments":
       case "/mytournaments":
         return listCmds.myTournaments(this.api, this.config, this.chatStates, this.sessions, chatId, args);
+      case "/follow": {
+        const chain = await this.chatStates.getChain(chatId);
+        await watchCmd.follow(this.api, this.config, this.watch, chatId, chain, args);
+        await this.watchWs?.refresh().catch(() => {});
+        return;
+      }
+      case "/unfollow": {
+        const chain = await this.chatStates.getChain(chatId);
+        await watchCmd.unfollow(this.api, this.watch, chatId, chain, args);
+        await this.watchWs?.refresh().catch(() => {});
+        return;
+      }
+      case "/following": {
+        const chain = await this.chatStates.getChain(chatId);
+        return watchCmd.following(this.api, this.watch, chatId, chain);
+      }
       case "/leaderboard":
         return leaderboardCmd.leaderboard(this.api, this.config, this.chatStates, chatId, args);
       default:
@@ -379,6 +423,21 @@ export class TelegramBot {
         console.error(`bracketTick: ${b.state.id} failed:`, formatError(error));
       }
     }
+  }
+
+  /** Broadcast watched tournaments' lifecycle edges to their channel. */
+  async tournamentTick(): Promise<void> {
+    // Sync the WS subscription set to the watch list first (picks up /create
+    // auto-follows and finalize-drops), so isStreaming() below is up to date.
+    await this.watchWs?.refresh().catch((error) => {
+      console.error("watchWs refresh failed:", formatError(error));
+    });
+    // Skip the poller's count-diff for a chain only while its WS is actually
+    // streaming — if the socket is down, the poller must cover the gap.
+    const ws = this.watchWs;
+    await watchCmd.tournamentTick(this.api, this.config, this.watch, {
+      wsStreaming: ws ? (chain) => ws.isStreaming(chain) : undefined,
+    });
   }
 
   private clearPendingFlows(chatId: string): boolean {
@@ -508,6 +567,13 @@ export class TelegramBot {
     const chatId = cb.message ? String(cb.message.chat.id) : undefined;
     if (!chatId) return;
 
+    // "Re-connect" button on the /wallet card — refresh the session so the
+    // spending limits apply again. connect() is idempotent (a still-valid
+    // session just gets "nothing to do"), so this is safe to tap anytime.
+    if (action === "wconnect") {
+      return this.connect(chatId);
+    }
+
     if (action === "enter" && arg && /^\d+$/.test(arg)) {
       // Tapping Enter abandons any half-finished flow, same as issuing the
       // command would (see handleMessage).
@@ -579,6 +645,7 @@ export class TelegramBot {
         "  /connect — authorize the bot via Cartridge",
         "  /disconnect — clear your stored session",
         "  /whoami — show the connected account",
+        "  /wallet — show your token balances, on-chain approvals & session spending caps",
         ...(this.config.topupUrl
           ? ["  /topup [address] — add funds to your wallet (or a given address)"]
           : []),
@@ -588,6 +655,8 @@ export class TelegramBot {
         "  /tournaments [phase] [page] — list tournaments + brackets on this chain. /tournaments <bracketId> shows a bracket's tree.",
         "  /my_tournaments [page] — list tournaments you've entered",
         "  /leaderboard [tournamentId] [page] — show a tournament's scores ranking (no id → picker)",
+        "  /follow <id> — post a tournament's live/submission/finalized (+ prize/score) updates to the channel",
+        "  /unfollow <id> · /following — stop, or list what's being broadcast",
         "",
         "Signed actions (require /connect first):",
         "  /create — create a single tournament OR a 1v1 single-elim bracket (it asks which first). Brackets: closed (paste players) or open (people join till full); players can be 0x addresses or Cartridge usernames.",
@@ -745,10 +814,13 @@ const TELEGRAM_COMMAND_MENU: Array<{ command: string; description: string }> = [
   { command: "connect", description: "Authorize the bot via Cartridge" },
   { command: "disconnect", description: "Clear your stored session" },
   { command: "whoami", description: "Show the connected account" },
+  { command: "wallet", description: "Show your balances, approvals & spending limits" },
   { command: "chain", description: "Show or switch your active chain" },
   { command: "tournaments", description: "List tournaments & brackets on this chain" },
   { command: "my_tournaments", description: "List tournaments you've entered" },
   { command: "leaderboard", description: "Show a tournament's scores ranking" },
+  { command: "follow", description: "Broadcast a tournament's live/submission/finalized updates to the channel" },
+  { command: "following", description: "List tournaments being broadcast" },
   { command: "create", description: "Create a tournament or a 1v1 bracket" },
   { command: "enter", description: "Enter a tournament" },
   { command: "join", description: "Join an open bracket: /join <id>" },

@@ -97,7 +97,9 @@ export function loadConfig(): Config {
     rpcUrl: env("BUDOKAN_RPC_URL"),
     budokanAddress: env("BUDOKAN_ADDRESS"),
     viewerAddress: env("BUDOKAN_VIEWER_ADDRESS"),
-    voyagerProxyUrl: env("BUDOKAN_VOYAGER_PROXY_URL"),
+    // Defaults to the shared Provable Games proxy; it still requires
+    // BUDOKAN_VOYAGER_PROXY_TOKEN for server-to-server callers (see voyager.ts).
+    voyagerProxyUrl: env("BUDOKAN_VOYAGER_PROXY_URL") ?? "https://pg-voyager-proxy.up.railway.app",
     voyagerProxyToken: env("BUDOKAN_VOYAGER_PROXY_TOKEN"),
     // Optional public chat (group/channel id) to post bracket trees + updates
     // to. Falls back to the organizer's DM when unset.
