@@ -78,7 +78,7 @@ export async function wallet(
   const balanceOf = buildBalanceMap(Array.isArray(balances) ? balances : []);
 
   const lines: string[] = [
-    `👛 Wallet on ${chain}`,
+    `👛 Wallet · ${chain}`,
     `${stored.session.username} · ${shortAddr(owner)}`,
     "",
   ];
@@ -89,17 +89,16 @@ export async function wallet(
 
   tokens.forEach((token, i) => {
     const bal = balanceOf.get(normalizeAddress(token.address));
-    const balStr = bal ? formatTokenAmount(bal.balance, bal.decimals) : "0";
-    const usd = bal?.usdBalance !== undefined ? ` ($${bal.usdBalance.toFixed(2)})` : "";
-    const cap = formatTokenAmount(token.spendLimit!, token.decimals);
+    const balStr = bal ? prettyAmount(bal.balance, bal.decimals) : "0";
+    const usd = bal?.usdBalance && bal.usdBalance > 0 ? ` ($${bal.usdBalance.toFixed(2)})` : "";
+    const cap = prettyAmount(token.spendLimit!, token.decimals);
+    // On-chain allowance is 0 between payments (the bot approves per-tx), so
+    // only surface it when there's a standing approval — otherwise it's noise.
     const allowance = allowances[i] ?? null;
-    const allowanceStr =
-      allowance === null ? "—" : formatTokenAmount(allowance.toString(), token.decimals);
+    const approved =
+      allowance && allowance > 0n ? ` · approved ${prettyAmount(allowance.toString(), token.decimals)}` : "";
 
-    lines.push(
-      `• ${token.symbol}: ${balStr}${usd}`,
-      `    approved to Budokan: ${allowanceStr} · session cap: ${cap}`,
-    );
+    lines.push(`• ${token.symbol} — ${balStr}${usd} · cap ${cap}${approved}`);
   });
 
   // A missing/garbled expiry must not crash the command — new Date(NaN)
@@ -116,7 +115,7 @@ export async function wallet(
       ? `⚠️ Session expired ${expiryStr} — Re-connect to restore your spending limits.`
       : `Session valid until ${expiryStr}.`,
     "",
-    "Low on a token? Top up. Approvals are granted per-payment up to the session cap; if the session lapsed, Re-connect.",
+    "“cap” is your per-session spending limit — the bot approves each payment up to it (no standing allowance). Low on a token? Top up. Session lapsed? Re-connect.",
   );
 
   // Bump actions: Top up (funds) + Re-connect (refresh session/limits).
@@ -162,4 +161,19 @@ function buildBalanceMap(balances: VoyagerTokenBalance[]): Map<string, VoyagerTo
 function shortAddr(addr: string): string {
   if (!addr || addr.length <= 18) return addr;
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
+}
+
+/**
+ * Human-readable token amount: 2 decimals for values ≥ 1, otherwise 4
+ * significant figures — so balances read "793.56" / "0.00002387" instead of the
+ * full 18-decimal string. Falls back to the exact value for amounts too large
+ * for a JS number.
+ */
+function prettyAmount(raw: string, decimals: number): string {
+  const full = formatTokenAmount(raw, decimals);
+  const n = Number(full);
+  if (!Number.isFinite(n) || n >= 1e15) return full;
+  if (n === 0) return "0";
+  const s = n >= 1 ? n.toFixed(2) : Number(n.toPrecision(4)).toString();
+  return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
 }
