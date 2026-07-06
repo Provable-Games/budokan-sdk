@@ -1016,7 +1016,9 @@ export async function advanceBracket(
 /** Compact ASCII summary of the bracket, grouped by round. */
 export function bracketSummary(state: BracketState): string {
   const rounds = Math.max(...state.matches.map((m) => m.round));
-  const lines: string[] = [`Bracket ${state.id} — ${state.status}`];
+  // Prefer the human-readable name; fall back to the id for unnamed brackets.
+  const title = state.namePrefix?.trim() || `Bracket ${state.id}`;
+  const lines: string[] = [`${title} — ${state.status}`];
   for (let r = 1; r <= rounds; r++) {
     const label = r === rounds ? "Final" : `Round ${r}`;
     lines.push(`\n${label}:`);
