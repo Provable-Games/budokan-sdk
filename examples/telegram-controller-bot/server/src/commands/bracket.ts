@@ -97,6 +97,7 @@ interface Draft {
     | "players"
     | "length"
     | "start"
+    | "roundSettingsChoice"
     | "roundSettings"
     | "feeToken"
     | "feeAmount"
@@ -316,6 +317,19 @@ export async function handleAnswer(
     }
     d.startDelaySec = delay;
     await sendRoundSettingsPrompt(api, d, chatId);
+    return;
+  }
+
+  if (d.step === "roundSettingsChoice") {
+    if (/^(no|n|skip|none|default)$/i.test(t)) {
+      await sendFundingPrompt(api, d, chatId);
+      return;
+    }
+    if (/^(yes|y|vary|different)$/i.test(t)) {
+      await sendRoundSettingsPicker(api, d, chatId);
+      return;
+    }
+    await api.sendMessage(chatId, "Reply 'no' to use the same setting every round, or 'yes' to pick one per round.");
     return;
   }
 
@@ -1597,12 +1611,12 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
 }
 
 /**
- * Per-round settings prompt. Offers the game's settings by name (numbered, no
- * raw ids), one pick per round. Skipped automatically when there's nothing to
- * vary (0–1 settings available).
+ * Yes/no gate before the per-round settings picker. Most brackets use one
+ * setting throughout, so default to "no" and only show the (long) picker when
+ * the organizer opts in. Skipped automatically when there's nothing to vary
+ * (0–1 settings available).
  */
 async function sendRoundSettingsPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
-  const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
   const base = d.settingsName || "Default";
   let list: GameSettingDetails[] = [];
   try {
@@ -1615,15 +1629,33 @@ async function sendRoundSettingsPrompt(api: TelegramApi, d: Draft, chatId: strin
     await sendFundingPrompt(api, d, chatId);
     return;
   }
+  d.step = "roundSettingsChoice";
+  await api.sendMessage(
+    chatId,
+    [
+      `⚙️ Vary settings by round? Every round uses "${base}" unless you say otherwise.`,
+      "",
+      `Reply 'no' to keep "${base}" throughout (most brackets), or 'yes' to pick a setting per round.`,
+    ].join("\n"),
+  );
+}
+
+/**
+ * Per-round settings picker (shown only after the organizer opts in). Offers the
+ * game's settings by name (numbered, no raw ids), one pick per round.
+ */
+async function sendRoundSettingsPicker(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  const rounds = Math.log2(d.capacity ?? d.players?.length ?? 2);
+  const base = d.settingsName || "Default";
+  const list = d.settingsList ?? [];
   d.step = "roundSettings";
   const example = Array.from({ length: rounds }, (_, i) => Math.min(i + 1, list.length)).join(",");
   const lines = [
-    `⚙️ Different settings per round? This bracket has ${rounds} rounds, all using "${base}" by default.`,
+    `⚙️ Pick a setting for each round (round 1 → final). This bracket has ${rounds} rounds.`,
     "",
     ...list.map((s, i) => `  ${i + 1}. ${s.name || "Unnamed"}`),
     "",
-    `Reply 'skip' to use "${base}" every round, or give ${rounds} numbers (round 1 → final), e.g. ${example}.`,
-    "'<n>?' to see what a setting does.",
+    `Give ${rounds} numbers, e.g. ${example}. '<n>?' to see what a setting does, or 'skip' for "${base}" every round.`,
   ];
   await api.sendMessage(chatId, lines.join("\n"));
 }
