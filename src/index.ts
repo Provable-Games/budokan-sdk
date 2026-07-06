@@ -114,6 +114,7 @@ export {
   getWhitelistedGames,
   findWhitelistedGame,
   isGameWhitelisted,
+  buildPlayUrl,
   getGameDefaults,
 } from "./games/whitelist.js";
 export type {
