@@ -27,7 +27,9 @@ import {
   bracketRounds,
   bracketSummary,
   buildRegisterAllowlistTreeCall,
+  findWhitelistedGame,
   getAllowlistProof,
+  normalizeAddress,
   parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
   roundMatchCreateCalls,
@@ -1124,6 +1126,43 @@ function getOperatorAccount(config: Config, chain: Chain): Advancer | null {
 const stalledNudged = new Set<string>();
 
 /**
+ * Map a match tournament's entrants (game-token owner → token id) so the live
+ * DM can link straight into the game. Empty on any read miss — caller falls back
+ * to the tournament page.
+ */
+async function matchTokenByOwner(
+  config: Config,
+  chain: Chain,
+  tournamentId: string,
+): Promise<Map<string, string>> {
+  const budokan = config.budokanAddress ?? CHAINS[chain]?.budokanAddress;
+  if (!budokan || !Number.isSafeInteger(Number(tournamentId))) return new Map();
+  const denshokan = createDenshokanClient({ chain } as Parameters<typeof createDenshokanClient>[0]);
+  const res = await denshokan.getTokens({
+    minterAddress: normalizeAddress(budokan),
+    contextId: Number(tournamentId),
+    limit: 10,
+  });
+  const map = new Map<string, string>();
+  for (const t of res.data) map.set(normalizeAddress(t.owner), String(t.tokenId));
+  return map;
+}
+
+/**
+ * Direct game play link for a token, from the SDK's community-maintained game
+ * whitelist (`playUrl` template). Undefined when the game isn't whitelisted or
+ * has no play URL. (Mirrors the SDK's buildPlayUrl — swap to it once the SDK
+ * release that ships it lands.)
+ */
+function buildPlayLink(chain: Chain, gameAddress: string, tokenId: string): string | undefined {
+  const g = findWhitelistedGame(chain, gameAddress);
+  if (!g?.playUrl) return undefined;
+  return g.playUrl.includes("{tokenId}")
+    ? g.playUrl.replace(/\{tokenId\}/g, tokenId)
+    : `${g.playUrl}${tokenId}`;
+}
+
+/**
  * Proactive per-player DMs at match transitions so players can drive the bracket
  * themselves (play → submit scores → claim), with the bot as a backstop rather
  * than the critical path. Best-effort: only players whose chat we captured on
@@ -1169,11 +1208,20 @@ async function notifyBracket(
     const realPlayers = [m.playerA, m.playerB].filter((p): p is NonNullable<typeof p> => !!p && isReal(p));
 
     if (m.status === "live") {
-      const url = tournamentPageUrl(chain, m.tournamentId);
+      const fallback = tournamentPageUrl(chain, m.tournamentId);
+      // Resolve each player's game token → direct play link (the game client,
+      // not the Budokan page). One denshokan read per match, only when someone
+      // still needs the DM. Falls back to the tournament page.
+      const anyUnsentLive = realPlayers.some((p) => !sent.has(`${m.id}:${p.address.toLowerCase()}:live`));
+      const tokenByOwner = anyUnsentLive
+        ? await matchTokenByOwner(config, chain, m.tournamentId).catch(() => new Map<string, string>())
+        : new Map<string, string>();
       // Keys are per-player: both competitors must be DM'd, so the dedup key
       // can't be shared across them.
       for (const p of realPlayers) {
-        await dm(p.address, `${m.id}:${p.address.toLowerCase()}:live`, `▶️ ${name}: your round ${m.round} match is live — play now:\n${url}`);
+        const tokenId = tokenByOwner.get(normalizeAddress(p.address));
+        const link = (tokenId && buildPlayLink(chain, b.state.game, tokenId)) || fallback;
+        await dm(p.address, `${m.id}:${p.address.toLowerCase()}:live`, `▶️ ${name}: your round ${m.round} match is live — play now:\n${link}`);
       }
       // Game window closed but the match isn't resolved → scores need submitting.
       // Only pay for the timing read if someone still needs the submit prompt.
