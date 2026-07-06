@@ -44,6 +44,13 @@ export interface StoredBracket {
   /** The public registration card's location, so taps can edit it in place. */
   cardChatId?: string;
   cardMessageId?: number;
+  /** Display fields captured at deploy so the public card can show the details
+   *  without re-reading chain/API on every render. */
+  gameName?: string;
+  settingsLabel?: string;
+  lengthLabel?: string;
+  /** Unix seconds when round 1 starts (≈ the sign-up deadline). */
+  startAt?: number;
 }
 
 export class BracketStore {

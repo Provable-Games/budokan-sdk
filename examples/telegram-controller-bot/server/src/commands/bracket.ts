@@ -801,6 +801,12 @@ async function deployPaidUpfront(
     return;
   }
 
+  const settingsLabel = d.roundSettingsIds
+    ? d.roundSettingsIds
+        .map((id) => d.settingsList?.find((s) => s.id === id)?.name || "Default")
+        .join(" → ")
+    : d.settingsName || "Default";
+
   const b: StoredBracket = {
     state,
     organizerChatId,
@@ -812,6 +818,11 @@ async function deployPaidUpfront(
     capacity,
     filled: 0,
     phase: "filling",
+    gameName: game.name,
+    settingsLabel,
+    lengthLabel: d.length!.label,
+    // Round 1 starts (and sign-up closes) startDelaySec after deploy.
+    startAt: Math.floor(Date.now() / 1000) + d.startDelaySec!,
   };
   await store.save(b);
   const mid = await api.sendCard(announceChatId, paidCard(b), paidJoinKeyboard(b)).catch(() => undefined);
@@ -1030,10 +1041,14 @@ function paidCard(b: StoredBracket): string {
     "📊 Registration",
     `👥 Players: ${filled}/${cap}`,
   ];
+  if (b.gameName) lines.push(`🎮 Game: ${b.gameName}`);
+  if (b.settingsLabel) lines.push(`⚙️ Settings: ${b.settingsLabel}`);
+  if (b.lengthLabel) lines.push(`⏳ Match length: ${b.lengthLabel}`);
   if (b.description) lines.push(`📝 ${b.description}`);
   if (b.paid) lines.push(`💸 Entry: ${b.paid.label} (adds to pool)`);
   else lines.push(`💸 Entry: free`);
-  if (tiersBps) lines.push(`📊 Pays: ${tiersBps.map((bp) => `${(bp / 100).toFixed(0)}%`).join(" / ")}`);
+  if (tiersBps) lines.push(`🏆 Pays: ${tiersBps.map((bp) => `${(bp / 100).toFixed(0)}%`).join(" / ")}`);
+  if (b.startAt) lines.push(`🏁 Round 1 starts: ${startAtLine(b.startAt)}`);
   lines.push("", "Registered:");
   if (real.length === 0) lines.push("  (be the first!)");
   else real.forEach((p, i) => lines.push(`  ${i + 1}. ${p.name ?? short(p.address)}`));
@@ -1041,7 +1056,7 @@ function paidCard(b: StoredBracket): string {
   if (remaining > 0) {
     lines.push(`🪑 ${remaining} spot${remaining === 1 ? "" : "s"} remaining!`);
     lines.push("🎮 Tap Join — first /connect in a DM with me.");
-    lines.push("⏱️ Round 1 starts at the sign-up deadline (empty slots walk over).");
+    lines.push(b.startAt ? "⏱️ Empty slots walk over at the deadline." : "⏱️ Round 1 starts at the sign-up deadline (empty slots walk over).");
   } else {
     lines.push("🔒 Full — round 1 begins at the sign-up deadline.");
   }
@@ -1431,6 +1446,14 @@ function startSummary(delaySec: number): string {
   const h = delaySec / 3600;
   const rel = h < 1 ? `${Math.round(delaySec / 60)}m` : h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`;
   return `${when} UTC (in ~${rel})`;
+}
+
+/** Absolute start time for the card, recomputed each render so the relative
+ *  part stays fresh as players join. */
+function startAtLine(startAt: number): string {
+  const secs = startAt - Math.floor(Date.now() / 1000);
+  if (secs <= 0) return "now";
+  return startSummary(secs);
 }
 
 /** Numbered token picker for the entry-fee step. */
