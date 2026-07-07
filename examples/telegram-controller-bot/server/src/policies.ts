@@ -73,25 +73,52 @@ export function buildSessionPolicies(
     // No merkle validator on this chain — leave it out.
   }
 
+  // On-chain bracket contract (open/uncapped brackets). The organizer
+  // `create_bracket`s it; players `register` (which `transfer_from`s their
+  // escrowed entry fee — so the bracket must ALSO be an authorized `approve`
+  // spender on the fee tokens below). Skipped if the chain has no bracket
+  // contract configured.
+  const bracketAddress = CHAINS[chain]?.bracketAddress;
+  if (bracketAddress) {
+    contracts[bracketAddress] = {
+      name: "Budokan Bracket",
+      methods: [
+        { entrypoint: "create_bracket", description: "Create an on-chain bracket" },
+        { entrypoint: "register", description: "Register for a bracket (escrows your entry fee)" },
+      ],
+    };
+  }
+
   // Spending limits for the common tokens. Authorizing `approve` with an
   // `amount` makes the keychain show a spending-limit card and enforce the
   // cumulative cap; the bot only ever approves the exact amount it needs at
   // /enter (entry fee) or /add_prize (prize) time.
   for (const token of tokensForChain(chain)) {
     if (!token.spendLimit) continue;
+    const methods: PolicyMethod[] = [
+      {
+        entrypoint: "approve",
+        description: `Pay entry fees & sponsor prizes in ${token.symbol} (up to your spending limit)`,
+        // Budokan pulls entry fees + prize escrow. Declaring spender + amount is
+        // the non-deprecated form.
+        spender: budokanAddress,
+        amount: token.spendLimit,
+      },
+    ];
+    // The on-chain bracket contract is a second `transfer_from` spender (it pulls
+    // the entry fee on `register`), so authorize approving it too.
+    if (bracketAddress) {
+      methods.push({
+        entrypoint: "approve",
+        description: `Pay on-chain bracket entry fees in ${token.symbol}`,
+        spender: bracketAddress,
+        amount: token.spendLimit,
+      });
+    }
     contracts[token.address] = {
       name: token.symbol,
       meta: { type: "ERC20", name: token.name },
-      methods: [
-        {
-          entrypoint: "approve",
-          description: `Pay entry fees & sponsor prizes in ${token.symbol} (up to your spending limit)`,
-          // Budokan is the only spender we ever approve (it pulls entry fees +
-          // prize escrow). Declaring spender + amount is the non-deprecated form.
-          spender: budokanAddress,
-          amount: token.spendLimit,
-        },
-      ],
+      methods,
     };
   }
 
