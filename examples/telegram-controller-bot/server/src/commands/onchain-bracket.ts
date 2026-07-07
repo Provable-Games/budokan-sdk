@@ -183,7 +183,14 @@ export async function registerForOnchainBracket(
 
   const fee = oc.paid ? oc.paid.fee : "0";
   const feeToken = oc.paid?.tokenAddress ?? "0x0";
-  const calls = buildBracketRegisterCalls(oc.contractAddress, feeToken, BigInt(oc.bracketId), fee);
+  // Self-register: the caller both pays and plays, so recipient = own address.
+  const calls = buildBracketRegisterCalls(
+    oc.contractAddress,
+    feeToken,
+    BigInt(oc.bracketId),
+    session.data.address,
+    fee,
+  );
   try {
     const tx = await session.data.account.execute(calls.map(toExec));
     const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
@@ -203,6 +210,66 @@ export async function registerForOnchainBracket(
 
   const paidPrefix = oc.paid ? `Paid ${oc.paid.label} — ` : "";
   return `✅ ${paidPrefix}you're registered! When registration closes you'll be auto-entered into your round-1 match — watch for the play link.`;
+}
+
+/**
+ * Sponsor `player` into an on-chain bracket: the sponsor's session pays the
+ * escrow, `player` is seated + plays (register with recipient = player). Mirrors
+ * the off-chain /sponsor; on-chain, overflow refunds go back to the sponsor.
+ * `player` is already resolved (address + optional name) by the caller.
+ */
+export async function sponsorOnchainBracket(
+  api: TelegramApi,
+  config: Config,
+  ocId: string,
+  sponsorChatId: string,
+  player: { address: string; name?: string },
+): Promise<string> {
+  const store = onchainStore(config);
+  const oc = await store.get(ocId);
+  if (!oc) return "That bracket isn't open for registration.";
+  if (Math.floor(Date.now() / 1000) >= oc.registrationDeadline) {
+    return "Registration has closed for this bracket.";
+  }
+  const recipient = player.address.toLowerCase();
+  const displayName =
+    player.name ?? `${player.address.slice(0, 6)}…${player.address.slice(-4)}`;
+  if (oc.registered?.includes(recipient)) return `${displayName} is already registered.`;
+
+  const session = await resolveAccount(sponsorChatId, oc.chain, config);
+  if (!session.ok) {
+    return "DM me first: open the bot, /connect, then try /sponsor again (you pay from your session).";
+  }
+
+  const fee = oc.paid ? oc.paid.fee : "0";
+  const feeToken = oc.paid?.tokenAddress ?? "0x0";
+  // Sponsor pays (caller = sponsor session), player is the recipient/seated.
+  const calls = buildBracketRegisterCalls(
+    oc.contractAddress,
+    feeToken,
+    BigInt(oc.bracketId),
+    player.address,
+    fee,
+  );
+  try {
+    const tx = await session.data.account.execute(calls.map(toExec));
+    const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(oc.chain, config.rpcUrl) });
+    await rpc.waitForTransaction(tx.transaction_hash);
+  } catch (error) {
+    const msg = formatError(error);
+    if (/already registered/i.test(msg)) return `${displayName} is already registered.`;
+    if (/not registering|registration closed/i.test(msg)) return "Registration has closed for this bracket.";
+    if (/full/i.test(msg)) return "Sorry — this bracket just filled up.";
+    return `Couldn't sponsor: ${msg}`;
+  }
+
+  oc.registered = [...new Set([...(oc.registered ?? []), recipient])];
+  oc.names = { ...(oc.names ?? {}), [recipient]: displayName };
+  await store.save(oc);
+  await updateOnchainCard(api, oc);
+
+  const paidPrefix = oc.paid ? `Paid ${oc.paid.label} — ` : "";
+  return `✅ ${paidPrefix}sponsored ${displayName}! They'll be auto-entered when registration closes.`;
 }
 
 // ----- card -----
@@ -238,11 +305,27 @@ function onchainCard(oc: OnchainBracket): string {
   return lines.join("\n");
 }
 
+// Learned via getMe at startup (forwarded from bracket.ts's setBotUsername), for
+// the Sponsor DM deeplink.
+let botUsername = "";
+export function setOnchainBotUsername(u: string): void {
+  botUsername = u;
+}
+
 function onchainJoinKeyboard(oc: OnchainBracket): { inline_keyboard: InlineKeyboardButton[][] } {
   const label = oc.paid ? `🎮 Register — ${oc.paid.label}` : `🎮 Register (free)`;
   // Reuse the `bjoin:` callback the router already dispatches — joinViaButton
   // detects an on-chain id and routes to registerForOnchainBracket.
-  return { inline_keyboard: [[{ text: label, callback_data: `bjoin:${oc.id}` }]] };
+  const rows: InlineKeyboardButton[][] = [[{ text: label, callback_data: `bjoin:${oc.id}` }]];
+  // Sponsor opens a DM scoped to this bracket via the `sponsor_` deeplink, which
+  // startSponsorFlow routes to the on-chain path — the sponsor only types the
+  // player, never the long id.
+  if (botUsername) {
+    rows.push([
+      { text: `🎁 Sponsor a player`, url: `https://t.me/${botUsername}?start=sponsor_${oc.id}` },
+    ]);
+  }
+  return { inline_keyboard: rows };
 }
 
 async function updateOnchainCard(api: TelegramApi, oc: OnchainBracket): Promise<void> {

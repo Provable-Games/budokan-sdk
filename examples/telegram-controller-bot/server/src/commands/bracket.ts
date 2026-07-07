@@ -58,6 +58,8 @@ import { BracketStore, type StoredBracket } from "../bracket-store.ts";
 import {
   createOnchainBracket,
   registerForOnchainBracket,
+  sponsorOnchainBracket,
+  setOnchainBotUsername,
   onchainStore,
 } from "./onchain-bracket.ts";
 
@@ -170,6 +172,7 @@ export function cancel(chatId: string): boolean {
 let botUsername = "";
 export function setBotUsername(u: string): void {
   botUsername = u;
+  setOnchainBotUsername(u); // on-chain cards share the sponsor deeplink
 }
 
 const isPow2 = (n: number) => n >= 2 && (n & (n - 1)) === 0;
@@ -1011,6 +1014,27 @@ export async function startSponsorFlow(
   chatId: string,
   bracketId: string,
 ): Promise<void> {
+  // On-chain bracket: sponsor registers a recipient via the contract.
+  const oc = await onchainStore(config).get(bracketId);
+  if (oc) {
+    if (Math.floor(Date.now() / 1000) >= oc.registrationDeadline) {
+      await api.sendMessage(chatId, "That bracket's registration has closed.");
+      return;
+    }
+    const session = await resolveAccount(chatId, oc.chain, config);
+    if (!session.ok) {
+      await api.sendMessage(chatId, "Connect first — run /connect, then tap 🎁 Sponsor again.");
+      return;
+    }
+    sponsorPending.set(chatId, bracketId);
+    const fee = oc.paid ? ` — you'll pay ${oc.paid.label}` : "";
+    await api.sendMessage(
+      chatId,
+      `🎁 Sponsoring a player into ${oc.namePrefix}${fee}.\nWho? Reply with a 0x address or a Cartridge username. /cancel to abort.`,
+    );
+    return;
+  }
+
   const b = await store.get(bracketId);
   if (!b || b.phase !== "filling") {
     await api.sendMessage(chatId, "That bracket isn't open for sponsoring right now.");
@@ -1039,6 +1063,23 @@ export async function sponsorPaid(
   id: string,
   target: string,
 ): Promise<void> {
+  // On-chain bracket: resolve the target, then sponsor via the contract.
+  const oc = await onchainStore(config).get(id);
+  if (oc) {
+    const { players, unresolved } = await resolvePlayers(oc.chain, target);
+    const player = players[0];
+    if (!player) {
+      await api.sendMessage(
+        chatId,
+        `Couldn't resolve "${target}"${unresolved.length ? ` (${unresolved.join(", ")})` : ""}. Use a 0x address or a Cartridge username.`,
+      );
+      return;
+    }
+    const toast = await sponsorOnchainBracket(api, config, id, chatId, player);
+    await api.sendMessage(chatId, toast);
+    return;
+  }
+
   const b = await store.get(id);
   if (!b || b.phase !== "filling") {
     await api.sendMessage(chatId, `No up-front bracket ${id} is open for sponsorship.`);
