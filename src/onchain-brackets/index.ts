@@ -94,27 +94,36 @@ export function buildCreateBracketCall(
   return { contractAddress: bracketAddress, entrypoint: "create_bracket", calldata };
 }
 
-/** `register(bracket_id: u64)` — escrows the caller's entry fee + seats them. */
+/**
+ * `register(bracket_id: u64, recipient: ContractAddress)` — the CALLER escrows
+ * the entry fee, the RECIPIENT is seated + plays (mirrors Budokan's
+ * `enter_tournament` recipient). Pass the caller's own address to self-register,
+ * or another address to sponsor them.
+ */
 export function buildBracketRegisterCall(
   bracketAddress: string,
   bracketId: number | bigint,
+  recipient: string,
 ): Call {
   return {
     contractAddress: bracketAddress,
     entrypoint: "register",
-    calldata: CallData.compile([bracketId]),
+    calldata: CallData.compile([bracketId, recipient]),
   };
 }
 
 /**
  * The full register multicall: `approve(bracket, fee)` on the fee token (only
- * when `entryFee > 0`) followed by `register(bracket_id)`. The approve lets the
- * contract pull the escrow in `register`'s `transfer_from`.
+ * when `entryFee > 0`) followed by `register(bracket_id, recipient)`. The
+ * approve lets the contract pull the escrow from the caller in `register`'s
+ * `transfer_from`. Pass `recipient` = the caller's own address for a normal
+ * signup, or another address to sponsor that player (the caller still pays).
  */
 export function buildBracketRegisterCalls(
   bracketAddress: string,
   feeToken: string,
   bracketId: number | bigint,
+  recipient: string,
   entryFee: bigint | string = 0n,
 ): Call[] {
   const calls: Call[] = [];
@@ -126,7 +135,7 @@ export function buildBracketRegisterCalls(
       calldata: CallData.compile([bracketAddress, uint256.bnToUint256(fee)]),
     });
   }
-  calls.push(buildBracketRegisterCall(bracketAddress, bracketId));
+  calls.push(buildBracketRegisterCall(bracketAddress, bracketId, recipient));
   return calls;
 }
 
