@@ -574,11 +574,15 @@ export async function joinViaButton(
     await api.answerCallback(callbackQueryId, "Couldn't identify you — try /join in a DM.", true);
     return;
   }
-  // On-chain brackets: register via the contract.
+  // On-chain brackets: register via the contract. The register + waitForTransaction
+  // takes ~20s, which is longer than a callback answer can wait — so acknowledge
+  // the tap immediately, then DM the result when it confirms (and the card
+  // auto-updates with the new roster).
   const oc = await onchainStore(config).get(id);
   if (oc) {
+    await api.answerCallback(callbackQueryId, "⏳ Registering — I'll confirm in a moment…", false);
     const toast = await registerForOnchainBracket(api, config, id, String(fromId));
-    await api.answerCallback(callbackQueryId, toast, true);
+    await api.sendMessage(String(fromId), toast);
     return;
   }
   const b = await store.get(id);

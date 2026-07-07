@@ -38,6 +38,10 @@ export interface OnchainBracket {
   cardMessageId?: number;
   /** Addresses that have registered (best-effort, from self-join taps). */
   registered?: string[];
+  /** Registered address → Cartridge username, for the card roster (best-effort:
+   *  only players who registered via the bot; direct on-chain registrants are
+   *  counted on-chain but not named here). */
+  names?: Record<string, string>;
   createdAt: number;
 }
 
