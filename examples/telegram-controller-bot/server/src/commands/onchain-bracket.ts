@@ -197,6 +197,7 @@ export async function registerForOnchainBracket(
   }
 
   oc.registered = [...new Set([...(oc.registered ?? []), addr])];
+  oc.names = { ...(oc.names ?? {}), [addr]: session.data.username };
   await store.save(oc);
   await updateOnchainCard(api, oc);
 
@@ -214,6 +215,16 @@ function onchainCard(oc: OnchainBracket): string {
     "📊 Registration open",
     oc.size === 0 ? `👥 Registered: ${count} (uncapped)` : `👥 Registered: ${count}/${oc.size}`,
   ];
+  // Roster of players who registered via the bot (names captured from their
+  // Cartridge session). Capped so the card stays readable on a large field.
+  const roster = (oc.registered ?? [])
+    .map((a) => oc.names?.[a])
+    .filter((n): n is string => Boolean(n));
+  if (roster.length) {
+    const shown = roster.slice(0, 20);
+    for (const name of shown) lines.push(`  • ${name}`);
+    if (roster.length > shown.length) lines.push(`  • …and ${roster.length - shown.length} more`);
+  }
   if (oc.description) lines.push(`📝 ${oc.description}`);
   lines.push(oc.paid ? `💸 Entry: ${oc.paid.label} (escrowed into the prize pool)` : `💸 Entry: free`);
   lines.push(`⏱️ Registration closes ${deadlineSummary(oc.registrationDeadline)}`);
