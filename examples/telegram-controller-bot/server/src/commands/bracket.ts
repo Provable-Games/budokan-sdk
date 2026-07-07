@@ -55,6 +55,11 @@ import {
 } from "../catalog/settings.ts";
 import { formatError } from "../format-error.ts";
 import { BracketStore, type StoredBracket } from "../bracket-store.ts";
+import {
+  createOnchainBracket,
+  registerForOnchainBracket,
+  onchainStore,
+} from "./onchain-bracket.ts";
 
 type Player = { address: string; name?: string };
 
@@ -120,6 +125,8 @@ interface Draft {
   description?: string;
   mode?: (typeof MODES)[number]["key"];
   capacity?: number;
+  /** Open mode on-chain size: 0 = uncapped, else a power of two. */
+  size?: number;
   players?: Player[]; // closed: everyone; open: [] (all join)
   length?: (typeof LENGTH_PRESETS)[number];
   /** Seconds from deploy until round 1 starts (= the sign-up window). ≥ 1h. */
@@ -253,6 +260,7 @@ export async function handleAnswer(
       d.step = "capacity";
       const lines = [`Pick the bracket size (capacity):`, ""];
       CAPACITIES.forEach((c, i) => lines.push(`  ${i + 1}. ${c} players`));
+      lines.push(`  ${CAPACITIES.length + 1}. Uncapped — register until the deadline`);
       lines.push("", "Reply with a number. /cancel to abort.");
       await api.sendMessage(chatId, lines.join("\n"));
     }
@@ -261,12 +269,16 @@ export async function handleAnswer(
 
   if (d.step === "capacity") {
     const n = Number(t);
-    if (!/^\d+$/.test(t) || n < 1 || n > CAPACITIES.length) {
-      await api.sendMessage(chatId, `Reply 1–${CAPACITIES.length}, or /cancel.`);
+    const uncappedChoice = CAPACITIES.length + 1;
+    if (!/^\d+$/.test(t) || n < 1 || n > uncappedChoice) {
+      await api.sendMessage(chatId, `Reply 1–${uncappedChoice}, or /cancel.`);
       return;
     }
-    d.capacity = CAPACITIES[n - 1];
-    // open: no pre-seeds — everyone joins.
+    // Last option = uncapped (size 0): register until the deadline, then the
+    // largest power-of-two that filled is bracketed on-chain (extras refunded).
+    d.size = n === uncappedChoice ? 0 : CAPACITIES[n - 1]!;
+    d.capacity = d.size; // display only; the on-chain contract owns the tree.
+    // open: no pre-seeds — everyone registers.
     d.players = [];
     d.step = "length";
     await sendLengthPrompt(api, chatId);
@@ -462,11 +474,41 @@ export async function handleAnswer(
       return;
     }
 
-    // Open brackets deploy the tree up front (no register-then-fill): any seed
-    // is escrowed before anyone joins (trustless), and players tap Join to enter
-    // — paying a fee if set, free otherwise. Tournaments are on-chain at
-    // creation, so there's never a "where are my tournaments?" gap.
-    await deployPaidUpfront(api, config, store, chatId, announceChatId, d);
+    // Open brackets run on the on-chain bracket contract: the organizer
+    // create_bracket's it (entry fee escrowed on register), players register
+    // until the deadline, then the budokan-bots init engine seeds the field
+    // (VRF), builds the gated tree, and auto-enters round-1 players.
+    await createOnchainBracket(
+      api,
+      config,
+      {
+        chain: d.chain,
+        gameAddress: d.game!.contractAddress,
+        gameName: d.game!.name,
+        leaderboardAscending: d.game!.leaderboardAscending ?? false,
+        gameMustBeOver: d.game!.leaderboardGameMustBeOver ?? false,
+        settingsId: d.settingsId ?? 0,
+        size: d.size ?? 0,
+        gameDuration: d.length!.game,
+        submissionDuration: d.length!.sub,
+        startDelaySec: d.startDelaySec!,
+        ...(d.namePrefix ? { namePrefix: d.namePrefix } : {}),
+        ...(d.description ? { description: d.description } : {}),
+        ...(d.entryFee && d.feeToken
+          ? {
+              entryFee: {
+                tokenAddress: d.entryFee.tokenAddress,
+                amount: d.entryFee.amount,
+                label: d.entryFee.label,
+                symbol: d.feeToken.symbol,
+              },
+            }
+          : {}),
+        ...(d.tiersBps ? { tiersBps: d.tiersBps } : {}),
+      },
+      chatId,
+      announceChatId,
+    );
     return;
   }
 }
@@ -498,6 +540,13 @@ export async function join(
   _chain: Chain,
   id: string,
 ): Promise<void> {
+  // On-chain brackets: register via the contract (escrows the entry fee).
+  const oc = await onchainStore(config).get(id);
+  if (oc) {
+    const toast = await registerForOnchainBracket(api, config, id, chatId);
+    await api.sendMessage(chatId, toast);
+    return;
+  }
   const b = await store.get(id);
   if (b?.phase === "filling") {
     const toast = await paidJoin(api, config, store, b, chatId);
@@ -523,6 +572,13 @@ export async function joinViaButton(
 ): Promise<void> {
   if (fromId === undefined) {
     await api.answerCallback(callbackQueryId, "Couldn't identify you — try /join in a DM.", true);
+    return;
+  }
+  // On-chain brackets: register via the contract.
+  const oc = await onchainStore(config).get(id);
+  if (oc) {
+    const toast = await registerForOnchainBracket(api, config, id, String(fromId));
+    await api.answerCallback(callbackQueryId, toast, true);
     return;
   }
   const b = await store.get(id);
@@ -1617,6 +1673,13 @@ async function handleBracketSettings(api: TelegramApi, d: Draft, chatId: string,
  * (0–1 settings available).
  */
 async function sendRoundSettingsPrompt(api: TelegramApi, d: Draft, chatId: string): Promise<void> {
+  // Open brackets run on the on-chain contract, which applies ONE settings id to
+  // every match (no per-round settings) and may be uncapped (unknown round
+  // count). Skip the per-round picker and go straight to funding.
+  if (d.mode === "open") {
+    await sendFundingPrompt(api, d, chatId);
+    return;
+  }
   const base = d.settingsName || "Default";
   let list: GameSettingDetails[] = [];
   try {
@@ -1683,7 +1746,9 @@ function truncate(s: string, max: number): string {
 function confirmText(d: Draft): string {
   const roster =
     d.mode === "open"
-      ? `open, capacity ${d.capacity}`
+      ? d.size === 0
+        ? "open, uncapped (register until the deadline)"
+        : `open, capacity ${d.size}`
       : `closed — ${d.players!.length} players`;
   return [
     "🧾 Confirm bracket:",
@@ -1709,7 +1774,7 @@ function confirmText(d: Draft): string {
     `  • Prize pool: add on budokan.gg after creation`,
     "",
     d.mode === "open"
-      ? "Deploys the gated tree now; players tap Join to enter. Round 1 starts at the sign-up deadline — empty slots walk over."
+      ? "Creates an on-chain bracket now; players register (escrowing any entry fee) until the deadline, then it's seeded on-chain (VRF) and round-1 players are auto-entered."
       : "Deploys the gated tree now and enters round 1 for the players.",
     "",
     "Reply 'yes', or /cancel.",
