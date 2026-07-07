@@ -277,3 +277,17 @@ export type {
   BracketMatchNode,
   EntryRequirementLike,
 } from "./brackets/index.js";
+
+// On-chain bracket contract client (escrow + VRF + gated tree). Use for
+// open/uncapped brackets; see src/onchain-brackets/index.ts.
+export {
+  BRACKET_STATUS,
+  buildCreateBracketCall,
+  buildBracketRegisterCall,
+  buildBracketRegisterCalls,
+  parseBracketIdFromReceipt,
+} from "./onchain-brackets/index.js";
+export type {
+  BracketStatus,
+  CreateBracketConfig,
+} from "./onchain-brackets/index.js";
