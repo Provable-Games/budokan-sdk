@@ -4,6 +4,8 @@ export interface ChainConfig {
   wsUrl: string;
   budokanAddress: string;
   viewerAddress: string;
+  /** On-chain bracket contract (packages/bracket) — escrow + VRF + gated tree. */
+  bracketAddress: string;
 }
 
 export const CHAINS: Record<string, ChainConfig> = {
@@ -13,6 +15,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     wsUrl: "wss://budokan-api-production.up.railway.app/ws",
     budokanAddress: "0x012eb6054aa269c3e60013693f650650d81952de60072f446406d2a89f0b518e",
     viewerAddress: "0x0486819bbeca6b5f4a6a4700495beee1de0694a145678da412f64967ae8ed281",
+    bracketAddress: "0x06877b19059bd1fb1526a16024457ff819322eeff8c16788080b278a5f9dfcd4",
   },
   sepolia: {
     rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
@@ -23,6 +26,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     // tournaments created there never showed up in the app/API.
     budokanAddress: "0x07edaa23494bf6832b306310e2e933c1907674bf680ea84bc87fcbfb6e5c3aa4",
     viewerAddress: "0x0794dc020f79afce437ffea14ead0d7b83ecb4ea758e92cb99e0a0dffccaedde",
+    bracketAddress: "0x0297627eb5bb80dc0a53c59879fcb70c36924811c0c8b43fa5dd21e893579ded",
   },
 } as const;
 
