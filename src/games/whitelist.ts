@@ -188,6 +188,28 @@ export function isGameWhitelisted(chain: WhitelistChain, contractAddress: string
 }
 
 /**
+ * Direct play link for a game token — the URL where the player actually plays
+ * their run, not the Budokan tournament page. Built from the whitelist's
+ * `playUrl` template: either `…{tokenId}…` (substituted) or a prefix the token
+ * id is appended to (e.g. `…/play?id=`). Returns `undefined` when the game
+ * isn't whitelisted or has no `playUrl` — callers should fall back to the
+ * tournament page. Extend the list in this file to add a game (community-
+ * maintained).
+ */
+export function buildPlayUrl(
+  chain: WhitelistChain,
+  contractAddress: string,
+  tokenId: string | number | bigint,
+): string | undefined {
+  const game = findWhitelistedGame(chain, contractAddress);
+  if (!game?.playUrl) return undefined;
+  const id = String(tokenId);
+  return game.playUrl.includes("{tokenId}")
+    ? game.playUrl.replace(/\{tokenId\}/g, id)
+    : `${game.playUrl}${id}`;
+}
+
+/**
  * Defaults block — what UI surfaces should pre-fill when the user picks this
  * game. Falls back to per-chain sensible defaults (STRK as fee token, 1% fee,
  * $0.25 minimum) when the game isn't whitelisted, so callers don't have to
