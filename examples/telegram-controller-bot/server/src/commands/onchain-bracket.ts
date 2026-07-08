@@ -13,7 +13,7 @@ import {
   parseBracketIdFromReceipt,
   type CreateBracketConfig,
 } from "@provable-games/budokan-sdk";
-import { RpcProvider } from "starknet";
+import { RpcProvider, TransactionFinalityStatus } from "starknet";
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
@@ -33,6 +33,18 @@ const toExec = (c: { contractAddress: string; entrypoint: string; calldata?: unk
   entrypoint: c.entrypoint,
   calldata: (c.calldata ?? []) as string[],
 });
+
+// Fast confirmation (mirrors death-mountain-client): poll frequently and resolve
+// at PRE_CONFIRMED rather than blocking on a full ACCEPTED_ON_L2 block — cuts
+// register/sponsor/create feedback from ~20s (default) to a few seconds.
+const FAST_WAIT = {
+  retryInterval: 500,
+  successStates: [
+    TransactionFinalityStatus.PRE_CONFIRMED,
+    TransactionFinalityStatus.ACCEPTED_ON_L2,
+    TransactionFinalityStatus.ACCEPTED_ON_L1,
+  ],
+};
 
 /** Lazily-built store, keyed off the bot data dir (same root as BracketStore). */
 let storeSingleton: OnchainBracketStore | undefined;
@@ -115,7 +127,7 @@ export async function createOnchainBracket(
   let bracketId: bigint | undefined;
   try {
     const tx = await session.data.account.execute([toExec(call)]);
-    const receipt = (await rpc.waitForTransaction(tx.transaction_hash)) as {
+    const receipt = (await rpc.waitForTransaction(tx.transaction_hash, FAST_WAIT)) as {
       events?: Array<{ from_address?: string; keys?: string[] }>;
     };
     bracketId = parseBracketIdFromReceipt(receipt, bracketAddress);
@@ -194,7 +206,7 @@ export async function registerForOnchainBracket(
   try {
     const tx = await session.data.account.execute(calls.map(toExec));
     const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(chain, config.rpcUrl) });
-    await rpc.waitForTransaction(tx.transaction_hash);
+    await rpc.waitForTransaction(tx.transaction_hash, FAST_WAIT);
   } catch (error) {
     const msg = formatError(error);
     if (/already registered/i.test(msg)) return "You're already registered.";
@@ -254,7 +266,7 @@ export async function sponsorOnchainBracket(
   try {
     const tx = await session.data.account.execute(calls.map(toExec));
     const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(oc.chain, config.rpcUrl) });
-    await rpc.waitForTransaction(tx.transaction_hash);
+    await rpc.waitForTransaction(tx.transaction_hash, FAST_WAIT);
   } catch (error) {
     const msg = formatError(error);
     if (/already registered/i.test(msg)) return `${displayName} is already registered.`;
