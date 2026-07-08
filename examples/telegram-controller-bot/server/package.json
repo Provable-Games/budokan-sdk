@@ -12,7 +12,7 @@
   "dependencies": {
     "@cartridge/controller": "^0.13.12",
     "@cartridge/controller-wasm": "0.10.0",
-    "@provable-games/budokan-sdk": "^0.1.35",
+    "@provable-games/budokan-sdk": "^0.1.36",
     "@provable-games/denshokan-sdk": "^0.1.33",
     "@provable-games/metagame-sdk": "^0.1.15",
     "fastify": "^5.0.0",
