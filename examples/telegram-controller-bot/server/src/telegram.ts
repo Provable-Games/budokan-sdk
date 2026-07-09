@@ -439,12 +439,13 @@ export class TelegramBot {
     await watchCmd.tournamentTick(this.api, this.config, this.watch, {
       wsStreaming: ws ? (chain) => ws.isStreaming(chain) : undefined,
     });
-    // Announce (once) the "round 1 is live, go play" CTA for any tracked on-chain
-    // bracket that has reached RUNNING — the budokan-bots engines seed/build/seat
-    // headlessly, so this is the only place players are told their match started.
+    // Announce bracket lifecycle CTAs (per-match "ready to play" every round +
+    // the "🏆 champion" on completion) for tracked on-chain brackets — the
+    // budokan-bots engines run headlessly, so this is the only place players are
+    // told their match is live or who won.
     await onchainBracketCmd
-      .announceStartedBrackets(this.api, this.config)
-      .catch((error) => console.error("announceStartedBrackets tick failed:", formatError(error)));
+      .announceBracketProgress(this.api, this.config)
+      .catch((error) => console.error("announceBracketProgress tick failed:", formatError(error)));
   }
 
   private clearPendingFlows(chatId: string): boolean {
