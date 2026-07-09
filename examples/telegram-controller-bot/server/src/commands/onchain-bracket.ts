@@ -8,11 +8,16 @@
 
 import {
   CHAINS,
+  BRACKET_STATUS,
   buildCreateBracketCall,
   buildBracketRegisterCalls,
+  createBudokanClient,
+  normalizeAddress,
   parseBracketIdFromReceipt,
+  tournamentPageUrl,
   type CreateBracketConfig,
 } from "@provable-games/budokan-sdk";
+import { createDenshokanClient } from "@provable-games/denshokan-sdk";
 import { RpcProvider, TransactionFinalityStatus } from "starknet";
 
 import type { Config } from "../config.ts";
@@ -353,4 +358,194 @@ function deadlineSummary(deadlineSec: number): string {
   const h = delta / 3600;
   const rel = h < 1 ? `${Math.max(0, Math.round(delta / 60))}m` : h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`;
   return `${when} UTC (in ~${rel})`;
+}
+
+
+// ---------------------------------------------------------------------------
+// Lifecycle CTAs — "your match is ready" (every round) + "champion" (final).
+//
+// The budokan-bots engines seed/build/seat/advance/settle a bracket HEADLESSLY,
+// so nothing tells players their match is live or who won. This tick watches
+// each tracked bracket and posts, once each:
+//   • a "ready to play" CTA per match, the moment both its players are entered
+//     (round 1 at seating; later rounds as feeder winners advance in), grouped
+//     into one message per round, and
+//   • a "🏆 champion" message when the final resolves.
+// Player identities + the winner come from denshokan (getTokens scoped to the
+// match tournament by minter+context); the tree shape is the round-major layout
+// of packages/bracket.
+// ---------------------------------------------------------------------------
+
+// Round-major index helpers — mirror packages/bracket lib.cairo. `field` is a
+// power of two; total matches = field - 1, indexed round 1 first, bottom-up.
+function bracketRounds(field: number): number {
+  return Math.max(1, Math.round(Math.log2(field)));
+}
+function roundMatchStart(field: number, round: number): number {
+  return field - field / 2 ** (round - 1);
+}
+function roundMatchCount(field: number, round: number): number {
+  return field / 2 ** round;
+}
+function locateMatch(field: number, matchIndex: number): { round: number; indexInRound: number } {
+  const rounds = bracketRounds(field);
+  for (let r = 1; r <= rounds; r++) {
+    const start = roundMatchStart(field, r);
+    if (matchIndex < start + roundMatchCount(field, r)) {
+      return { round: r, indexInRound: matchIndex - start };
+    }
+  }
+  return { round: rounds, indexInRound: 0 };
+}
+function roundLabel(round: number, rounds: number): string {
+  if (round >= rounds) return "Final";
+  if (round === rounds - 1) return "Semifinal";
+  if (round === rounds - 2) return "Quarterfinal";
+  return `Round ${round}`;
+}
+
+/** A match tournament's entrant, enriched by denshokan. */
+interface MatchEntrant {
+  owner: string;
+  playerName?: string;
+  score: number;
+  gameOver: boolean;
+}
+
+function displayEntrant(oc: OnchainBracket, e: { owner?: string; playerName?: string }): string {
+  const n = e.playerName?.trim();
+  if (n) return n;
+  const owner = (e.owner ?? "").toLowerCase();
+  if (owner && oc.names?.[owner]) return oc.names[owner];
+  return owner && owner !== "0x0" ? `${owner.slice(0, 6)}…${owner.slice(-4)}` : "TBD";
+}
+
+/** denshokan entrants for a match tournament (minter = budokan, context = tid),
+ *  score-sorted desc so [0] is the leader once played. */
+async function matchEntrants(chain: Chain, budokanAddr: string, tid: string): Promise<MatchEntrant[]> {
+  const denshokan = createDenshokanClient({ chain });
+  const res = await denshokan.getTokens({
+    minterAddress: normalizeAddress(budokanAddr),
+    contextId: Number(tid),
+    sort: { field: "score", direction: "desc" },
+    limit: 16,
+  });
+  return (res.data as Array<{ owner?: string; playerName?: string; score?: number; gameOver?: boolean }>).map(
+    (t) => ({ owner: t.owner ?? "0x0", playerName: t.playerName, score: Number(t.score ?? 0), gameOver: Boolean(t.gameOver) }),
+  );
+}
+
+/**
+ * One pass over tracked on-chain brackets: for each RUNNING bracket, post a
+ * "ready to play" CTA for any match that has just become playable (both players
+ * entered), grouped by round, and a "champion" message once the final resolves.
+ * Idempotent via `announcedMatchTids` + `championAnnouncedAt`.
+ */
+export async function announceBracketProgress(api: TelegramApi, config: Config): Promise<void> {
+  const store = onchainStore(config);
+  let all: OnchainBracket[];
+  try {
+    all = await store.all();
+  } catch (error) {
+    console.error("announceBracketProgress: list failed:", formatError(error));
+    return;
+  }
+  for (const oc of all) {
+    if (oc.championAnnouncedAt) continue; // fully done
+    try {
+      await announceOneBracket(api, config, store, oc);
+    } catch (error) {
+      console.error(`announceBracketProgress: #${oc.bracketId} failed:`, formatError(error));
+    }
+  }
+}
+
+async function announceOneBracket(
+  api: TelegramApi,
+  config: Config,
+  store: OnchainBracketStore,
+  oc: OnchainBracket,
+): Promise<void> {
+  const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(oc.chain, config.rpcUrl) });
+  const read = (entrypoint: string, calldata: string[]) =>
+    rpc.callContract({ contractAddress: oc.contractAddress, entrypoint, calldata });
+
+  const status = Number(BigInt((await read("get_config", [oc.bracketId]))[13] ?? "0"));
+  if (status < BRACKET_STATUS.RUNNING) return; // tree not built yet
+  const field = Number(BigInt((await read("field", [oc.bracketId]))[0] ?? "0"));
+  if (field < 2) return;
+  const rounds = bracketRounds(field);
+  const budokanAddr = config.budokanAddress ?? CHAINS[oc.chain]?.budokanAddress;
+  if (!budokanAddr) return;
+
+  const announced = new Set(oc.announcedMatchTids ?? []);
+  const readyByRound = new Map<number, Array<{ tid: string; a: string; b: string }>>();
+  const total = field - 1; // matches [0, field-1); final is index total-1
+
+  for (let k = 0; k < total; k++) {
+    const tid = BigInt((await read("match_tournament", [oc.bracketId, String(k)]))[0] ?? "0");
+    if (tid === 0n) continue; // not built yet
+    const tidStr = tid.toString();
+    if (announced.has(tidStr)) continue;
+    const entrants = await matchEntrants(oc.chain, budokanAddr, tidStr);
+    const [entA, entB] = entrants;
+    if (!entA || !entB) continue; // both players not entered yet
+    // Mark it seen either way so we don't re-query it every tick.
+    announced.add(tidStr);
+    // Only send a "play now" CTA if the match isn't already played out — avoids a
+    // stale prompt when a bracket is first tracked mid-flight (or on redeploy).
+    if (entrants.every((e) => e.gameOver)) continue;
+    const { round } = locateMatch(field, k);
+    const list = readyByRound.get(round) ?? [];
+    list.push({ tid: tidStr, a: displayEntrant(oc, entA), b: displayEntrant(oc, entB) });
+    readyByRound.set(round, list);
+  }
+
+  for (const [round, matches] of [...readyByRound.entries()].sort((x, y) => x[0] - y[0])) {
+    const label = roundLabel(round, rounds);
+    const title = oc.namePrefix ? `${oc.namePrefix} — ${label}` : label;
+    const text = [
+      `🥊 ${title} is ready!`,
+      "",
+      "Players, tap your match to play. Winners advance automatically — good luck! 🎮",
+    ].join("\n");
+    const buttons: InlineKeyboardButton[][] = matches.map((m) => [
+      { text: `▶️ ${m.a} vs ${m.b}`, url: tournamentPageUrl(oc.chain, m.tid) },
+    ]);
+    await api.sendMessage(oc.announceChatId, text, { replyMarkup: { inline_keyboard: buttons } });
+  }
+
+  if (announced.size !== (oc.announcedMatchTids?.length ?? 0)) {
+    oc.announcedMatchTids = [...announced];
+    await store.save(oc);
+  }
+
+  // Champion: the final match resolves last. Announce once its tournament is
+  // finalized (submission window closed → results final).
+  const finalTid = BigInt((await read("match_tournament", [oc.bracketId, String(total - 1)]))[0] ?? "0");
+  if (finalTid === 0n) return;
+  const budokan = createBudokanClient({
+    chain: oc.chain,
+    ...(config.apiUrl ? { apiBaseUrl: config.apiUrl } : {}),
+    ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}),
+    ...(config.budokanAddress ? { budokanAddress: config.budokanAddress } : {}),
+    ...(config.viewerAddress ? { viewerAddress: config.viewerAddress } : {}),
+  } as Parameters<typeof createBudokanClient>[0]);
+  const finalT = await budokan.getTournament(finalTid.toString()).catch(() => null);
+  if (!finalT || finalT.phase !== "finalized") return;
+
+  const finalists = await matchEntrants(oc.chain, budokanAddr, finalTid.toString());
+  const champ = finalists.find((e) => e.gameOver || e.score > 0) ?? finalists[0];
+  if (!champ) return;
+  await api.sendMessage(
+    oc.announceChatId,
+    [
+      `🏆 ${displayEntrant(oc, champ)} wins ${oc.namePrefix ?? `bracket #${oc.bracketId}`}!`,
+      "",
+      "Congratulations to the champion. GG to everyone who played. 🎉",
+      tournamentPageUrl(oc.chain, finalTid.toString()),
+    ].join("\n"),
+  );
+  oc.championAnnouncedAt = Math.floor(Date.now() / 1000);
+  await store.save(oc);
 }

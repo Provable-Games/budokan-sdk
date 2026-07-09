@@ -43,6 +43,13 @@ export interface OnchainBracket {
    *  counted on-chain but not named here). */
   names?: Record<string, string>;
   createdAt: number;
+  /** Match tournament ids the lifecycle tick has already posted a "ready to
+   *  play" CTA for (round 1 at seating, later rounds as feeders resolve). Guards
+   *  each match against a double-announce. */
+  announcedMatchTids?: string[];
+  /** Unix seconds when the "🏆 champion" message was posted (final resolved).
+   *  Set once so the completion announcement never repeats. */
+  championAnnouncedAt?: number;
 }
 
 export class OnchainBracketStore {
