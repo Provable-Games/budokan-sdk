@@ -43,6 +43,10 @@ export interface OnchainBracket {
    *  counted on-chain but not named here). */
   names?: Record<string, string>;
   createdAt: number;
+  /** Unix seconds when the "round-1 is live, go play" CTA was posted to
+   *  `announceChatId`. Set once (the bracket reaching RUNNING) so the lifecycle
+   *  tick never double-announces. Absent ⇒ not yet announced. */
+  startedAnnouncedAt?: number;
 }
 
 export class OnchainBracketStore {

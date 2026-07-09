@@ -8,9 +8,11 @@
 
 import {
   CHAINS,
+  BRACKET_STATUS,
   buildCreateBracketCall,
   buildBracketRegisterCalls,
   parseBracketIdFromReceipt,
+  tournamentPageUrl,
   type CreateBracketConfig,
 } from "@provable-games/budokan-sdk";
 import { RpcProvider, TransactionFinalityStatus } from "starknet";
@@ -353,4 +355,93 @@ function deadlineSummary(deadlineSec: number): string {
   const h = delta / 3600;
   const rel = h < 1 ? `${Math.max(0, Math.round(delta / 60))}m` : h < 48 ? `${Math.round(h)}h` : `${Math.round(h / 24)}d`;
   return `${when} UTC (in ~${rel})`;
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle CTA — "round 1 is live, go play"
+//
+// The budokan-bots init engine seeds/builds/seats an on-chain bracket
+// HEADLESSLY (no Telegram), so nothing tells the players their match started.
+// This tick watches each tracked bracket and, the first time it reaches RUNNING
+// (tree built + round-1 seated), posts a CTA to `announceChatId` with a Play
+// button per round-1 match. `startedAnnouncedAt` guards it to once.
+// ---------------------------------------------------------------------------
+
+interface RoundOneMatch {
+  tid: string;
+  a: string;
+  b: string;
+}
+
+/** Read a bracket's status + round-1 matchups (tournament id + the two seated
+ *  players) from chain. Returns null if the tree isn't fully built yet. */
+async function readRoundOne(
+  rpc: RpcProvider,
+  oc: OnchainBracket,
+): Promise<{ status: number; matches: RoundOneMatch[] } | null> {
+  const call = (entrypoint: string, calldata: string[]) =>
+    rpc.callContract({ contractAddress: oc.contractAddress, entrypoint, calldata });
+
+  // BracketConfig felt layout: […,[13] status] (see budokan-bots readBracket).
+  const cfg = await call("get_config", [oc.bracketId]);
+  const status = Number(BigInt(cfg[13] ?? "0"));
+  if (status !== BRACKET_STATUS.RUNNING) return { status, matches: [] };
+
+  const field = Number(BigInt((await call("field", [oc.bracketId]))[0] ?? "0"));
+  const half = Math.floor(field / 2); // round-1 match count
+  const matches: RoundOneMatch[] = [];
+  for (let k = 0; k < half; k++) {
+    const tid = BigInt((await call("match_tournament", [oc.bracketId, String(k)]))[0] ?? "0");
+    if (tid === 0n) return null; // not built yet — wait for a later tick
+    const a = (await call("seat", [oc.bracketId, String(2 * k)]))[0] ?? "0x0";
+    const b = (await call("seat", [oc.bracketId, String(2 * k + 1)]))[0] ?? "0x0";
+    matches.push({ tid: tid.toString(), a, b });
+  }
+  return { status, matches };
+}
+
+/**
+ * One pass over tracked on-chain brackets: announce (once) the "round 1 is live"
+ * CTA for any that have reached RUNNING. Called on the tournament lifecycle tick.
+ */
+export async function announceStartedBrackets(api: TelegramApi, config: Config): Promise<void> {
+  const store = onchainStore(config);
+  let all: OnchainBracket[];
+  try {
+    all = await store.all();
+  } catch (error) {
+    console.error("announceStartedBrackets: list failed:", formatError(error));
+    return;
+  }
+
+  for (const oc of all) {
+    if (oc.startedAnnouncedAt) continue; // already announced
+    try {
+      const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(oc.chain, config.rpcUrl) });
+      const r = await readRoundOne(rpc, oc);
+      if (!r || r.status !== BRACKET_STATUS.RUNNING || r.matches.length === 0) continue;
+
+      const nameFor = (addr: string): string => {
+        const key = addr.toLowerCase();
+        return oc.names?.[key] ?? `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+      };
+      const title = oc.namePrefix ? `${oc.namePrefix}` : `Bracket #${oc.bracketId}`;
+      const text = [
+        `🏁 ${title} — Round 1 is LIVE!`,
+        "",
+        "Players, tap your match below to play. Winners advance automatically — good luck! 🎮",
+      ].join("\n");
+      const buttons: InlineKeyboardButton[][] = r.matches.map((m) => [
+        { text: `▶️ ${nameFor(m.a)} vs ${nameFor(m.b)}`, url: tournamentPageUrl(oc.chain, m.tid) },
+      ]);
+
+      await api.sendMessage(oc.announceChatId, text, {
+        replyMarkup: { inline_keyboard: buttons },
+      });
+      oc.startedAnnouncedAt = Math.floor(Date.now() / 1000);
+      await store.save(oc);
+    } catch (error) {
+      console.error(`announceStartedBrackets: #${oc.bracketId} failed:`, formatError(error));
+    }
+  }
 }

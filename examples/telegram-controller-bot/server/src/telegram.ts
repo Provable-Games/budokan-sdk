@@ -22,6 +22,7 @@ import * as addPrize from "./commands/add-prize.ts";
 import * as enterCmd from "./commands/enter.ts";
 import * as submitCmd from "./commands/submit.ts";
 import * as bracketCmd from "./commands/bracket.ts";
+import * as onchainBracketCmd from "./commands/onchain-bracket.ts";
 import type { BracketStore } from "./bracket-store.ts";
 import type { TournamentWatchStore } from "./tournament-watch-store.ts";
 import { TournamentWatchWs } from "./tournament-watch-ws.ts";
@@ -438,6 +439,12 @@ export class TelegramBot {
     await watchCmd.tournamentTick(this.api, this.config, this.watch, {
       wsStreaming: ws ? (chain) => ws.isStreaming(chain) : undefined,
     });
+    // Announce (once) the "round 1 is live, go play" CTA for any tracked on-chain
+    // bracket that has reached RUNNING — the budokan-bots engines seed/build/seat
+    // headlessly, so this is the only place players are told their match started.
+    await onchainBracketCmd
+      .announceStartedBrackets(this.api, this.config)
+      .catch((error) => console.error("announceStartedBrackets tick failed:", formatError(error)));
   }
 
   private clearPendingFlows(chatId: string): boolean {
