@@ -41,6 +41,23 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
 
   app.get("/healthz", async () => ({ ok: true, chain: config.chain }));
 
+  // Short-link redirect for /connect. The keychain auth URL is enormous (it
+  // encodes every session policy), and Telegram's "open link?" confirmation
+  // shows the full URL — forcing the user to scroll to reach "Open". So the
+  // /connect button points here instead; we 302 to the real keychain URL stashed
+  // on the handshake. Peek (don't consume) — the callback still needs the token.
+  app.get<{ Params: { token: string } }>("/c/:token", async (req, reply) => {
+    const handshake = handshakes.peek(req.params.token);
+    if (!handshake || handshake.mode !== "connect" || !handshake.authUrl) {
+      reply.code(404).type("text/html");
+      return errorHtml(
+        "Authorization link expired",
+        "This connect link is no longer valid. Run /connect again from Telegram.",
+      );
+    }
+    reply.redirect(handshake.authUrl, 302);
+  });
+
   // Slot-pattern callback. Cartridge redirects the user's browser here after
   // they authorize at https://x.cartridge.gg/session. The session registration
   // arrives as `?startapp=<base64-encoded JSON>`. We decode, combine with the
