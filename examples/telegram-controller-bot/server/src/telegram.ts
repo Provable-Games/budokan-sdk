@@ -758,6 +758,13 @@ export class TelegramBot {
       pubKey: signer.pubKey,
       callbackUrl,
     });
+    // Hand the user a SHORT link on our own domain that 302-redirects to the
+    // (very long, policy-encoded) keychain URL. Telegram's "open link?" prompt
+    // then shows the short URL, so the user doesn't have to scroll past the full
+    // keychain URL to reach "Open". Stash the real URL on the handshake for the
+    // /c/:token redirect to serve.
+    handshake.authUrl = url;
+    const shortUrl = `${this.config.botPublicUrl}/c/${handshake.token}`;
 
     await this.api.sendMessage(
       chatId,
@@ -766,7 +773,7 @@ export class TelegramBot {
         "",
         "Cartridge opens in your browser, you sign in (passkey / google / etc.) and approve the session policies. When done, return to this chat — I'll confirm the connection here.",
       ].join("\n"),
-      { replyMarkup: urlButton("Open Cartridge to authorize", url) },
+      { replyMarkup: urlButton("Open Cartridge to authorize", shortUrl) },
     );
   }
 

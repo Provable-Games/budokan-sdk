@@ -29,6 +29,14 @@ export interface HandshakeToken {
    * registration, this is what the bot needs to sign on the user's behalf.
    */
   signer?: { privKey: string; pubKey: string; sessionKeyGuid: string };
+  /**
+   * mode === "connect": the fully-built Cartridge keychain auth URL. Stashed so
+   * the bot can hand the user a SHORT link on its own domain
+   * (`/c/:token`) that 302-redirects here — Telegram's "open link?" prompt then
+   * shows the short URL instead of the enormous policy-encoded keychain URL
+   * (which otherwise forces the user to scroll to reach "Open").
+   */
+  authUrl?: string;
 }
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;

@@ -79,6 +79,24 @@ async function main() {
     if (res.status !== 404) throw new Error(`expected 404, got ${res.status}`);
   });
 
+  await check("GET /c/<token> 302-redirects to the stashed keychain URL", async () => {
+    const handshake = handshakes.mint("777777", "connect", "mainnet");
+    handshake.authUrl = "https://x.cartridge.gg/session?foo=bar";
+    const res = await fetch(`${baseUrl}/c/${handshake.token}`, { redirect: "manual" });
+    if (res.status !== 302) throw new Error(`expected 302, got ${res.status}`);
+    if (res.headers.get("location") !== handshake.authUrl)
+      throw new Error(`bad Location: ${res.headers.get("location")}`);
+    // Peek, not consume — the callback still needs the token afterwards.
+    if (!handshakes.peek(handshake.token)) throw new Error("redirect consumed the token");
+  });
+
+  await check("GET /c/<unknown> returns 404 HTML", async () => {
+    const res = await fetch(`${baseUrl}/c/00000000-0000-0000-0000-000000000000`, {
+      redirect: "manual",
+    });
+    if (res.status !== 404) throw new Error(`expected 404, got ${res.status}`);
+  });
+
   let mintedToken: string;
   await check("Mint connect token + GET returns policies", async () => {
     const handshake = handshakes.mint("123456", "connect", "mainnet");
