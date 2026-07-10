@@ -11,7 +11,6 @@ import {
   BRACKET_STATUS,
   buildCreateBracketCall,
   buildBracketRegisterCalls,
-  createBudokanClient,
   normalizeAddress,
   parseBracketIdFromReceipt,
   tournamentPageUrl,
@@ -520,19 +519,30 @@ async function announceOneBracket(
     await store.save(oc);
   }
 
-  // Champion: the final match resolves last. Announce once its tournament is
-  // finalized (submission window closed → results final).
+  // Champion: the final match resolves last. Announce once its submission window
+  // has closed (results final). Read submissionEndTime straight from the budokan
+  // API with a hard timeout — the SDK's getTournament() can stall resolving a
+  // GATED tournament's extension, which would silently hang this whole tick (and
+  // is exactly why the champion CTA never fired before).
   const finalTid = BigInt((await read("match_tournament", [oc.bracketId, String(total - 1)]))[0] ?? "0");
   if (finalTid === 0n) return;
-  const budokan = createBudokanClient({
-    chain: oc.chain,
-    ...(config.apiUrl ? { apiBaseUrl: config.apiUrl } : {}),
-    ...(config.rpcUrl ? { rpcUrl: config.rpcUrl } : {}),
-    ...(config.budokanAddress ? { budokanAddress: config.budokanAddress } : {}),
-    ...(config.viewerAddress ? { viewerAddress: config.viewerAddress } : {}),
-  } as Parameters<typeof createBudokanClient>[0]);
-  const finalT = await budokan.getTournament(finalTid.toString()).catch(() => null);
-  if (!finalT || finalT.phase !== "finalized") return;
+  const apiBase = config.apiUrl ?? CHAINS[oc.chain]?.apiBaseUrl;
+  if (!apiBase) return;
+  let submissionEnd = 0;
+  try {
+    const res = await fetch(`${apiBase}/tournaments/${finalTid.toString()}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) {
+      const body = (await res.json()) as { data?: { submissionEndTime?: number | string } };
+      submissionEnd = Number(body?.data?.submissionEndTime ?? 0);
+    }
+  } catch (error) {
+    console.error(`announceBracketProgress: #${oc.bracketId} final read failed:`, formatError(error));
+    return;
+  }
+  // Not decided yet (window still open, or the final not indexed) — try next tick.
+  if (!submissionEnd || Math.floor(Date.now() / 1000) <= submissionEnd) return;
 
   const finalists = await matchEntrants(oc.chain, budokanAddr, finalTid.toString());
   const champ = finalists.find((e) => e.gameOver || e.score > 0) ?? finalists[0];
@@ -548,4 +558,5 @@ async function announceOneBracket(
   );
   oc.championAnnouncedAt = Math.floor(Date.now() / 1000);
   await store.save(oc);
+  console.log(`announceBracketProgress: #${oc.bracketId} announced champion ${displayEntrant(oc, champ)}`);
 }
