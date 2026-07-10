@@ -15,7 +15,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     wsUrl: "wss://budokan-api-production.up.railway.app/ws",
     budokanAddress: "0x012eb6054aa269c3e60013693f650650d81952de60072f446406d2a89f0b518e",
     viewerAddress: "0x0486819bbeca6b5f4a6a4700495beee1de0694a145678da412f64967ae8ed281",
-    bracketAddress: "0x0418d78841b212487ddb00ed36e15e6c158f872224270523c346f4e91fb16d0f",
+    bracketAddress: "0x03b7b2b43a449b27b7e19400baa8d1eea8f05a6ad9416dace77b781414e4d66f",
   },
   sepolia: {
     rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
@@ -26,7 +26,7 @@ export const CHAINS: Record<string, ChainConfig> = {
     // tournaments created there never showed up in the app/API.
     budokanAddress: "0x07edaa23494bf6832b306310e2e933c1907674bf680ea84bc87fcbfb6e5c3aa4",
     viewerAddress: "0x0794dc020f79afce437ffea14ead0d7b83ecb4ea758e92cb99e0a0dffccaedde",
-    bracketAddress: "0x01696dce0659ec25ffefec9a348ac3cade55db12c84033425b8f459395ef6138",
+    bracketAddress: "0x0751bd2c742c4c09f02f4af0fb4da51c582b22058ca62784dfa074c3490fa7a8",
   },
 } as const;
 
