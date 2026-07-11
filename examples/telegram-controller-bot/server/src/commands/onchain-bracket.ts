@@ -50,6 +50,10 @@ const FAST_WAIT = {
   ],
 };
 
+// Stop announcing (and polling) a bracket this long after creation if it never
+// produced a champion — abandons write-offs so they don't load the RPC forever.
+const MAX_ANNOUNCE_AGE_SEC = 24 * 60 * 60;
+
 /** Lazily-built store, keyed off the bot data dir (same root as BracketStore). */
 let storeSingleton: OnchainBracketStore | undefined;
 export function onchainStore(config: Config): OnchainBracketStore {
@@ -269,7 +273,12 @@ export async function sponsorOnchainBracket(
   );
   try {
     const tx = await session.data.account.execute(calls.map(toExec));
-    const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(oc.chain, config.rpcUrl) });
+    // Server-side reads go to our dedicated node (rpc.provable.games); the
+  // keychain-safe (public Cartridge) URL is only needed for the browser auth
+  // flow, and it's rate-limited under the announcer's polling load.
+  const rpc = new RpcProvider({
+    nodeUrl: CHAINS[oc.chain]?.rpcUrl ?? keychainSafeRpcUrl(oc.chain, config.rpcUrl),
+  });
     await rpc.waitForTransaction(tx.transaction_hash, FAST_WAIT);
   } catch (error) {
     const msg = formatError(error);
@@ -422,7 +431,9 @@ function displayEntrant(oc: OnchainBracket, e: { owner?: string; playerName?: st
 /** denshokan entrants for a match tournament (minter = budokan, context = tid),
  *  score-sorted desc so [0] is the leader once played. */
 async function matchEntrants(chain: Chain, budokanAddr: string, tid: string): Promise<MatchEntrant[]> {
-  const denshokan = createDenshokanClient({ chain });
+  // Dedicated RPC fallback (rpc.provable.games) rather than the shared, rate-
+  // limited public Cartridge RPC the SDK defaults to.
+  const denshokan = createDenshokanClient({ chain, rpcUrl: CHAINS[chain]?.rpcUrl });
   const res = await denshokan.getTokens({
     minterAddress: normalizeAddress(budokanAddr),
     contextId: Number(tid),
@@ -449,8 +460,19 @@ export async function announceBracketProgress(api: TelegramApi, config: Config):
     console.error("announceBracketProgress: list failed:", formatError(error));
     return;
   }
+  const nowSec = Math.floor(Date.now() / 1000);
   for (const oc of all) {
     if (oc.championAnnouncedAt) continue; // fully done
+    // Stop polling brackets that are well past any plausible completion window
+    // (write-offs, or ones whose seating never landed). Otherwise they'd be
+    // re-read every tick forever, needlessly loading the RPC/API. Pure time
+    // check — no reads. 1v1 rounds are short, so a day is very generous.
+    if (oc.createdAt && nowSec - oc.createdAt > MAX_ANNOUNCE_AGE_SEC) {
+      oc.championAnnouncedAt = nowSec;
+      await store.save(oc);
+      console.log(`announceBracketProgress: #${oc.bracketId} past max age — abandoning announcements`);
+      continue;
+    }
     try {
       await announceOneBracket(api, config, store, oc);
     } catch (error) {
@@ -465,7 +487,12 @@ async function announceOneBracket(
   store: OnchainBracketStore,
   oc: OnchainBracket,
 ): Promise<void> {
-  const rpc = new RpcProvider({ nodeUrl: keychainSafeRpcUrl(oc.chain, config.rpcUrl) });
+  // Server-side reads go to our dedicated node (rpc.provable.games); the
+  // keychain-safe (public Cartridge) URL is only needed for the browser auth
+  // flow, and it's rate-limited under the announcer's polling load.
+  const rpc = new RpcProvider({
+    nodeUrl: CHAINS[oc.chain]?.rpcUrl ?? keychainSafeRpcUrl(oc.chain, config.rpcUrl),
+  });
   const read = (entrypoint: string, calldata: string[]) =>
     rpc.callContract({ contractAddress: oc.contractAddress, entrypoint, calldata });
 

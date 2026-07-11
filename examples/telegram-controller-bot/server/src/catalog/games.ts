@@ -110,7 +110,12 @@ const clients = new Map<Chain, DenshokanClient>();
 function getClient(chain: Chain): DenshokanClient {
   let client = clients.get(chain);
   if (!client) {
-    client = createDenshokanClient({ chain });
+    // Point the RPC fallback at our dedicated node (rpc.provable.games) instead
+    // of the SDK default (public api.cartridge.gg, shared + rate-limited). The
+    // denshokan API stays primary; when it throttles/errors, getGames falls back
+    // to this RPC and still returns the catalog — so the game picker keeps
+    // working under load instead of showing "No games available".
+    client = createDenshokanClient({ chain, rpcUrl: CHAINS[chain]?.rpcUrl });
     clients.set(chain, client);
   }
   return client;
