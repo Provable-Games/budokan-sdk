@@ -571,6 +571,29 @@ export class TelegramBot {
       return bracketCmd.sponsorViaButton(this.api, cb.id, arg);
     }
 
+    // "Distribute prizes" button on a bracket champion announcement (usually a
+    // channel post): distribute:<chain>:<tid>. Identify the tapper by from.id
+    // (== their DM chat id) and run the whole-pool /distribute via their
+    // session — claim_reward is permissionless so any connected user can
+    // trigger it, and each payout still routes to its rightful recipient.
+    // Results land in the tapper's DMs.
+    if (action === "distribute") {
+      const [, dChain, dTid] = (cb.data ?? "").split(":");
+      const fromId = cb.from?.id;
+      if (!fromId) {
+        return this.api.answerCallback(cb.id, "Couldn't identify you — try /distribute in a DM.", true);
+      }
+      if (!dChain || !dTid || !isChain(dChain) || !/^\d+$/.test(dTid)) {
+        return this.api.answerCallback(cb.id, "Invalid distribute action.", true);
+      }
+      await this.api.answerCallback(
+        cb.id,
+        "⏳ Distributing prizes — I'll confirm in your DMs (/connect first if you haven't).",
+        false,
+      );
+      return distribute(this.api, this.config, String(fromId), dChain, [dTid]);
+    }
+
     await this.api.answerCallback(cb.id);
     const chatId = cb.message ? String(cb.message.chat.id) : undefined;
     if (!chatId) return;
