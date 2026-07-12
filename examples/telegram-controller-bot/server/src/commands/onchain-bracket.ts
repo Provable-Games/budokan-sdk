@@ -132,6 +132,8 @@ export async function createOnchainBracket(
     // Names the on-chain match tournaments (felt252, ≤31 chars) instead of the
     // generic 'Bracket Match'. The SDK ASCII-sanitizes + truncates.
     name: p.namePrefix,
+    // Description applied to every match tournament (ByteArray, unbounded).
+    description: p.description,
   };
   const call = buildCreateBracketCall(bracketAddress, bracketConfig, p.tiersBps ?? []);
 
