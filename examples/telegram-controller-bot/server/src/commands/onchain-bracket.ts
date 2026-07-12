@@ -25,6 +25,8 @@ import { TelegramApi, type InlineKeyboardButton } from "../telegram-api.ts";
 import { resolveAccount } from "../controller-account.ts";
 import { keychainSafeRpcUrl } from "../cartridge-link.ts";
 import { formatError } from "../format-error.ts";
+import { formatTokenAmount } from "../format.ts";
+import { findKnownToken } from "../catalog/tokens.ts";
 import { OnchainBracketStore, type OnchainBracket } from "../onchain-bracket-store.ts";
 
 // The controller session's `execute` wants concrete `calldata: string[]`; the
@@ -127,6 +129,11 @@ export async function createOnchainBracket(
     submissionDuration: p.submissionDuration,
     leaderboardAscending: p.leaderboardAscending,
     gameMustBeOver: p.gameMustBeOver,
+    // Names the on-chain match tournaments (felt252, ≤31 chars) instead of the
+    // generic 'Bracket Match'. The SDK ASCII-sanitizes + truncates.
+    name: p.namePrefix,
+    // Description applied to every match tournament (ByteArray, unbounded).
+    description: p.description,
   };
   const call = buildCreateBracketCall(bracketAddress, bracketConfig, p.tiersBps ?? []);
 
@@ -445,6 +452,58 @@ async function matchEntrants(chain: Chain, budokanAddr: string, tid: string): Pr
   );
 }
 
+interface OnchainPrizeRow {
+  tokenAddress: string;
+  amount: string;
+  /** Per-leaderboard-position basis points for a distributed prize (index 0 =
+   *  champion). Empty/absent ⇒ the whole amount goes to the champion. */
+  distributionShares?: number[] | null;
+}
+
+/**
+ * Fetch the final match's prize pool and render per-place winnings lines
+ * ("await: 0.28 STRK"). Reads /prizes straight from the API (the SDK's
+ * getTournament stalls on gated tournaments). `finalists` are score-desc so
+ * index i maps to leaderboard position i, matching a prize's distribution
+ * shares. Returns [] on no prizes / any failure (announce without prize detail).
+ */
+async function summarizeFinalPrizes(
+  oc: OnchainBracket,
+  apiBase: string,
+  finalTid: string,
+  finalists: MatchEntrant[],
+): Promise<string[]> {
+  let prizes: OnchainPrizeRow[] = [];
+  try {
+    const res = await fetch(`${apiBase}/tournaments/${finalTid}/prizes`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    prizes = ((await res.json()) as { data?: OnchainPrizeRow[] }).data ?? [];
+  } catch {
+    return [];
+  }
+  const lines: string[] = [];
+  for (const p of prizes) {
+    const token = findKnownToken(oc.chain, p.tokenAddress);
+    const decimals = token?.decimals ?? 18;
+    const symbol = token?.symbol ?? "";
+    const shares = p.distributionShares ?? [];
+    if (shares.length > 0) {
+      shares.forEach((bps, i) => {
+        if (!bps) return;
+        const amt = (BigInt(p.amount) * BigInt(bps)) / 10000n;
+        const who = finalists[i] ? displayEntrant(oc, finalists[i]) : `Place ${i + 1}`;
+        lines.push(`  ${who}: ${formatTokenAmount(amt.toString(), decimals)} ${symbol}`.trimEnd());
+      });
+    } else {
+      const who = finalists[0] ? displayEntrant(oc, finalists[0]) : "Champion";
+      lines.push(`  ${who}: ${formatTokenAmount(p.amount, decimals)} ${symbol}`.trimEnd());
+    }
+  }
+  return lines;
+}
+
 /**
  * One pass over tracked on-chain brackets: for each RUNNING bracket, post a
  * "ready to play" CTA for any match that has just become playable (both players
@@ -574,15 +633,39 @@ async function announceOneBracket(
   const finalists = await matchEntrants(oc.chain, budokanAddr, finalTid.toString());
   const champ = finalists.find((e) => e.gameOver || e.score > 0) ?? finalists[0];
   if (!champ) return;
-  await api.sendMessage(
-    oc.announceChatId,
-    [
-      `🏆 ${displayEntrant(oc, champ)} wins ${oc.namePrefix ?? `bracket #${oc.bracketId}`}!`,
-      "",
-      "Congratulations to the champion. GG to everyone who played. 🎉",
-      tournamentPageUrl(oc.chain, finalTid.toString()),
-    ].join("\n"),
-  );
+
+  // Summarize the final's prize pool so the announcement shows what was won.
+  // Read /prizes straight from the API (the SDK's getTournament can stall on a
+  // gated tournament — see the note above). finalists are score-desc, so index
+  // i is leaderboard position i (0 = champion), matching a prize's per-position
+  // distribution shares.
+  const prizeLines = await summarizeFinalPrizes(oc, apiBase, finalTid.toString(), finalists);
+
+  const lines = [`🏆 ${displayEntrant(oc, champ)} wins ${oc.namePrefix ?? `bracket #${oc.bracketId}`}!`, ""];
+  if (prizeLines.length > 0) lines.push("Prizes won:", ...prizeLines, "");
+  lines.push("Congratulations to the champion. GG to everyone who played. 🎉");
+  lines.push(tournamentPageUrl(oc.chain, finalTid.toString()));
+
+  // Anyone can tap "Distribute prizes" to settle the whole pool — claim_reward
+  // is permissionless and routes each payout to its rightful recipient, so this
+  // works whether or not the auto-settle bot is running. Handled by the
+  // `distribute:<chain>:<tid>` callback → the existing /distribute flow.
+  const replyMarkup =
+    prizeLines.length > 0
+      ? {
+          replyMarkup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "💰 Distribute prizes",
+                  callback_data: `distribute:${oc.chain}:${finalTid.toString()}`,
+                },
+              ],
+            ] as InlineKeyboardButton[][],
+          },
+        }
+      : undefined;
+  await api.sendMessage(oc.announceChatId, lines.join("\n"), replyMarkup);
   oc.championAnnouncedAt = Math.floor(Date.now() / 1000);
   await store.save(oc);
   console.log(`announceBracketProgress: #${oc.bracketId} announced champion ${displayEntrant(oc, champ)}`);

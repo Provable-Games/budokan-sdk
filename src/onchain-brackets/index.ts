@@ -13,7 +13,7 @@
  * builds the tree to RUNNING (auto-entering round-1 players). This module covers
  * the two user-facing writes (create + register); the init bot drives the rest.
  */
-import { CallData, hash, uint256, type Call } from "starknet";
+import { byteArray, CallData, hash, shortString, uint256, type Call } from "starknet";
 
 /** Lifecycle status (mirrors packages/bracket `status`). */
 export const BRACKET_STATUS = {
@@ -55,6 +55,25 @@ export interface CreateBracketConfig {
   leaderboardAscending: boolean;
   /** Whether the game must report over before a score can be submitted. */
   gameMustBeOver: boolean;
+  /** Short name applied to every match tournament (Budokan metadata name, a
+   *  felt252 — max 31 ASCII chars, truncated if longer). Omit/empty ⇒ the
+   *  contract's generic 'Bracket Match' fallback. */
+  name?: string;
+  /** Description applied to every match tournament (Budokan metadata
+   *  description, an unbounded ByteArray). Omit ⇒ empty. */
+  description?: string;
+}
+
+/** Encode a bracket name to a felt252 for the contract's `name` config field.
+ *  ASCII-only, capped at 31 chars (felt252 short-string limit); empty ⇒ "0"
+ *  (the contract then falls back to 'Bracket Match'). */
+export function bracketNameToFelt(name?: string): string {
+  const clean = (name ?? "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[^\x20-\x7e]/g, "")
+    .slice(0, 31)
+    .trim();
+  return clean.length > 0 ? shortString.encodeShortString(clean) : "0";
 }
 
 /**
@@ -88,8 +107,13 @@ export function buildCreateBracketCall(
       // Derived from prize_tiers on-chain; overwritten. Status starts REGISTERING.
       prize_distribution_count: 0,
       status: BRACKET_STATUS.REGISTERING,
+      // Appended last to match the contract's BracketConfig field order.
+      name: bracketNameToFelt(config.name),
     },
     prize_tiers: prizeTiers,
+    // Separate `description: ByteArray` param on create_bracket (kept out of the
+    // Copy BracketConfig struct on-chain).
+    description: byteArray.byteArrayFromString(config.description ?? ""),
   });
   return { contractAddress: bracketAddress, entrypoint: "create_bracket", calldata };
 }
