@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@provable-games/budokan-sdk": "file:../..",
+    "@provable-games/budokan-sdk": "^0.1.39",
     "@provable-games/denshokan-sdk": "^0.1.33",
     "starknet": "^9.2.1",
     "zod": "^3.24.0"

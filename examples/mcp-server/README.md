@@ -121,7 +121,6 @@ Allowance patterns (the leaf count is immutable once registered — new allowanc
 - **Tiered**: `entries: [{ address: "0xwhale", count: 5 }, { address: "0x…", count: 1 }]` with `gatingEntryLimit: 0` (a non-zero limit caps every tier).
 - **Effectively unlimited**: `entriesPerAddress: 2147483647` + `gatingEntryLimit: 0`. This is the enforced maximum: the chain accepts full u32, but larger counts overflow the merkle API's storage — the tree registers and then can never serve proofs.
 
-Note: tiered `entries` needs the SDK from this repo (the example depends on `file:../..`); it lands on npm with the next SDK release.
 
 Player-side actions that need the *player's* signature (entering, submitting scores, claiming) are deliberately not exposed as signed tools — players do those on budokan.gg; the tournament links returned by the tools take them straight there.
 
