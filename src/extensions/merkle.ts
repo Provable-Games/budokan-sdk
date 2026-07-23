@@ -103,13 +103,16 @@ export interface AllowlistEntry {
   count: number;
 }
 
-export interface BuildRegisterAllowlistTreeParams {
+interface BuildRegisterAllowlistTreeBase {
   chain: WhitelistChain;
-  /**
-   * Addresses allowed to enter, all sharing the same `entriesPerAddress`
-   * allowance. Provide either this or `entries`, not both.
-   */
-  addresses?: string[];
+  /** Override the merkle API URL for this chain. */
+  apiUrl?: string;
+}
+
+/** Uniform allowance: every address gets the same entry count. */
+export interface UniformAllowlistParams extends BuildRegisterAllowlistTreeBase {
+  /** Addresses allowed to enter, all sharing `entriesPerAddress`. */
+  addresses: string[];
   /**
    * Per-address entry allowance baked into the tree leaf (default 1). Note the
    * validator applies `effective = min(count, entry_limit)` when the
@@ -118,14 +121,25 @@ export interface BuildRegisterAllowlistTreeParams {
    * brackets both are 1.
    */
   entriesPerAddress?: number;
+  entries?: never;
+}
+
+/** Tiered allowance: each address carries its own entry count. */
+export interface TieredAllowlistParams extends BuildRegisterAllowlistTreeBase {
   /**
    * Tiered allowlist: each address with its own allowance (e.g. whales get 5
-   * entries, everyone else 1). Alternative to `addresses`/`entriesPerAddress`.
+   * entries, everyone else 1).
    */
-  entries?: AllowlistEntry[];
-  /** Override the merkle API URL for this chain. */
-  apiUrl?: string;
+  entries: AllowlistEntry[];
+  addresses?: never;
+  entriesPerAddress?: never;
 }
+
+/**
+ * Union encodes the `addresses` XOR `entries` invariant at compile time;
+ * the runtime guards below keep JS callers honest too.
+ */
+export type BuildRegisterAllowlistTreeParams = UniformAllowlistParams | TieredAllowlistParams;
 
 export interface RegisterAllowlistTreeResult {
   /** On-chain `create_tree` call for the caller to sign against the validator. */
@@ -146,14 +160,18 @@ export interface RegisterAllowlistTreeResult {
 export function buildRegisterAllowlistTreeCall(
   params: BuildRegisterAllowlistTreeParams,
 ): RegisterAllowlistTreeResult {
-  if (params.entries && params.addresses) {
+  // Presence (not truthiness) decides which form the caller chose, so an
+  // explicitly-empty `entries: []` fails with the tiered-form message rather
+  // than silently falling through to the uniform form.
+  const hasEntries = params.entries !== undefined;
+  if (hasEntries && params.addresses !== undefined) {
     throw new Error("Provide either `addresses` or `entries`, not both");
   }
-  if (params.entries && params.entriesPerAddress !== undefined) {
+  if (hasEntries && params.entriesPerAddress !== undefined) {
     throw new Error("`entriesPerAddress` only applies to `addresses` — set counts inside `entries`");
   }
-  const merkleEntries = params.entries
-    ? toTieredEntries(params.entries)
+  const merkleEntries = hasEntries
+    ? toTieredEntries(params.entries!)
     : toEntries(params.addresses ?? [], params.entriesPerAddress ?? 1);
   const { call, entries } = merkleClient(params.chain, params.apiUrl).buildRegisterTreeCall(
     merkleEntries,

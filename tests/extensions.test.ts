@@ -152,6 +152,43 @@ describe("buildRegisterAllowlistTreeCall", () => {
     }
   });
 
+  test("count boundary: exactly MAX passes, MAX+1 throws", () => {
+    const MAX = 2147483647;
+    const { entries } = buildRegisterAllowlistTreeCall({
+      chain: "mainnet",
+      entries: [{ address: "0x1", count: MAX }],
+    });
+    expect(entries).toEqual([{ address: normalizeAddress("0x1"), count: MAX }]);
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        entries: [{ address: "0x1", count: MAX + 1 }],
+      }),
+    ).toThrow(/merkle API/);
+  });
+
+  test("form selection is presence-based: entries: [] is the tiered form", () => {
+    // Runtime guards for JS callers — the union type makes these compile
+    // errors in TS, hence the casts.
+    expect(() =>
+      buildRegisterAllowlistTreeCall({ chain: "mainnet", entries: [] }),
+    ).toThrow(/at least one entry/);
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        entries: [],
+        addresses: ["0x1"],
+      } as never),
+    ).toThrow(/not both/);
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        entries: [{ address: "0x1", count: 1 }],
+        entriesPerAddress: 2,
+      } as never),
+    ).toThrow(/entriesPerAddress/);
+  });
+
   test("rejects counts above the merkle API's i32 storage limit", () => {
     // On-chain u32 accepts these, but the proof API cannot store them — the
     // tree would register and then never serve proofs.

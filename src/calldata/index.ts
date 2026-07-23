@@ -40,6 +40,8 @@ import {
   uint256,
 } from "starknet";
 
+import type { TournamentSchedule } from "../schedule/index.js";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -140,13 +142,14 @@ export interface CreateTournamentArgs {
   description: string;
   gameAddress: string;
   settingsId: number;
-  schedule: {
-    registrationStartDelay: number;
-    registrationEndDelay: number;
-    gameStartDelay: number;
-    gameEndDelay: number;
-    submissionDuration: number;
-  };
+  /**
+   * Five delay fields with MIXED anchors — the start delays are offsets from
+   * tournament creation, the end fields are durations of their own window.
+   * Don't hand-assemble: build with `scheduleFromTimestamps` /
+   * `scheduleFromDurations` from `src/schedule`, which encode the contract's
+   * anchoring rules (see that module's docs).
+   */
+  schedule: TournamentSchedule;
   leaderboard: { ascending: boolean; gameMustBeOver: boolean };
   /** Encoded as Option::Some(EntryFeeKind::BuiltIn(EntryFee)) when set. */
   entryFee?: EntryFeeArgs;

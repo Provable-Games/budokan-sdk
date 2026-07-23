@@ -194,6 +194,16 @@ export type {
 export { tournamentPhase } from "./phase/index.js";
 export type { PhaseInput } from "./phase/index.js";
 
+// Schedule builders — the encoding-safe way to produce the five mixed-anchor
+// delay fields `create_tournament` takes. Prefer these over hand-assembling
+// the delays (the anchoring rules are subtle; see src/schedule).
+export { scheduleFromDurations, scheduleFromTimestamps } from "./schedule/index.js";
+export type {
+  ScheduleDurations,
+  ScheduleTimestamps,
+  TournamentSchedule,
+} from "./schedule/index.js";
+
 // Entry-requirement validator extension presets — address lookup +
 // `Span<felt252>` config builders for the four common validators
 // (merkle, erc20Balance, opusTroves, tournament). See
@@ -229,6 +239,8 @@ export {
 export type {
   AllowlistEntry,
   BuildRegisterAllowlistTreeParams,
+  UniformAllowlistParams,
+  TieredAllowlistParams,
   RegisterAllowlistTreeResult,
   ParseAllowlistTreeIdParams,
   StoreAllowlistTreeParams,
