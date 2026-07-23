@@ -21,6 +21,7 @@ import {
   parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
   scheduleFromDurations,
+  scheduleFromTimestamps,
   storeAllowlistTree,
   tournamentPageUrl,
   type Call,
@@ -66,6 +67,66 @@ const distributionParam = z
   .optional()
   .describe("How the pool splits across winners (default exponential)");
 
+interface ScheduleInput {
+  registrationStartTime?: number;
+  registrationEndTime?: number;
+  gameStartTime?: number;
+  gameEndTime?: number;
+  submissionEndTime?: number;
+  registrationDelaySeconds?: number;
+  registrationSeconds?: number;
+  stagingSeconds?: number;
+  playSeconds?: number;
+  submissionSeconds?: number;
+}
+
+/**
+ * Two ways to say when things happen — absolute unix timestamps (gameEndTime
+ * selects it) or durations from now (playSeconds selects it). Exactly one
+ * form must be used; mixing them is ambiguous and rejected.
+ */
+function buildSchedule(input: ScheduleInput) {
+  const absolute = input.gameEndTime !== undefined;
+  const durations = input.playSeconds !== undefined;
+  if (absolute === durations) {
+    throw new Error(
+      "Specify the schedule with exactly one form: absolute times (gameEndTime, optionally " +
+        "registrationStartTime/registrationEndTime/gameStartTime/submissionEndTime) OR " +
+        "durations (playSeconds, optionally registrationDelaySeconds/registrationSeconds/" +
+        "stagingSeconds/submissionSeconds).",
+    );
+  }
+  if (absolute) {
+    const strayDurations =
+      input.registrationDelaySeconds ?? input.registrationSeconds ?? input.stagingSeconds;
+    if (strayDurations !== undefined) {
+      throw new Error("Don't mix duration fields with the absolute-time schedule form.");
+    }
+    return scheduleFromTimestamps({
+      registrationStart: input.registrationStartTime,
+      registrationEnd: input.registrationEndTime,
+      gameStart: input.gameStartTime,
+      gameEnd: input.gameEndTime!,
+      submissionEnd: input.submissionEndTime,
+    });
+  }
+  const strayTimes =
+    input.registrationStartTime ??
+    input.registrationEndTime ??
+    input.gameStartTime ??
+    input.submissionEndTime;
+  if (strayTimes !== undefined) {
+    throw new Error("Don't mix absolute-time fields with the duration schedule form.");
+  }
+  return scheduleFromDurations({
+    registrationDelaySeconds: input.registrationDelaySeconds,
+    registrationSeconds: input.registrationSeconds,
+    stagingSeconds: input.stagingSeconds,
+    playSeconds: input.playSeconds!,
+    submissionSeconds: input.submissionSeconds,
+  });
+}
+
 function buildDistribution(kind: string | undefined, weight: number | undefined): DistributionSpec {
   if (kind === "uniform") return { kind: "uniform" };
   if (kind === "linear") return { kind: "linear", weight: weight ?? 1 };
@@ -79,8 +140,9 @@ export function registerWriteTools(server: McpServer) {
       title: "Create tournament",
       description:
         "Create a Budokan tournament on-chain (signed by the configured wallet). " +
-        "Times are durations in seconds from now. registrationSeconds=0 creates an " +
-        "'open' tournament where players can join throughout play. Use list_games for " +
+        "Schedule via EITHER absolute unix timestamps (gameEndTime + optional registration/" +
+        "gameStart/submission times) OR durations from now (playSeconds + optional windows). " +
+        "No registration window = 'open' tournament, join any time during play. Use list_games for " +
         "game addresses/defaults and list_game_settings for settings ids. " +
         "Defining an entry fee moves no funds at create time (entrants pay it). " +
         "Set dryRun=true to preview the calldata without sending a transaction.",
@@ -98,6 +160,35 @@ export function registerWriteTools(server: McpServer) {
             "Game settings preset id — MUST be one the game registered (see list_game_settings); " +
               "the contract rejects unknown ids. Defaults to 0, which not all games accept",
           ),
+        // ── Schedule, form A: absolute unix timestamps (seconds) ──────────
+        registrationStartTime: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "When registration opens (unix seconds). Provide with registrationEndTime, " +
+              "or omit both for an open tournament (join any time during play)",
+          ),
+        registrationEndTime: z.number().int().optional().describe("When registration closes (unix seconds)"),
+        gameStartTime: z
+          .number()
+          .int()
+          .optional()
+          .describe("When play starts (unix seconds). Default: registration close (or now)"),
+        gameEndTime: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "When play ends (unix seconds). Providing this selects the absolute-time form — " +
+              "don't mix with the *Seconds duration fields",
+          ),
+        submissionEndTime: z
+          .number()
+          .int()
+          .optional()
+          .describe("When score submission closes (unix seconds). Default: play end + 24h"),
+        // ── Schedule, form B: durations from now (seconds) ────────────────
         registrationDelaySeconds: z
           .number()
           .int()
@@ -116,7 +207,12 @@ export function registerWriteTools(server: McpServer) {
           .min(0)
           .optional()
           .describe("Gap between registration close and play start (default 0)"),
-        playSeconds: z.number().int().min(60).describe("How long the play window lasts"),
+        playSeconds: z
+          .number()
+          .int()
+          .min(60)
+          .optional()
+          .describe("How long the play window lasts. Required unless gameEndTime is given"),
         submissionSeconds: z
           .number()
           .int()
@@ -237,14 +333,8 @@ export function registerWriteTools(server: McpServer) {
           gameAddress: input.gameAddress,
           settingsId: input.settingsId ?? 0,
           // The five delay fields have mixed anchors — always build them via
-          // the SDK helper, never by hand (see src/schedule in the SDK).
-          schedule: scheduleFromDurations({
-            registrationDelaySeconds: input.registrationDelaySeconds,
-            registrationSeconds: input.registrationSeconds,
-            stagingSeconds: input.stagingSeconds,
-            playSeconds: input.playSeconds,
-            submissionSeconds: input.submissionSeconds,
-          }),
+          // the SDK helpers, never by hand (see src/schedule in the SDK).
+          schedule: buildSchedule(input),
           leaderboard: {
             ascending: input.leaderboardAscending ?? defaults.leaderboardAscending,
             gameMustBeOver: input.gameMustBeOver ?? defaults.leaderboardGameMustBeOver,

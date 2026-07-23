@@ -23,7 +23,7 @@ const server = new McpServer(
 Creating a tournament — gather these from the user before calling create_tournament; do not guess:
 1. Game: call list_games; if the user's game name doesn't match an entry, ask. On less-active chains prefer a game recent tournaments actually use (list_tournaments shows gameAddress).
 2. Settings: call list_game_settings for the chosen game and pick a registered id — unregistered ids (including 0 for some games) revert on-chain. If several presets exist and the user didn't specify, ask.
-3. Schedule: playSeconds is required. Ask whether registration is open (join during play; registrationSeconds 0, the default) or a fixed window before play.
+3. Schedule: two forms — absolute unix timestamps (gameEndTime, plus registrationStartTime/registrationEndTime for a fixed registration window) or durations from now (playSeconds etc.). Prefer absolute times when the user names specific dates/times; ask whether registration is open (join during play — the default) or a fixed window before play.
 4. Entry fee: optional — ask if unstated. Needs token + human amount + winnersCount. Note some games enforce a minimum gameCreatorShareBps on-chain (see defaultGameFeePercentage in list_games); "100% to winner" may not be possible.
 5. Gating: optional — NFT ownership (gatingTokenAddress) or allowlist (create_allowlist first, then gatingAllowlistTreeId).
 

@@ -41,7 +41,7 @@ Reads work immediately with zero configuration. Writes need a wallet (below).
 | `get_prizes` | Escrowed sponsored prizes |
 | `list_games` | Whitelisted games + per-game defaults + known fee tokens |
 | `list_game_settings` | Settings presets registered for a game (`settings_id` values) |
-| `create_tournament` | Create a tournament (signed). Supports entry fees, NFT token-gating, merkle allowlist-gating, open/fixed registration, `dryRun` |
+| `create_tournament` | Create a tournament (signed). Schedule as absolute unix timestamps (`gameEndTime`, …) or durations from now (`playSeconds`, …); supports entry fees, NFT token-gating, merkle allowlist-gating, open/fixed registration, `dryRun` |
 | `create_allowlist` | Register an address snapshot as a merkle tree (signed) + store it in the merkle API for proof serving; returns a reusable `treeId`. Uniform allowance (`addresses` + `entriesPerAddress`) or tiered (`entries: [{address, count}]`) |
 | `check_allowlist` | Check whether an address is on an allowlist tree (returns the entry proof) |
 | `add_prize` | Sponsor an ERC-20 prize — approve + `add_prize` multicall (moves funds!), `dryRun` supported |

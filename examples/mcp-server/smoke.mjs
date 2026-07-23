@@ -101,7 +101,63 @@ await call("create_allowlist", {
   if (JSON.stringify(s) !== JSON.stringify(expected)) {
     throw new Error(`schedule encoding regression: got ${JSON.stringify(s)}`);
   }
-  console.log("\nschedule encoding OK");
+  console.log("\nschedule encoding OK (durations)");
+}
+
+// Absolute-time schedule form: same windows expressed as unix timestamps.
+// The server anchors delays at ITS "now", so creation-anchored fields may
+// drift by a few seconds of round-trip — assert exact durations and bounded
+// drift on the anchored ones.
+{
+  const now = Math.floor(Date.now() / 1000);
+  const regStart = now + 3600;
+  const regEnd = regStart + 86400;
+  const gameStart = regEnd + 7200;
+  const gameEnd = gameStart + 172800;
+  const dry = JSON.parse(
+    await call("create_tournament", {
+      chain: "sepolia",
+      name: "Sched Absolute Check",
+      gameAddress: "0x0444834e7b74749ee43a5e73ecf9d69ded92cecdf51a4dcbbdcb44b53bfbb642",
+      registrationStartTime: regStart,
+      registrationEndTime: regEnd,
+      gameStartTime: gameStart,
+      gameEndTime: gameEnd,
+      dryRun: true,
+    }),
+  );
+  const s = dry.args.schedule;
+  const drift = 3600 - s.registrationStartDelay; // server-now minus our now
+  if (
+    s.registrationEndDelay !== 86400 ||
+    s.gameEndDelay !== 172800 ||
+    s.submissionDuration !== 86400 ||
+    drift < 0 ||
+    drift > 120 ||
+    s.gameStartDelay !== s.registrationStartDelay + 86400 + 7200
+  ) {
+    throw new Error(`absolute schedule regression: got ${JSON.stringify(s)}`);
+  }
+  console.log("schedule encoding OK (absolute times)");
+}
+
+// Mixing the two schedule forms must be rejected.
+{
+  const res = await client.callTool({
+    name: "create_tournament",
+    arguments: {
+      chain: "sepolia",
+      name: "Mixed Sched",
+      gameAddress: "0x0444834e7b74749ee43a5e73ecf9d69ded92cecdf51a4dcbbdcb44b53bfbb642",
+      playSeconds: 3600,
+      gameEndTime: Math.floor(Date.now() / 1000) + 7200,
+      dryRun: true,
+    },
+  });
+  if (!res.isError || !/exactly one form/.test(res.content?.[0]?.text ?? "")) {
+    throw new Error("mixed schedule forms were not rejected");
+  }
+  console.log("mixed schedule forms rejected OK");
 }
 
 await call("create_allowlist", {
