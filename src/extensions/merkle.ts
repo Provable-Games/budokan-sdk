@@ -36,16 +36,34 @@ function merkleClient(chain: WhitelistChain, apiUrl?: string) {
   return createMerkleClient({ chainId: sdkChainId(chain), ...(apiUrl ? { apiUrl } : {}) });
 }
 
-/** Turn an allowlist into merkle entries, each with a per-address entry count. */
+/**
+ * Highest per-leaf count the canonical merkle API can store (signed 32-bit).
+ * The on-chain validator accepts the full u32 range, but a leaf count above
+ * this registers fine and then breaks proof serving — a tree that can never
+ * be entered through budokan.gg. Use this value for "effectively unlimited".
+ */
+export const MAX_ALLOWLIST_ENTRY_COUNT = 2147483647;
+
+// `NaN < 1` is false, so guard integer-ness explicitly — a fractional/NaN
+// count would flow into the on-chain tree leaf.
+function assertValidCount(count: number, label: string): void {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`${label} must be a positive integer`);
+  }
+  if (count > MAX_ALLOWLIST_ENTRY_COUNT) {
+    throw new Error(
+      `${label} must be ≤ ${MAX_ALLOWLIST_ENTRY_COUNT} — larger counts fit the on-chain ` +
+        `u32 but the merkle API cannot store them, so proofs would never be served`,
+    );
+  }
+}
+
+/** Turn a uniform-allowance allowlist into merkle entries. */
 function toEntries(addresses: string[], entriesPerAddress: number): MerkleEntry[] {
   if (addresses.length === 0) {
     throw new Error("An allowlist needs at least one address");
   }
-  // `NaN < 1` is false, so guard integer-ness explicitly — a fractional/NaN
-  // count would flow into the on-chain tree leaf.
-  if (!Number.isInteger(entriesPerAddress) || entriesPerAddress < 1) {
-    throw new Error("entriesPerAddress must be a positive integer");
-  }
+  assertValidCount(entriesPerAddress, "entriesPerAddress");
   // Normalize to the canonical form and dedupe so representation variants
   // (leading zeros / casing) don't produce redundant leaves, and so the tree
   // agrees with the normalized address used for proof lookup.
@@ -53,9 +71,47 @@ function toEntries(addresses: string[], entriesPerAddress: number): MerkleEntry[
   return unique.map((address) => ({ address, count: entriesPerAddress }));
 }
 
-export interface BuildRegisterAllowlistTreeParams {
+/**
+ * Validate + normalize tiered per-address entries. Duplicate addresses are an
+ * error (rather than last-wins) because two counts for one address is almost
+ * always a snapshot bug, and the wrong pick would be silently baked into an
+ * immutable tree leaf.
+ */
+function toTieredEntries(entries: AllowlistEntry[]): MerkleEntry[] {
+  if (entries.length === 0) {
+    throw new Error("An allowlist needs at least one entry");
+  }
+  const seen = new Map<string, number>();
+  for (const entry of entries) {
+    assertValidCount(entry.count, `count for ${entry.address}`);
+    const address = normalizeAddress(entry.address);
+    const prior = seen.get(address);
+    if (prior !== undefined && prior !== entry.count) {
+      throw new Error(
+        `Duplicate address ${address} with conflicting counts (${prior} vs ${entry.count})`,
+      );
+    }
+    seen.set(address, entry.count);
+  }
+  return Array.from(seen, ([address, count]) => ({ address, count }));
+}
+
+/** One tiered allowlist entry: an address with its own entry allowance. */
+export interface AllowlistEntry {
+  address: string;
+  /** Entry allowance baked into this leaf (1 ≤ count ≤ MAX_ALLOWLIST_ENTRY_COUNT). */
+  count: number;
+}
+
+interface BuildRegisterAllowlistTreeBase {
   chain: WhitelistChain;
-  /** Addresses allowed to enter. */
+  /** Override the merkle API URL for this chain. */
+  apiUrl?: string;
+}
+
+/** Uniform allowance: every address gets the same entry count. */
+export interface UniformAllowlistParams extends BuildRegisterAllowlistTreeBase {
+  /** Addresses allowed to enter, all sharing `entriesPerAddress`. */
   addresses: string[];
   /**
    * Per-address entry allowance baked into the tree leaf (default 1). Note the
@@ -65,9 +121,25 @@ export interface BuildRegisterAllowlistTreeParams {
    * brackets both are 1.
    */
   entriesPerAddress?: number;
-  /** Override the merkle API URL for this chain. */
-  apiUrl?: string;
+  entries?: never;
 }
+
+/** Tiered allowance: each address carries its own entry count. */
+export interface TieredAllowlistParams extends BuildRegisterAllowlistTreeBase {
+  /**
+   * Tiered allowlist: each address with its own allowance (e.g. whales get 5
+   * entries, everyone else 1).
+   */
+  entries: AllowlistEntry[];
+  addresses?: never;
+  entriesPerAddress?: never;
+}
+
+/**
+ * Union encodes the `addresses` XOR `entries` invariant at compile time;
+ * the runtime guards below keep JS callers honest too.
+ */
+export type BuildRegisterAllowlistTreeParams = UniformAllowlistParams | TieredAllowlistParams;
 
 export interface RegisterAllowlistTreeResult {
   /** On-chain `create_tree` call for the caller to sign against the validator. */
@@ -88,8 +160,21 @@ export interface RegisterAllowlistTreeResult {
 export function buildRegisterAllowlistTreeCall(
   params: BuildRegisterAllowlistTreeParams,
 ): RegisterAllowlistTreeResult {
+  // Presence (not truthiness) decides which form the caller chose, so an
+  // explicitly-empty `entries: []` fails with the tiered-form message rather
+  // than silently falling through to the uniform form.
+  const hasEntries = params.entries !== undefined;
+  if (hasEntries && params.addresses !== undefined) {
+    throw new Error("Provide either `addresses` or `entries`, not both");
+  }
+  if (hasEntries && params.entriesPerAddress !== undefined) {
+    throw new Error("`entriesPerAddress` only applies to `addresses` — set counts inside `entries`");
+  }
+  const merkleEntries = hasEntries
+    ? toTieredEntries(params.entries!)
+    : toEntries(params.addresses ?? [], params.entriesPerAddress ?? 1);
   const { call, entries } = merkleClient(params.chain, params.apiUrl).buildRegisterTreeCall(
-    toEntries(params.addresses, params.entriesPerAddress ?? 1),
+    merkleEntries,
   );
   return { call: { ...call, calldata: [...call.calldata] }, entries };
 }

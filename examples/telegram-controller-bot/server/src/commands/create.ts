@@ -1487,11 +1487,18 @@ async function execute(api: TelegramApi, config: Config, chatId: string, state: 
     description: state.description ?? "",
     gameAddress: state.game!.contractAddress,
     settingsId: state.settingsId!,
+    // The *end* fields are DURATIONS of their own window, not offsets from
+    // creation — the contract computes reg_end = reg_start +
+    // registration_end_delay and game_end = game_start + game_end_delay; only
+    // the *start* delays anchor at creation (libs/schedule.cairo). The
+    // previous cumulative encoding extended fixed-registration play windows
+    // by the registration duration. Once the bot tracks an SDK release with
+    // `scheduleFromDurations` (> 0.1.38), use that instead of hand-building.
     schedule: {
       registrationStartDelay: sched.regStart,
-      registrationEndDelay: sched.regStart + sched.regDuration,
+      registrationEndDelay: sched.regDuration,
       gameStartDelay: sched.regStart + sched.regDuration + sched.staging,
-      gameEndDelay: sched.regStart + sched.regDuration + sched.staging + sched.gameDuration,
+      gameEndDelay: sched.gameDuration,
       submissionDuration: sched.submission,
     },
     leaderboard: { ascending: state.leaderboardAscending!, gameMustBeOver: state.gameMustBeOver! },

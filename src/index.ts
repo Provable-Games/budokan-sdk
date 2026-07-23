@@ -194,6 +194,27 @@ export type {
 export { tournamentPhase } from "./phase/index.js";
 export type { PhaseInput } from "./phase/index.js";
 
+// Known-token catalog + amount formatting — translate "5 STRK" into the raw
+// base-unit strings the builders take, without every integrator re-owning a
+// token list and decimal scaling.
+export {
+  findKnownToken,
+  fromRawAmount,
+  knownTokensForChain,
+  toRawAmount,
+} from "./tokens/index.js";
+export type { KnownToken } from "./tokens/index.js";
+
+// Schedule builders — the encoding-safe way to produce the five mixed-anchor
+// delay fields `create_tournament` takes. Prefer these over hand-assembling
+// the delays (the anchoring rules are subtle; see src/schedule).
+export { scheduleFromDurations, scheduleFromTimestamps } from "./schedule/index.js";
+export type {
+  ScheduleDurations,
+  ScheduleTimestamps,
+  TournamentSchedule,
+} from "./schedule/index.js";
+
 // Entry-requirement validator extension presets — address lookup +
 // `Span<felt252>` config builders for the four common validators
 // (merkle, erc20Balance, opusTroves, tournament). See
@@ -224,9 +245,13 @@ export {
   parseAllowlistTreeId,
   storeAllowlistTree,
   getAllowlistProof,
+  MAX_ALLOWLIST_ENTRY_COUNT,
 } from "./extensions/merkle.js";
 export type {
+  AllowlistEntry,
   BuildRegisterAllowlistTreeParams,
+  UniformAllowlistParams,
+  TieredAllowlistParams,
   RegisterAllowlistTreeResult,
   ParseAllowlistTreeIdParams,
   StoreAllowlistTreeParams,
