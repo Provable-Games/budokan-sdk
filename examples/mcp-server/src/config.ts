@@ -23,7 +23,15 @@ export function chainConfig(chain: Chain): ChainConfig {
 }
 
 export function rpcUrlFor(chain: Chain): string {
-  return process.env.STARKNET_RPC_URL ?? chainConfig(chain).rpcUrl;
+  // Chain-specific overrides only — a single override applied to every chain
+  // would route (signed!) calls for the other chain to the wrong network. The
+  // bare STARKNET_RPC_URL therefore only applies to the default chain.
+  const perChain = process.env[`STARKNET_RPC_URL_${chain.toUpperCase()}`];
+  if (perChain) return perChain;
+  if (chain === DEFAULT_CHAIN && process.env.STARKNET_RPC_URL) {
+    return process.env.STARKNET_RPC_URL;
+  }
+  return chainConfig(chain).rpcUrl;
 }
 
 export function resolveChain(chain?: string): Chain {

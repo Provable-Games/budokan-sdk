@@ -83,7 +83,8 @@ Precedence: raw env key > `SNCAST_ACCOUNT` > generated keystore. Treat the dev w
 | `SNCAST_ACCOUNT` | — | Name of a Starknet Foundry account to sign with |
 | `SNCAST_ACCOUNTS_FILE` | `~/.starknet_accounts/starknet_open_zeppelin_accounts.json` | sncast accounts file location |
 | `STARKNET_PRIVATE_KEY` / `STARKNET_ACCOUNT_ADDRESS` | — | Bring-your-own signing account (overrides `SNCAST_ACCOUNT`) |
-| `STARKNET_RPC_URL` | chain preset | RPC override |
+| `STARKNET_RPC_URL_MAINNET` / `STARKNET_RPC_URL_SEPOLIA` | chain preset | Per-chain RPC overrides |
+| `STARKNET_RPC_URL` | chain preset | RPC override for the default chain only (per-call `chain` params for the other network use its preset) |
 | `RPC_API_KEY` | — | Sent as `Authorization: Bearer` to the RPC |
 | `BUDOKAN_MCP_DIR` | `~/.budokan-mcp` | Keystore directory |
 | `BUDOKAN_MCP_ACCOUNT_CLASS_HASH` | OpenZeppelin account | Class hash for generated wallets |
@@ -99,7 +100,7 @@ Three layers steer any MCP client through creation without hand-holding:
 ## Typical agent flow
 
 1. `list_games` → pick a game address (note `controllerOnly` games can only be *played* with a Cartridge wallet — creating tournaments for them is fine).
-2. `list_game_settings` → pick a `settingsId` (0 = game default).
+2. `list_game_settings` → pick a registered `settingsId` (0 is only valid if the game registered it).
 3. `create_tournament` with `dryRun: true` → show the human what will be sent.
 4. `create_tournament` for real → returns the tournament id + `https://budokan.gg/tournament/<id>` link.
 5. Optionally `add_prize` to sponsor a prize pool.

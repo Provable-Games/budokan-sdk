@@ -170,7 +170,14 @@ export function generateWallet(chain: Chain): { address: string; path: string; a
   );
   mkdirSync(KEYSTORE_DIR, { recursive: true, mode: 0o700 });
   const path = keystorePath(chain);
-  writeFileSync(path, JSON.stringify({ privateKey, publicKey, address, classHash: OZ_ACCOUNT_CLASS_HASH }, null, 2));
+  // Create 0600 atomically ("wx" also refuses to clobber a concurrently
+  // created keystore); the chmod is a defensive second pass in case the file
+  // pre-existed with looser permissions.
+  writeFileSync(
+    path,
+    JSON.stringify({ privateKey, publicKey, address, classHash: OZ_ACCOUNT_CLASS_HASH }, null, 2),
+    { mode: 0o600, flag: "wx" },
+  );
   chmodSync(path, 0o600);
   return { address, path, alreadyExisted: false };
 }

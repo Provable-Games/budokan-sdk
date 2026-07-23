@@ -75,6 +75,35 @@ await call("create_allowlist", {
   ],
   dryRun: true,
 });
+// Schedule-encoding regression check (PR #80 review): the end fields must be
+// durations of their own window, not cumulative offsets from creation.
+{
+  const dry = JSON.parse(
+    await call("create_tournament", {
+      chain: "sepolia",
+      name: "Sched Encode Check",
+      gameAddress: "0x0444834e7b74749ee43a5e73ecf9d69ded92cecdf51a4dcbbdcb44b53bfbb642",
+      registrationDelaySeconds: 3600,
+      registrationSeconds: 86400,
+      stagingSeconds: 7200,
+      playSeconds: 172800,
+      dryRun: true,
+    }),
+  );
+  const s = dry.args.schedule;
+  const expected = {
+    registrationStartDelay: 3600,
+    registrationEndDelay: 86400,
+    gameStartDelay: 3600 + 86400 + 7200,
+    gameEndDelay: 172800,
+    submissionDuration: 86400,
+  };
+  if (JSON.stringify(s) !== JSON.stringify(expected)) {
+    throw new Error(`schedule encoding regression: got ${JSON.stringify(s)}`);
+  }
+  console.log("\nschedule encoding OK");
+}
+
 await call("create_allowlist", {
   chain: "sepolia",
   name: "Tiered Smoke Snapshot",

@@ -20,6 +20,7 @@ import {
   getGameDefaults,
   parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
+  scheduleFromDurations,
   storeAllowlistTree,
   tournamentPageUrl,
   type Call,
@@ -174,7 +175,14 @@ export function registerWriteTools(server: McpServer) {
           .min(0)
           .optional()
           .describe("Max entries per qualifying token/address (0 = unlimited, default 0)"),
-        dryRun: z.boolean().optional().describe("Build and return calldata without broadcasting"),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe(
+            "Build and return calldata without broadcasting. Still requires a configured signer — " +
+              "its address is baked into the calldata, so a signerless preview would differ from " +
+              "the real transaction",
+          ),
       },
     },
     async (input) => {
@@ -222,22 +230,21 @@ export function registerWriteTools(server: McpServer) {
           };
         }
 
-        const regStart = input.registrationDelaySeconds ?? 0;
-        const regDuration = input.registrationSeconds ?? 0;
-        const staging = input.stagingSeconds ?? 0;
         const args: CreateTournamentArgs = {
           creatorRewardsAddress: signer.address,
           name: input.name,
           description: input.description ?? "",
           gameAddress: input.gameAddress,
           settingsId: input.settingsId ?? 0,
-          schedule: {
-            registrationStartDelay: regStart,
-            registrationEndDelay: regStart + regDuration,
-            gameStartDelay: regStart + regDuration + staging,
-            gameEndDelay: regStart + regDuration + staging + input.playSeconds,
-            submissionDuration: input.submissionSeconds ?? 86400,
-          },
+          // The five delay fields have mixed anchors — always build them via
+          // the SDK helper, never by hand (see src/schedule in the SDK).
+          schedule: scheduleFromDurations({
+            registrationDelaySeconds: input.registrationDelaySeconds,
+            registrationSeconds: input.registrationSeconds,
+            stagingSeconds: input.stagingSeconds,
+            playSeconds: input.playSeconds,
+            submissionSeconds: input.submissionSeconds,
+          }),
           leaderboard: {
             ascending: input.leaderboardAscending ?? defaults.leaderboardAscending,
             gameMustBeOver: input.gameMustBeOver ?? defaults.leaderboardGameMustBeOver,
@@ -322,7 +329,7 @@ export function registerWriteTools(server: McpServer) {
               "everyone else 1). Alternative to addresses/entriesPerAddress. Leave the " +
               "tournament's gatingEntryLimit at 0 or the per-address counts get capped by it",
           ),
-        dryRun: z.boolean().optional(),
+        dryRun: z.boolean().optional().describe("Preview without broadcasting (still needs a configured signer)"),
       },
     },
     async (input) => {
@@ -332,12 +339,11 @@ export function registerWriteTools(server: McpServer) {
         if (!input.addresses && !input.entries) {
           throw new Error("Provide `addresses` (uniform allowance) or `entries` (tiered).");
         }
-        const { call, entries } = buildRegisterAllowlistTreeCall({
-          chain,
-          addresses: input.addresses,
-          entriesPerAddress: input.entriesPerAddress,
-          entries: input.entries,
-        });
+        const { call, entries } = buildRegisterAllowlistTreeCall(
+          input.entries !== undefined
+            ? { chain, entries: input.entries }
+            : { chain, addresses: input.addresses!, entriesPerAddress: input.entriesPerAddress },
+        );
         if (input.dryRun) {
           return jsonResult({
             dryRun: true,
@@ -424,7 +430,7 @@ export function registerWriteTools(server: McpServer) {
           .describe("Distribute across the top N placements (omit for a single-position prize)"),
         distribution: distributionParam,
         distributionWeight: z.number().int().min(1).optional(),
-        dryRun: z.boolean().optional(),
+        dryRun: z.boolean().optional().describe("Preview without broadcasting (still needs a configured signer)"),
       },
     },
     async (input) => {
@@ -435,7 +441,21 @@ export function registerWriteTools(server: McpServer) {
         const token = await resolveToken(chain, input.token);
         const raw = toRawAmount(input.amount, token.decimals);
 
+        // This tool moves funds into escrow — reject ambiguous payout shapes
+        // instead of silently dropping fields.
         const distributed = input.winnersCount !== undefined;
+        if (distributed && input.position !== undefined) {
+          throw new Error(
+            "position and winnersCount are mutually exclusive: winnersCount distributes across " +
+              "the top N, position pays a single slot.",
+          );
+        }
+        if (!distributed && (input.distribution !== undefined || input.distributionWeight !== undefined)) {
+          throw new Error(
+            "distribution/distributionWeight require winnersCount — without it the prize is a " +
+              "single-position payout and they would be ignored.",
+          );
+        }
         const calls: Call[] = [
           buildErc20ApproveCall(token.address, budokanAddress, raw),
           buildAddPrizeCall(budokanAddress, {
