@@ -245,6 +245,7 @@ export {
   parseAllowlistTreeId,
   storeAllowlistTree,
   getAllowlistProof,
+  checkAllowlist,
   MAX_ALLOWLIST_ENTRY_COUNT,
 } from "./extensions/merkle.js";
 export type {

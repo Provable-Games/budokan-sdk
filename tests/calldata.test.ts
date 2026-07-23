@@ -193,6 +193,57 @@ describe("buildCreateTournamentCall", () => {
     });
     expect(call.calldata.length).toBeGreaterThan(0);
   });
+
+  test("rejects oversized / non-ASCII names with a clear error", () => {
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, name: "x".repeat(32) }),
+    ).toThrow(/Tournament name.*31/);
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, name: "Cup 🏆" }),
+    ).toThrow(/Tournament name must be ASCII/);
+    // 31 chars exactly is fine.
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, name: "y".repeat(31) }),
+    ).not.toThrow();
+  });
+
+  test("rejects invalid entry fees at build time", () => {
+    const fee = {
+      tokenAddress: "0xtoken",
+      amount: "1000",
+      tournamentCreatorShare: 1000,
+      gameCreatorShare: 500,
+      refundShare: 0,
+      distribution: { kind: "linear", weight: 10 } as const,
+      distributionCount: 3,
+    };
+    // Human-decimal amount (forgot toRawAmount) and zero amount.
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: { ...fee, amount: "1.5" } }),
+    ).toThrow(/toRawAmount/);
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: { ...fee, amount: "0" } }),
+    ).toThrow(/positive/);
+    // Shares over 100% in aggregate, or out of range individually.
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, {
+        ...base,
+        entryFee: { ...fee, tournamentCreatorShare: 6000, gameCreatorShare: 5000 },
+      }),
+    ).toThrow(/exceed 100%/);
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, {
+        ...base,
+        entryFee: { ...fee, refundShare: 10001 },
+      }),
+    ).toThrow(/0–10000/);
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, {
+        ...base,
+        entryFee: { ...fee, distributionCount: 0 },
+      }),
+    ).toThrow(/distributionCount/);
+  });
 });
 
 describe("buildAddPrizeCall", () => {
