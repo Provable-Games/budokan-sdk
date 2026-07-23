@@ -324,7 +324,7 @@ export function buildEnterTournamentCall(
   ];
   // player_name: Option<felt252>
   if (args.playerName) {
-    calldata.push("0x0", felt252FromShortString(args.playerName));
+    calldata.push("0x0", felt252FromShortString(args.playerName, "Player name"));
   } else {
     calldata.push("0x1");
   }
@@ -428,9 +428,10 @@ export function buildCreateTournamentCall(
   const calldata = CallData.compile({
     creator_rewards_address: args.creatorRewardsAddress,
     metadata: {
-      // name is a felt252 (≤31 ASCII bytes). starknet.js packs short
-      // ASCII strings into a single felt automatically.
-      name: args.name,
+      // name is a felt252 (≤31 ASCII bytes) — encode explicitly so an
+      // oversized/non-ASCII name fails here with a clear message instead of
+      // deep inside CallData.compile.
+      name: felt252FromShortString(args.name, "Tournament name"),
       // description is a Cairo ByteArray (multi-felt: data words +
       // pending word + pending word length). A plain JS string serializes
       // to a single felt and the deserializer reverts — wrap explicitly.
@@ -588,6 +589,34 @@ function encodeEntryFeeOption(
   fee: EntryFeeArgs | undefined,
 ): CairoOption<CairoCustomEnum> {
   if (!fee) return new CairoOption<CairoCustomEnum>(CairoOptionVariant.None);
+  // Validate here so mistakes fail with a clear message at build time
+  // instead of an opaque on-chain revert at estimation.
+  if (!/^\d+$/.test(fee.amount) || BigInt(fee.amount) === 0n) {
+    throw new Error(
+      `Entry-fee amount must be a positive base-unit integer string, got "${fee.amount}" — ` +
+        `scale human amounts with toRawAmount()`,
+    );
+  }
+  const shares: Array<[string, number]> = [
+    ["tournamentCreatorShare", fee.tournamentCreatorShare],
+    ["gameCreatorShare", fee.gameCreatorShare],
+    ["refundShare", fee.refundShare],
+  ];
+  for (const [label, value] of shares) {
+    if (!Number.isInteger(value) || value < 0 || value > 10000) {
+      throw new Error(`Entry-fee ${label} must be an integer 0–10000 basis points, got ${value}`);
+    }
+  }
+  const shareSum = fee.tournamentCreatorShare + fee.gameCreatorShare + fee.refundShare;
+  if (shareSum > 10000) {
+    throw new Error(
+      `Entry-fee shares exceed 100%: ${shareSum} of 10000 bps ` +
+        `(the remainder after shares funds the winners' pool)`,
+    );
+  }
+  if (!Number.isInteger(fee.distributionCount) || fee.distributionCount < 1) {
+    throw new Error(`Entry-fee distributionCount must be a positive integer, got ${fee.distributionCount}`);
+  }
   const builtIn: EntryFeePayload = {
     token_address: fee.tokenAddress,
     amount: fee.amount,
@@ -808,13 +837,16 @@ export function parseTournamentIdFromReceipt(
 
 // Felt252 short-string encoding: ASCII bytes packed big-endian into a felt.
 // Throws if the input is too long (>31 bytes) or non-ASCII.
-function felt252FromShortString(s: string): string {
+function felt252FromShortString(s: string, label = "String"): string {
   if (s.length > 31)
-    throw new Error(`String too long for felt252: ${s.length} bytes`);
+    throw new Error(
+      `${label} doesn't fit in a felt252 short string: ${s.length} characters (max 31)`,
+    );
   let value = 0n;
   for (const char of s) {
     const code = char.charCodeAt(0);
-    if (code > 0x7f) throw new Error("Felt252 short strings must be ASCII");
+    if (code > 0x7f)
+      throw new Error(`${label} must be ASCII — "${char}" doesn't fit in a felt252 short string`);
     value = (value << 8n) | BigInt(code);
   }
   return "0x" + value.toString(16);
