@@ -151,6 +151,75 @@ describe("buildRegisterAllowlistTreeCall", () => {
       ).toThrow();
     }
   });
+
+  test("rejects counts above the merkle API's i32 storage limit", () => {
+    // On-chain u32 accepts these, but the proof API cannot store them — the
+    // tree would register and then never serve proofs.
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        addresses: ["0x1"],
+        entriesPerAddress: 2147483648,
+      }),
+    ).toThrow(/merkle API/);
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        entries: [{ address: "0x1", count: 4294967295 }],
+      }),
+    ).toThrow(/merkle API/);
+  });
+
+  test("tiered entries: per-address counts, normalized", () => {
+    const { entries } = buildRegisterAllowlistTreeCall({
+      chain: "mainnet",
+      entries: [
+        { address: "0xABC", count: 5 },
+        { address: "0x1", count: 1 },
+      ],
+    });
+    expect(entries).toEqual([
+      { address: normalizeAddress("0xabc"), count: 5 },
+      { address: normalizeAddress("0x1"), count: 1 },
+    ]);
+  });
+
+  test("tiered entries: identical duplicates collapse, conflicting counts throw", () => {
+    const { entries } = buildRegisterAllowlistTreeCall({
+      chain: "mainnet",
+      entries: [
+        { address: "0x1", count: 2 },
+        { address: "0x01", count: 2 },
+      ],
+    });
+    expect(entries).toEqual([{ address: normalizeAddress("0x1"), count: 2 }]);
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        entries: [
+          { address: "0x1", count: 2 },
+          { address: "0x01", count: 3 },
+        ],
+      }),
+    ).toThrow(/conflicting/);
+  });
+
+  test("rejects mixing addresses with entries, and entriesPerAddress with entries", () => {
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        addresses: ["0x1"],
+        entries: [{ address: "0x2", count: 1 }],
+      }),
+    ).toThrow(/not both/);
+    expect(() =>
+      buildRegisterAllowlistTreeCall({
+        chain: "mainnet",
+        entries: [{ address: "0x2", count: 1 }],
+        entriesPerAddress: 2,
+      }),
+    ).toThrow(/entriesPerAddress/);
+  });
 });
 
 describe("buildTournamentValidatorConfig layout", () => {
