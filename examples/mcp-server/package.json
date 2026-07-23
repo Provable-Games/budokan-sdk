@@ -1,0 +1,23 @@
+{
+  "name": "@provable-games/budokan-mcp",
+  "version": "0.0.1",
+  "private": true,
+  "description": "MCP server for Budokan: read tournaments and create/manage them on Starknet through any MCP-capable agent",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@provable-games/budokan-sdk": "file:../..",
+    "@provable-games/denshokan-sdk": "^0.1.33",
+    "starknet": "^9.2.1",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.3"
+  }
+}
