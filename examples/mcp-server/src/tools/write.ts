@@ -217,7 +217,13 @@ export function registerWriteTools(server: McpServer) {
       inputSchema: {
         chain: chainParam,
         name: z.string().min(1).max(31).describe("Tournament name (max 31 ASCII characters)"),
-        description: z.string().optional().describe("Longer description shown on budokan.gg"),
+        description: z
+          .string()
+          .optional()
+          .describe(
+            "Longer description shown on budokan.gg. ASCII only — non-ASCII characters (e.g. an " +
+              "em-dash '—', smart quotes, emoji) are rejected; use plain ASCII punctuation",
+          ),
         gameAddress: starknetAddress.describe("Game contract address (see list_games)"),
         settingsId: z
           .number()
