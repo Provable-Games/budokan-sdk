@@ -10,7 +10,8 @@
  */
 export function normalizeAddress(address: string): string {
   const trimmed = typeof address === "string" ? address.trim() : "";
-  const match = /^(?:0x)?([0-9a-fA-F]+)$/.exec(trimmed);
+  // Prefix is case-insensitive ("0X01" is a valid representation), like the digits.
+  const match = /^(?:0[xX])?([0-9a-fA-F]+)$/.exec(trimmed);
   if (!match) {
     throw new Error(
       `Invalid Starknet address ${JSON.stringify(address)}: expected hex digits with an optional "0x" prefix`,

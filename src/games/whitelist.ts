@@ -178,7 +178,14 @@ export function findWhitelistedGame(
   chain: WhitelistChain,
   contractAddress: string,
 ): WhitelistedGame | undefined {
-  const target = normalizeAddress(contractAddress);
+  // Lookups are not validation points: unparseable input is simply not on
+  // the whitelist (getGameDefaults then serves its documented fallbacks).
+  let target: string;
+  try {
+    target = normalizeAddress(contractAddress);
+  } catch {
+    return undefined;
+  }
   return getWhitelistedGames(chain).find((g) => g.contractAddress === target);
 }
 

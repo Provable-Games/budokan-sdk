@@ -42,3 +42,9 @@ describe("normalizeAddress", () => {
     expect(() => normalizeAddress("0x" + "1".repeat(65))).toThrow(/exceed the 64-digit/);
   });
 });
+
+describe("normalizeAddress prefix case", () => {
+  test("uppercase 0X prefix is a valid representation", () => {
+    expect(normalizeAddress("0X01")).toBe(normalizeAddress("0x1"));
+  });
+});
