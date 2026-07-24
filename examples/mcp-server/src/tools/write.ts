@@ -118,12 +118,27 @@ function buildSchedule(input: ScheduleInput) {
     if (strayDurations !== undefined) {
       throw new Error("Don't mix duration fields with the absolute-time schedule form.");
     }
+    if (input.submissionEndTime !== undefined && input.submissionSeconds !== undefined) {
+      throw new Error(
+        "Specify the submission window as either submissionEndTime (absolute) or " +
+          "submissionSeconds (duration after play ends), not both.",
+      );
+    }
+    // submissionSeconds is a duration, but "N-hour submission window" is a
+    // natural way to size it even when game times are absolute — honor it by
+    // deriving the absolute end from gameEnd, rather than silently dropping it
+    // and falling back to the 24h default.
+    const submissionEnd =
+      input.submissionEndTime ??
+      (input.submissionSeconds !== undefined
+        ? input.gameEndTime! + input.submissionSeconds
+        : undefined);
     return scheduleFromTimestamps({
       registrationStart: input.registrationStartTime,
       registrationEnd: input.registrationEndTime,
       gameStart: input.gameStartTime,
       gameEnd: input.gameEndTime!,
-      submissionEnd: input.submissionEndTime,
+      submissionEnd,
     });
   }
   const strayTimes =
