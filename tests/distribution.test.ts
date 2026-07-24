@@ -260,3 +260,16 @@ describe("prizeDistribution", () => {
     ).toEqual({ type: "linear", weight: 10 });
   });
 });
+
+describe("parseDistribution — API Custom shape", () => {
+  test("{type:'Custom', shares} keeps the shares (tournament 33 regression)", () => {
+    const parsed = parseDistribution({
+      type: "Custom",
+      shares: [3000, 2000, 1400, 1000, 800, 600, 400, 300, 300, 200],
+    });
+    expect(parsed.type).toBe("custom");
+    expect(parsed.customWeights).toEqual([3000, 2000, 1400, 1000, 800, 600, 400, 300, 300, 200]);
+    // Percent per position — NOT uniform 10s.
+    expect(distributionPercentages(parsed, 10)).toEqual([30, 20, 14, 10, 8, 6, 4, 3, 3, 2]);
+  });
+});
