@@ -40,6 +40,22 @@ const chainParam = z
   .optional()
   .describe("Starknet network (defaults to BUDOKAN_CHAIN env or mainnet)");
 
+/**
+ * A Starknet address argument. Trims surrounding whitespace, then requires hex
+ * digits with an optional `0x` prefix. Rejecting malformed input at the tool
+ * boundary — where zod pins the failing array index (e.g. `entries.42.address`)
+ * — turns a stray space or non-hex character from a pasted snapshot into an
+ * actionable error, instead of an opaque "Failed to parse String to BigInt"
+ * raised deep in calldata encoding once every address has already been accepted.
+ */
+const starknetAddress = z
+  .string()
+  .transform((s) => s.trim())
+  .refine((s) => /^(?:0x)?[0-9a-fA-F]+$/.test(s), {
+    message:
+      "must be a hex Starknet address (optional 0x prefix, hex digits only) — check for stray spaces or non-hex characters",
+  });
+
 function requireSigner(chain: Chain): ResolvedSigner {
   const signer = resolveSigner(chain);
   if (!signer) {
@@ -150,7 +166,7 @@ export function registerWriteTools(server: McpServer) {
         chain: chainParam,
         name: z.string().min(1).max(31).describe("Tournament name (max 31 ASCII characters)"),
         description: z.string().optional().describe("Longer description shown on budokan.gg"),
-        gameAddress: z.string().describe("Game contract address (see list_games)"),
+        gameAddress: starknetAddress.describe("Game contract address (see list_games)"),
         settingsId: z
           .number()
           .int()
@@ -252,8 +268,7 @@ export function registerWriteTools(server: McpServer) {
           })
           .optional()
           .describe("Optional paid entry. Omit for a free tournament"),
-        gatingTokenAddress: z
-          .string()
+        gatingTokenAddress: starknetAddress
           .optional()
           .describe("Optional token-gate: entrants must own a token from this NFT contract"),
         gatingAllowlistTreeId: z
@@ -383,7 +398,7 @@ export function registerWriteTools(server: McpServer) {
         name: z.string().min(1).describe("Allowlist name (shown in the merkle API)"),
         description: z.string().optional(),
         addresses: z
-          .array(z.string())
+          .array(starknetAddress)
           .min(1)
           .optional()
           .describe(
@@ -408,7 +423,7 @@ export function registerWriteTools(server: McpServer) {
         entries: z
           .array(
             z.object({
-              address: z.string(),
+              address: starknetAddress,
               count: z.number().int().min(1).max(2147483647),
             }),
           )
