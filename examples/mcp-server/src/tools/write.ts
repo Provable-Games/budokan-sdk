@@ -40,6 +40,22 @@ const chainParam = z
   .optional()
   .describe("Starknet network (defaults to BUDOKAN_CHAIN env or mainnet)");
 
+/**
+ * A Starknet address argument. Trims surrounding whitespace, then requires hex
+ * digits with an optional `0x` prefix. Rejecting malformed input at the tool
+ * boundary — where zod pins the failing array index (e.g. `entries.42.address`)
+ * — turns a stray space or non-hex character from a pasted snapshot into an
+ * actionable error, instead of an opaque "Failed to parse String to BigInt"
+ * raised deep in calldata encoding once every address has already been accepted.
+ */
+const starknetAddress = z
+  .string()
+  .transform((s) => s.trim())
+  .refine((s) => /^(?:0x)?[0-9a-fA-F]+$/.test(s), {
+    message:
+      "must be a hex Starknet address (optional 0x prefix, hex digits only) — check for stray spaces or non-hex characters",
+  });
+
 function requireSigner(chain: Chain): ResolvedSigner {
   const signer = resolveSigner(chain);
   if (!signer) {
@@ -63,9 +79,22 @@ async function executeCalls(
 }
 
 const distributionParam = z
-  .enum(["exponential", "linear", "uniform"])
+  .enum(["exponential", "linear", "uniform", "custom"])
   .optional()
-  .describe("How the pool splits across winners (default exponential)");
+  .describe(
+    "How the pool splits across winners (default exponential). Use 'custom' to give an exact " +
+      "per-place split via distributionWeights",
+  );
+
+const distributionWeightsParam = z
+  .array(z.number().min(0).max(100))
+  .min(1)
+  .optional()
+  .describe(
+    "Custom per-place split as percentages of the winners' pool, best-to-worst (e.g. [30,20,14,…]). " +
+      "Must have one entry per winning place (matches winnersCount) and sum to exactly 100. " +
+      "Implies distribution 'custom'",
+  );
 
 interface ScheduleInput {
   registrationStartTime?: number;
@@ -102,12 +131,27 @@ function buildSchedule(input: ScheduleInput) {
     if (strayDurations !== undefined) {
       throw new Error("Don't mix duration fields with the absolute-time schedule form.");
     }
+    if (input.submissionEndTime !== undefined && input.submissionSeconds !== undefined) {
+      throw new Error(
+        "Specify the submission window as either submissionEndTime (absolute) or " +
+          "submissionSeconds (duration after play ends), not both.",
+      );
+    }
+    // submissionSeconds is a duration, but "N-hour submission window" is a
+    // natural way to size it even when game times are absolute — honor it by
+    // deriving the absolute end from gameEnd, rather than silently dropping it
+    // and falling back to the 24h default.
+    const submissionEnd =
+      input.submissionEndTime ??
+      (input.submissionSeconds !== undefined
+        ? input.gameEndTime! + input.submissionSeconds
+        : undefined);
     return scheduleFromTimestamps({
       registrationStart: input.registrationStartTime,
       registrationEnd: input.registrationEndTime,
       gameStart: input.gameStartTime,
       gameEnd: input.gameEndTime!,
-      submissionEnd: input.submissionEndTime,
+      submissionEnd,
     });
   }
   const strayTimes =
@@ -127,7 +171,31 @@ function buildSchedule(input: ScheduleInput) {
   });
 }
 
-function buildDistribution(kind: string | undefined, weight: number | undefined): DistributionSpec {
+function buildDistribution(
+  kind: string | undefined,
+  weight: number | undefined,
+  weightsPct: number[] | undefined,
+  count: number | undefined,
+): DistributionSpec {
+  if (kind === "custom" || weightsPct !== undefined) {
+    if (!weightsPct || weightsPct.length === 0) {
+      throw new Error(
+        "distribution 'custom' requires distributionWeights (one percentage per winning place).",
+      );
+    }
+    if (count !== undefined && weightsPct.length !== count) {
+      throw new Error(
+        `distributionWeights has ${weightsPct.length} entries but winnersCount is ${count} — they must match.`,
+      );
+    }
+    // Percentages of the winners' pool → basis points for the on-chain Custom split.
+    const weights = weightsPct.map((p) => Math.round(p * 100));
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (sum !== 10000) {
+      throw new Error(`distributionWeights must sum to exactly 100% (got ${sum / 100}%).`);
+    }
+    return { kind: "custom", weights };
+  }
   if (kind === "uniform") return { kind: "uniform" };
   if (kind === "linear") return { kind: "linear", weight: weight ?? 1 };
   return { kind: "exponential", weight: weight ?? 1 };
@@ -149,8 +217,14 @@ export function registerWriteTools(server: McpServer) {
       inputSchema: {
         chain: chainParam,
         name: z.string().min(1).max(31).describe("Tournament name (max 31 ASCII characters)"),
-        description: z.string().optional().describe("Longer description shown on budokan.gg"),
-        gameAddress: z.string().describe("Game contract address (see list_games)"),
+        description: z
+          .string()
+          .optional()
+          .describe(
+            "Longer description shown on budokan.gg. ASCII only — non-ASCII characters (e.g. an " +
+              "em-dash '—', smart quotes, emoji) are rejected; use plain ASCII punctuation",
+          ),
+        gameAddress: starknetAddress.describe("Game contract address (see list_games)"),
         settingsId: z
           .number()
           .int()
@@ -227,6 +301,22 @@ export function registerWriteTools(server: McpServer) {
           .boolean()
           .optional()
           .describe("Require the game run to be finished before submitting. Default from game metadata"),
+        soulbound: z
+          .boolean()
+          .optional()
+          .describe(
+            "Mint entries as soulbound (non-transferable) game tokens (default false). When true, " +
+              "an entry cannot be sold or moved to another wallet after minting — useful for " +
+              "identity/allowlist-gated tournaments where entries shouldn't be tradeable",
+          ),
+        paymaster: z
+          .boolean()
+          .optional()
+          .describe(
+            "Route entry transactions through the game's paymaster (default false). Highly " +
+              "irrelevant right now — no game has a funded paymaster wired up — but exposed for a " +
+              "future update. Leave unset unless you know a paymaster is configured",
+          ),
         entryFee: z
           .object({
             token: z.string().describe("Token symbol (STRK, ETH, USDC, LORDS…) or 0x address"),
@@ -234,6 +324,7 @@ export function registerWriteTools(server: McpServer) {
             winnersCount: z.number().int().min(1).optional().describe("Top placements sharing the pool (default 10)"),
             distribution: distributionParam,
             distributionWeight: z.number().int().min(1).optional(),
+            distributionWeights: distributionWeightsParam,
             tournamentCreatorShareBps: z
               .number()
               .int()
@@ -252,8 +343,7 @@ export function registerWriteTools(server: McpServer) {
           })
           .optional()
           .describe("Optional paid entry. Omit for a free tournament"),
-        gatingTokenAddress: z
-          .string()
+        gatingTokenAddress: starknetAddress
           .optional()
           .describe("Optional token-gate: entrants must own a token from this NFT contract"),
         gatingAllowlistTreeId: z
@@ -301,6 +391,8 @@ export function registerWriteTools(server: McpServer) {
             distribution: buildDistribution(
               input.entryFee.distribution,
               input.entryFee.distributionWeight,
+              input.entryFee.distributionWeights,
+              input.entryFee.winnersCount ?? 10,
             ),
             distributionCount: input.entryFee.winnersCount ?? 10,
           };
@@ -341,6 +433,8 @@ export function registerWriteTools(server: McpServer) {
           },
           entryFee,
           entryRequirement,
+          soulbound: input.soulbound,
+          paymaster: input.paymaster,
         };
 
         const call = buildCreateTournamentCall(budokanAddress, args);
@@ -383,7 +477,7 @@ export function registerWriteTools(server: McpServer) {
         name: z.string().min(1).describe("Allowlist name (shown in the merkle API)"),
         description: z.string().optional(),
         addresses: z
-          .array(z.string())
+          .array(starknetAddress)
           .min(1)
           .optional()
           .describe(
@@ -408,7 +502,7 @@ export function registerWriteTools(server: McpServer) {
         entries: z
           .array(
             z.object({
-              address: z.string(),
+              address: starknetAddress,
               count: z.number().int().min(1).max(2147483647),
             }),
           )
@@ -520,6 +614,7 @@ export function registerWriteTools(server: McpServer) {
           .describe("Distribute across the top N placements (omit for a single-position prize)"),
         distribution: distributionParam,
         distributionWeight: z.number().int().min(1).optional(),
+        distributionWeights: distributionWeightsParam,
         dryRun: z.boolean().optional().describe("Preview without broadcasting (still needs a configured signer)"),
       },
     },
@@ -540,10 +635,15 @@ export function registerWriteTools(server: McpServer) {
               "the top N, position pays a single slot.",
           );
         }
-        if (!distributed && (input.distribution !== undefined || input.distributionWeight !== undefined)) {
+        if (
+          !distributed &&
+          (input.distribution !== undefined ||
+            input.distributionWeight !== undefined ||
+            input.distributionWeights !== undefined)
+        ) {
           throw new Error(
-            "distribution/distributionWeight require winnersCount — without it the prize is a " +
-              "single-position payout and they would be ignored.",
+            "distribution/distributionWeight/distributionWeights require winnersCount — without it " +
+              "the prize is a single-position payout and they would be ignored.",
           );
         }
         const calls: Call[] = [
@@ -558,7 +658,12 @@ export function registerWriteTools(server: McpServer) {
                 amount: raw,
                 ...(distributed
                   ? {
-                      distribution: buildDistribution(input.distribution, input.distributionWeight),
+                      distribution: buildDistribution(
+                        input.distribution,
+                        input.distributionWeight,
+                        input.distributionWeights,
+                        input.winnersCount,
+                      ),
                       distributionCount: input.winnersCount,
                     }
                   : {}),

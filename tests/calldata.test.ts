@@ -194,6 +194,84 @@ describe("buildCreateTournamentCall", () => {
     expect(call.calldata.length).toBeGreaterThan(0);
   });
 
+  test("defaults soulbound + paymaster to false (transferable, no paymaster)", () => {
+    // The two game_config booleans should both encode as 0 by default. Together
+    // with the flip tests below, this pins that the flags are wired and default off.
+    const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
+    const sb = buildCreateTournamentCall(BUDOKAN, { ...base, soulbound: true }).calldata;
+    const pm = buildCreateTournamentCall(BUDOKAN, { ...base, paymaster: true }).calldata;
+    // Each flag flips exactly one field, and they flip different fields.
+    const soulboundIdx = def.findIndex((v, i) => v !== sb[i]);
+    const paymasterIdx = def.findIndex((v, i) => v !== pm[i]);
+    expect(soulboundIdx).toBeGreaterThan(-1);
+    expect(paymasterIdx).toBeGreaterThan(-1);
+    expect(soulboundIdx).not.toBe(paymasterIdx);
+    expect(BigInt(def[soulboundIdx]!)).toBe(0n);
+    expect(BigInt(def[paymasterIdx]!)).toBe(0n);
+  });
+
+  test("soulbound:true flips exactly one calldata field from 0 to 1", () => {
+    const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
+    const sb = buildCreateTournamentCall(BUDOKAN, { ...base, soulbound: true }).calldata;
+    expect(sb.length).toBe(def.length);
+    const diffs = def.map((v, i) => (v === sb[i] ? -1 : i)).filter((i) => i !== -1);
+    expect(diffs).toHaveLength(1);
+    expect(BigInt(sb[diffs[0]!]!)).toBe(1n);
+  });
+
+  test("paymaster:true flips exactly one calldata field from 0 to 1", () => {
+    const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
+    const pm = buildCreateTournamentCall(BUDOKAN, { ...base, paymaster: true }).calldata;
+    expect(pm.length).toBe(def.length);
+    const diffs = def.map((v, i) => (v === pm[i] ? -1 : i)).filter((i) => i !== -1);
+    expect(diffs).toHaveLength(1);
+    expect(BigInt(pm[diffs[0]!]!)).toBe(1n);
+  });
+
+  test("compiles a custom per-position distribution (Span<u16> basis points)", () => {
+    const call = buildCreateTournamentCall(BUDOKAN, {
+      ...base,
+      entryFee: {
+        tokenAddress: "0xtoken",
+        amount: "1000",
+        tournamentCreatorShare: 0,
+        gameCreatorShare: 500,
+        refundShare: 0,
+        distribution: { kind: "custom", weights: [3000, 2000, 1400, 1000, 800, 600, 400, 300, 300, 200] },
+        distributionCount: 10,
+      },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  const customFee = (weights: number[], distributionCount: number) => ({
+    tokenAddress: "0xtoken",
+    amount: "1000",
+    tournamentCreatorShare: 0,
+    gameCreatorShare: 500,
+    refundShare: 0,
+    distribution: { kind: "custom" as const, weights },
+    distributionCount,
+  });
+
+  test("rejects a custom distribution that does not sum to 10000 bps", () => {
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: customFee([5000, 4000], 2) }),
+    ).toThrow(/sum to 10000/);
+  });
+
+  test("rejects a custom distribution whose length != distributionCount", () => {
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: customFee([6000, 4000], 3) }),
+    ).toThrow(/weights but.*distributionCount/);
+  });
+
+  test("rejects out-of-range custom weights", () => {
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: customFee([10001, -1], 2) }),
+    ).toThrow(/basis points/);
+  });
+
   test("rejects oversized / non-ASCII names with a clear error", () => {
     expect(() =>
       buildCreateTournamentCall(BUDOKAN, { ...base, name: "x".repeat(32) }),
