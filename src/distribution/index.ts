@@ -113,10 +113,24 @@ export function parseDistribution(dist: unknown): ParsedDistribution {
     return { type: "unknown", weight: 0 };
   }
 
-  // `{ type, weight }` explicit shape
-  const explicit = dist as { type?: string; weight?: number | string };
+  // `{ type, weight }` / `{ type, shares }` explicit shape (the API returns
+  // Custom distributions as `{ type: "Custom", shares: [u16 bps…] }`).
+  const explicit = dist as {
+    type?: string;
+    weight?: number | string;
+    shares?: unknown[];
+    customWeights?: unknown[];
+  };
   if (typeof explicit.type === "string") {
     const kind = KNOWN_KEYS[explicit.type.toLowerCase()] ?? "unknown";
+    if (kind === "custom") {
+      const shares = explicit.shares ?? explicit.customWeights;
+      return {
+        type: "custom",
+        weight: 0,
+        customWeights: Array.isArray(shares) ? shares.map((v) => Number(v)) : [],
+      };
+    }
     return { type: kind, weight: Number(explicit.weight ?? 0) };
   }
 
