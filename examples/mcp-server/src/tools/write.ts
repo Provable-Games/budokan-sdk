@@ -79,9 +79,22 @@ async function executeCalls(
 }
 
 const distributionParam = z
-  .enum(["exponential", "linear", "uniform"])
+  .enum(["exponential", "linear", "uniform", "custom"])
   .optional()
-  .describe("How the pool splits across winners (default exponential)");
+  .describe(
+    "How the pool splits across winners (default exponential). Use 'custom' to give an exact " +
+      "per-place split via distributionWeights",
+  );
+
+const distributionWeightsParam = z
+  .array(z.number().min(0).max(100))
+  .min(1)
+  .optional()
+  .describe(
+    "Custom per-place split as percentages of the winners' pool, best-to-worst (e.g. [30,20,14,…]). " +
+      "Must have one entry per winning place (matches winnersCount) and sum to exactly 100. " +
+      "Implies distribution 'custom'",
+  );
 
 interface ScheduleInput {
   registrationStartTime?: number;
@@ -158,7 +171,31 @@ function buildSchedule(input: ScheduleInput) {
   });
 }
 
-function buildDistribution(kind: string | undefined, weight: number | undefined): DistributionSpec {
+function buildDistribution(
+  kind: string | undefined,
+  weight: number | undefined,
+  weightsPct: number[] | undefined,
+  count: number | undefined,
+): DistributionSpec {
+  if (kind === "custom" || weightsPct !== undefined) {
+    if (!weightsPct || weightsPct.length === 0) {
+      throw new Error(
+        "distribution 'custom' requires distributionWeights (one percentage per winning place).",
+      );
+    }
+    if (count !== undefined && weightsPct.length !== count) {
+      throw new Error(
+        `distributionWeights has ${weightsPct.length} entries but winnersCount is ${count} — they must match.`,
+      );
+    }
+    // Percentages of the winners' pool → basis points for the on-chain Custom split.
+    const weights = weightsPct.map((p) => Math.round(p * 100));
+    const sum = weights.reduce((a, b) => a + b, 0);
+    if (sum !== 10000) {
+      throw new Error(`distributionWeights must sum to exactly 100% (got ${sum / 100}%).`);
+    }
+    return { kind: "custom", weights };
+  }
   if (kind === "uniform") return { kind: "uniform" };
   if (kind === "linear") return { kind: "linear", weight: weight ?? 1 };
   return { kind: "exponential", weight: weight ?? 1 };
@@ -281,6 +318,7 @@ export function registerWriteTools(server: McpServer) {
             winnersCount: z.number().int().min(1).optional().describe("Top placements sharing the pool (default 10)"),
             distribution: distributionParam,
             distributionWeight: z.number().int().min(1).optional(),
+            distributionWeights: distributionWeightsParam,
             tournamentCreatorShareBps: z
               .number()
               .int()
@@ -347,6 +385,8 @@ export function registerWriteTools(server: McpServer) {
             distribution: buildDistribution(
               input.entryFee.distribution,
               input.entryFee.distributionWeight,
+              input.entryFee.distributionWeights,
+              input.entryFee.winnersCount ?? 10,
             ),
             distributionCount: input.entryFee.winnersCount ?? 10,
           };
@@ -568,6 +608,7 @@ export function registerWriteTools(server: McpServer) {
           .describe("Distribute across the top N placements (omit for a single-position prize)"),
         distribution: distributionParam,
         distributionWeight: z.number().int().min(1).optional(),
+        distributionWeights: distributionWeightsParam,
         dryRun: z.boolean().optional().describe("Preview without broadcasting (still needs a configured signer)"),
       },
     },
@@ -588,10 +629,15 @@ export function registerWriteTools(server: McpServer) {
               "the top N, position pays a single slot.",
           );
         }
-        if (!distributed && (input.distribution !== undefined || input.distributionWeight !== undefined)) {
+        if (
+          !distributed &&
+          (input.distribution !== undefined ||
+            input.distributionWeight !== undefined ||
+            input.distributionWeights !== undefined)
+        ) {
           throw new Error(
-            "distribution/distributionWeight require winnersCount — without it the prize is a " +
-              "single-position payout and they would be ignored.",
+            "distribution/distributionWeight/distributionWeights require winnersCount — without it " +
+              "the prize is a single-position payout and they would be ignored.",
           );
         }
         const calls: Call[] = [
@@ -606,7 +652,12 @@ export function registerWriteTools(server: McpServer) {
                 amount: raw,
                 ...(distributed
                   ? {
-                      distribution: buildDistribution(input.distribution, input.distributionWeight),
+                      distribution: buildDistribution(
+                        input.distribution,
+                        input.distributionWeight,
+                        input.distributionWeights,
+                        input.winnersCount,
+                      ),
                       distributionCount: input.winnersCount,
                     }
                   : {}),

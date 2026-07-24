@@ -54,15 +54,22 @@ export interface Call {
 
 /**
  * Shape of the entry-fee distribution. Mirrors the Cairo `Distribution`
- * enum (Linear / Exponential / Uniform / Custom). The integer `weight`
- * is in client units — the encoder scales it ×10 to match the on-chain
- * convention the budokan client uses, so distributions created via this
- * SDK and via budokan.gg render identically.
+ * enum (Linear / Exponential / Uniform / Custom). For Linear/Exponential the
+ * integer `weight` is in client units — the encoder scales it ×10 to match the
+ * on-chain convention the budokan client uses, so distributions created via
+ * this SDK and via budokan.gg render identically.
+ *
+ * `custom` carries an explicit per-position split: `weights` are basis points
+ * (one per paid position, each 0–10000) that MUST sum to 10000 and MUST have
+ * one entry per paid position (`distributionCount`). These are stored verbatim
+ * as the on-chain `Custom(Span<u16>)` and are NOT ×10-scaled — e.g. a 30% first
+ * place is `3000`.
  */
 export type DistributionSpec =
   | { kind: "linear"; weight: number }
   | { kind: "exponential"; weight: number }
-  | { kind: "uniform" };
+  | { kind: "uniform" }
+  | { kind: "custom"; weights: number[] };
 
 export interface EntryFeeArgs {
   tokenAddress: string;
@@ -630,6 +637,15 @@ function encodeEntryFeeOption(
   if (!Number.isInteger(fee.distributionCount) || fee.distributionCount < 1) {
     throw new Error(`Entry-fee distributionCount must be a positive integer, got ${fee.distributionCount}`);
   }
+  if (
+    fee.distribution.kind === "custom" &&
+    fee.distribution.weights.length !== fee.distributionCount
+  ) {
+    throw new Error(
+      `Custom distribution has ${fee.distribution.weights.length} weights but ` +
+        `distributionCount is ${fee.distributionCount} — one weight per paid position is required`,
+    );
+  }
   const builtIn: EntryFeePayload = {
     token_address: fee.tokenAddress,
     amount: fee.amount,
@@ -720,6 +736,34 @@ function encodeDistribution(d: DistributionSpec): CairoCustomEnum {
       Exponential: scaleWeight(d.weight),
       Uniform: undefined,
       Custom: undefined,
+    });
+  }
+  if (d.kind === "custom") {
+    // Custom carries the on-chain Span<u16> verbatim (basis points, one per
+    // paid position). Validate here so a bad split fails at build time with a
+    // clear message instead of an opaque on-chain revert. Length-vs-count is
+    // checked by the caller, which knows distributionCount.
+    if (d.weights.length === 0) {
+      throw new Error("Custom distribution needs one weight per paid position");
+    }
+    for (const w of d.weights) {
+      if (!Number.isInteger(w) || w < 0 || w > 10000) {
+        throw new Error(
+          `Custom distribution weights are basis points (integer 0–10000), got ${w}`,
+        );
+      }
+    }
+    const sum = d.weights.reduce((a, b) => a + b, 0);
+    if (sum !== 10000) {
+      throw new Error(
+        `Custom distribution weights must sum to 10000 bps (100%), got ${sum}`,
+      );
+    }
+    return new CairoCustomEnum({
+      Linear: undefined,
+      Exponential: undefined,
+      Uniform: undefined,
+      Custom: d.weights,
     });
   }
   // Uniform has no payload. CallData.compile emits just the variant tag

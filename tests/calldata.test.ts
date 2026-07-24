@@ -228,6 +228,50 @@ describe("buildCreateTournamentCall", () => {
     expect(BigInt(pm[diffs[0]!]!)).toBe(1n);
   });
 
+  test("compiles a custom per-position distribution (Span<u16> basis points)", () => {
+    const call = buildCreateTournamentCall(BUDOKAN, {
+      ...base,
+      entryFee: {
+        tokenAddress: "0xtoken",
+        amount: "1000",
+        tournamentCreatorShare: 0,
+        gameCreatorShare: 500,
+        refundShare: 0,
+        distribution: { kind: "custom", weights: [3000, 2000, 1400, 1000, 800, 600, 400, 300, 300, 200] },
+        distributionCount: 10,
+      },
+    });
+    expect(call.calldata.length).toBeGreaterThan(0);
+  });
+
+  const customFee = (weights: number[], distributionCount: number) => ({
+    tokenAddress: "0xtoken",
+    amount: "1000",
+    tournamentCreatorShare: 0,
+    gameCreatorShare: 500,
+    refundShare: 0,
+    distribution: { kind: "custom" as const, weights },
+    distributionCount,
+  });
+
+  test("rejects a custom distribution that does not sum to 10000 bps", () => {
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: customFee([5000, 4000], 2) }),
+    ).toThrow(/sum to 10000/);
+  });
+
+  test("rejects a custom distribution whose length != distributionCount", () => {
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: customFee([6000, 4000], 3) }),
+    ).toThrow(/weights but.*distributionCount/);
+  });
+
+  test("rejects out-of-range custom weights", () => {
+    expect(() =>
+      buildCreateTournamentCall(BUDOKAN, { ...base, entryFee: customFee([10001, -1], 2) }),
+    ).toThrow(/basis points/);
+  });
+
   test("rejects oversized / non-ASCII names with a clear error", () => {
     expect(() =>
       buildCreateTournamentCall(BUDOKAN, { ...base, name: "x".repeat(32) }),
