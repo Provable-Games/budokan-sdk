@@ -243,6 +243,22 @@ export function registerWriteTools(server: McpServer) {
           .boolean()
           .optional()
           .describe("Require the game run to be finished before submitting. Default from game metadata"),
+        soulbound: z
+          .boolean()
+          .optional()
+          .describe(
+            "Mint entries as soulbound (non-transferable) game tokens (default false). When true, " +
+              "an entry cannot be sold or moved to another wallet after minting — useful for " +
+              "identity/allowlist-gated tournaments where entries shouldn't be tradeable",
+          ),
+        paymaster: z
+          .boolean()
+          .optional()
+          .describe(
+            "Route entry transactions through the game's paymaster (default false). Highly " +
+              "irrelevant right now — no game has a funded paymaster wired up — but exposed for a " +
+              "future update. Leave unset unless you know a paymaster is configured",
+          ),
         entryFee: z
           .object({
             token: z.string().describe("Token symbol (STRK, ETH, USDC, LORDS…) or 0x address"),
@@ -356,6 +372,8 @@ export function registerWriteTools(server: McpServer) {
           },
           entryFee,
           entryRequirement,
+          soulbound: input.soulbound,
+          paymaster: input.paymaster,
         };
 
         const call = buildCreateTournamentCall(budokanAddress, args);

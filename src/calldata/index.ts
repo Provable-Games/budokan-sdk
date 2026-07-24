@@ -155,6 +155,19 @@ export interface CreateTournamentArgs {
   entryFee?: EntryFeeArgs;
   /** Encoded as Option::Some(EntryRequirement) on chain when set. */
   entryRequirement?: EntryRequirementArgs;
+  /**
+   * Mint the game tokens as soulbound (non-transferable) when true. Defaults to
+   * false — entries are ordinary transferable game NFTs. Soulbound tournaments
+   * prevent entries from being sold or moved between wallets after minting.
+   */
+  soulbound?: boolean;
+  /**
+   * Route entry transactions through the game's paymaster when true. Defaults to
+   * false. Highly irrelevant at present — no game has a funded paymaster wired
+   * up — but plumbed through for a future update. Only enable for games that
+   * have a funded paymaster configured.
+   */
+  paymaster?: boolean;
   salt?: number;
   metadataValue?: number;
 }
@@ -447,8 +460,8 @@ export function buildCreateTournamentCall(
     game_config: {
       game_address: args.gameAddress,
       settings_id: args.settingsId,
-      soulbound: false,
-      paymaster: false,
+      soulbound: args.soulbound ?? false,
+      paymaster: args.paymaster ?? false,
       // Options must be CairoOption — see file header for why.
       client_url: new CairoOption<string>(CairoOptionVariant.None),
       renderer: new CairoOption<string>(CairoOptionVariant.None),

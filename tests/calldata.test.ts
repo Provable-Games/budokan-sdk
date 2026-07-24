@@ -194,6 +194,40 @@ describe("buildCreateTournamentCall", () => {
     expect(call.calldata.length).toBeGreaterThan(0);
   });
 
+  test("defaults soulbound + paymaster to false (transferable, no paymaster)", () => {
+    // The two game_config booleans should both encode as 0 by default. Together
+    // with the flip tests below, this pins that the flags are wired and default off.
+    const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
+    const sb = buildCreateTournamentCall(BUDOKAN, { ...base, soulbound: true }).calldata;
+    const pm = buildCreateTournamentCall(BUDOKAN, { ...base, paymaster: true }).calldata;
+    // Each flag flips exactly one field, and they flip different fields.
+    const soulboundIdx = def.findIndex((v, i) => v !== sb[i]);
+    const paymasterIdx = def.findIndex((v, i) => v !== pm[i]);
+    expect(soulboundIdx).toBeGreaterThan(-1);
+    expect(paymasterIdx).toBeGreaterThan(-1);
+    expect(soulboundIdx).not.toBe(paymasterIdx);
+    expect(BigInt(def[soulboundIdx]!)).toBe(0n);
+    expect(BigInt(def[paymasterIdx]!)).toBe(0n);
+  });
+
+  test("soulbound:true flips exactly one calldata field from 0 to 1", () => {
+    const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
+    const sb = buildCreateTournamentCall(BUDOKAN, { ...base, soulbound: true }).calldata;
+    expect(sb.length).toBe(def.length);
+    const diffs = def.map((v, i) => (v === sb[i] ? -1 : i)).filter((i) => i !== -1);
+    expect(diffs).toHaveLength(1);
+    expect(BigInt(sb[diffs[0]!]!)).toBe(1n);
+  });
+
+  test("paymaster:true flips exactly one calldata field from 0 to 1", () => {
+    const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
+    const pm = buildCreateTournamentCall(BUDOKAN, { ...base, paymaster: true }).calldata;
+    expect(pm.length).toBe(def.length);
+    const diffs = def.map((v, i) => (v === pm[i] ? -1 : i)).filter((i) => i !== -1);
+    expect(diffs).toHaveLength(1);
+    expect(BigInt(pm[diffs[0]!]!)).toBe(1n);
+  });
+
   test("rejects oversized / non-ASCII names with a clear error", () => {
     expect(() =>
       buildCreateTournamentCall(BUDOKAN, { ...base, name: "x".repeat(32) }),
