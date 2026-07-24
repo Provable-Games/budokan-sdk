@@ -6,7 +6,7 @@
       "name": "@provable-games/budokan-mcp",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.12.0",
-        "@provable-games/budokan-sdk": "^0.1.39",
+        "@provable-games/budokan-sdk": "^0.1.40",
         "@provable-games/denshokan-sdk": "^0.1.33",
         "starknet": "^9.2.1",
         "zod": "^3.24.0",
@@ -67,7 +67,7 @@
 
     "@noble/hashes": ["@noble/hashes@1.6.1", "", {}, "sha512-pq5D8h10hHBjyqX+cfBm0i8JUXJ0UhczFc4r74zbuT9XgewFo2E3J1cOaGtdZynILNmQ685YWGzGE1Zv6io50w=="],
 
-    "@provable-games/budokan-sdk": ["@provable-games/budokan-sdk@0.1.39", "", { "dependencies": { "@provable-games/metagame-sdk": "^0.1.14" }, "peerDependencies": { "@provable-games/denshokan-sdk": ">=0.1.33", "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-4GyY4kE0vb5fsxroBEg19Xb9lMxNQ0oF6EID6vmZ8Y6xUyWlVovkGPsxs6kB/qal7DQVhUxG+4mowTGsjxHHXw=="],
+    "@provable-games/budokan-sdk": ["@provable-games/budokan-sdk@0.1.40", "", { "dependencies": { "@provable-games/metagame-sdk": "^0.1.14" }, "peerDependencies": { "@provable-games/denshokan-sdk": ">=0.1.33", "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-DWwaTCUDXEsEJkilwq9GiDTsGcV77m5ZrjKKdQfzuFJqUe93oW2kpnl/JtR8goY5N61TKOIYo3XLS/ATwfGWCQ=="],
 
     "@provable-games/denshokan-sdk": ["@provable-games/denshokan-sdk@0.1.38", "", { "peerDependencies": { "react": ">=18.0.0", "starknet": ">=9.0.0" }, "optionalPeers": ["react", "starknet"] }, "sha512-537vnfWDJbfIcauZlarFdsES+vVkorPWjgkym+n20rqZRdR9yIATK+RThCJZTh5do0MGIXU+dtInxISsVdpaqQ=="],
 
