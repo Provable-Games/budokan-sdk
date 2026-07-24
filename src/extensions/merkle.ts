@@ -228,11 +228,29 @@ export interface GetAllowlistProofParams {
 }
 
 /**
+ * Non-throwing eligibility check: the `Span<felt252>` entry proof when the
+ * address is on the allowlist, `null` when it isn't. Still throws when the
+ * merkle service is unreachable — callers must never render a service outage
+ * as "not allowlisted".
+ *
+ * Prefer this for eligibility UI / status checks; `getAllowlistProof` throws
+ * on absence, which suits entry flows where absence is exceptional.
+ */
+export async function checkAllowlist(params: GetAllowlistProofParams): Promise<string[] | null> {
+  const proof = await merkleClient(params.chain, params.apiUrl).getProof(
+    params.treeId,
+    normalizeAddress(params.address),
+  );
+  return proof ? proof.qualification : null;
+}
+
+/**
  * Fetch the `Span<felt252>` merkle proof for an allowlisted address. Pass the
  * result as `qualification: { kind: "extension", data }` to
  * `buildEnterTournamentCall` (or as the `proof` arg to `bracketEntryCalls`).
  * Throws if the address isn't on the allowlist; propagates a service error if
  * the merkle service is unreachable (rather than reporting "not allowlisted").
+ * For a non-throwing eligibility check use `checkAllowlist`.
  */
 export async function getAllowlistProof(params: GetAllowlistProofParams): Promise<string[]> {
   // Normalize so the lookup matches the (normalized) address the tree was built
