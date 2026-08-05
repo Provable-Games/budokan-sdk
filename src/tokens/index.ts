@@ -24,6 +24,13 @@ export interface KnownToken {
   symbol: string;
   name: string;
   decimals: number;
+  /**
+   * `false` when the token must not be offered as an entry fee or payment.
+   * It stays in the catalog so amounts already denominated in it still
+   * resolve their symbol and decimals — an existing tournament keeps
+   * rendering, a qualification threshold keeps converting. Absent = payable.
+   */
+  payable?: boolean;
 }
 
 const STRK: KnownToken = {
@@ -61,6 +68,10 @@ const CASH: KnownToken = {
   symbol: "CASH",
   name: "Cash",
   decimals: 18,
+  // Not accepted as an entry fee or payment. Still catalogued: Opus
+  // qualification thresholds are denominated in CASH (see `extensions`), and
+  // tournaments created with a CASH fee before this must keep rendering.
+  payable: false,
 };
 
 // Sepolia reuses the canonical STRK/ETH addresses; the other tokens have no
@@ -70,9 +81,31 @@ const TOKENS: Record<WhitelistChain, readonly KnownToken[]> = {
   sepolia: [STRK, ETH],
 };
 
-/** The curated fee/prize tokens for a chain. */
+/**
+ * The curated fee/prize tokens for a chain — including any marked
+ * `payable: false`, so callers resolving an existing amount still find them.
+ * Building a "which token should the fee be in?" picker? Use
+ * {@link payableTokensForChain} instead.
+ */
 export function knownTokensForChain(chain: WhitelistChain): readonly KnownToken[] {
   return TOKENS[chain];
+}
+
+/**
+ * The subset of {@link knownTokensForChain} that may be charged or paid.
+ * This is the list to offer when a user picks an entry-fee token.
+ */
+export function payableTokensForChain(chain: WhitelistChain): readonly KnownToken[] {
+  return TOKENS[chain].filter((t) => t.payable !== false);
+}
+
+/**
+ * False only for a catalogued token explicitly marked non-payable. Anything
+ * outside the catalog is payable — the catalog is a convenience, not an
+ * allowlist, and callers routinely use tokens it doesn't carry.
+ */
+export function isPayableToken(chain: WhitelistChain, ref: string): boolean {
+  return findKnownToken(chain, ref)?.payable !== false;
 }
 
 /**

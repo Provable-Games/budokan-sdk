@@ -200,7 +200,9 @@ export type { PhaseInput } from "./phase/index.js";
 export {
   findKnownToken,
   fromRawAmount,
+  isPayableToken,
   knownTokensForChain,
+  payableTokensForChain,
   toRawAmount,
 } from "./tokens/index.js";
 export type { KnownToken } from "./tokens/index.js";

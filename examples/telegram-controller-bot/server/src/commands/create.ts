@@ -43,7 +43,7 @@ import { readAnnounceChannel } from "../bracket-store.ts";
 import { TournamentWatchStore } from "../tournament-watch-store.ts";
 import { addWatch } from "./watch.ts";
 import { gamesForChain, gameMetadataFor, fetchGameFeeBps, type Game } from "../catalog/games.ts";
-import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
+import { tokensForChain, payableTokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, fetchSetting, formatSettingsDetails, type GameSettingDetails } from "../catalog/settings.ts";
 import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
 import { formatError } from "../format-error.ts";
@@ -660,7 +660,8 @@ async function handleEntryFeeChoice(api: TelegramApi, config: Config, state: Sta
     return moveToEntryRequirement(api, config, state, chatId);
   }
   state.step = "entryFeeToken";
-  const tokens = tokensForChain(state.chain);
+  // Fee pickers offer payable tokens only.
+  const tokens = payableTokensForChain(state.chain);
   await api.sendMessage(chatId, [
     "🪙 Pick the entry-fee token:",
     ...tokens.map((t, i) => `  ${i + 1}. ${t.symbol} (${t.name})`),
@@ -670,7 +671,8 @@ async function handleEntryFeeChoice(api: TelegramApi, config: Config, state: Sta
 }
 
 async function handleEntryFeeToken(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
-  const tokens = tokensForChain(state.chain);
+  // Must mirror the list handleEntryFeeChoice printed — indices are the reply.
+  const tokens = payableTokensForChain(state.chain);
   const idx = parsePickIndex(input, tokens.length);
   if (idx === null) { await api.sendMessage(chatId, `Reply 1-${tokens.length}.`); return; }
   state.entryFeeToken = tokens[idx];
