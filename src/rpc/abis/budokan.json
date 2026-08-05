@@ -58,8 +58,8 @@
   },
   {
     "type": "impl",
-    "name": "GameContextImpl",
-    "interface_name": "game_components_interfaces::metagame::context::IMetagameContext"
+    "name": "BudokanFeeExtensionAdminImpl",
+    "interface_name": "budokan::budokan::Budokan::IBudokanFeeExtensionAdmin"
   },
   {
     "type": "enum",
@@ -74,6 +74,145 @@
         "type": "()"
       }
     ]
+  },
+  {
+    "type": "interface",
+    "name": "budokan::budokan::Budokan::IBudokanFeeExtensionAdmin",
+    "items": [
+      {
+        "type": "function",
+        "name": "approve_fee_extension",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "approved",
+            "type": "core::bool"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "set_fee_extension_gating",
+        "inputs": [
+          {
+            "name": "enabled",
+            "type": "core::bool"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "is_fee_extension_approved",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "fee_extension_gating_enabled",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "BudokanProtocolFeeAdminImpl",
+    "interface_name": "budokan::budokan::Budokan::IBudokanProtocolFeeAdmin"
+  },
+  {
+    "type": "interface",
+    "name": "budokan::budokan::Budokan::IBudokanProtocolFeeAdmin",
+    "items": [
+      {
+        "type": "function",
+        "name": "set_protocol_fee_bps",
+        "inputs": [
+          {
+            "name": "bps",
+            "type": "core::integer::u16"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "set_protocol_fee_recipient",
+        "inputs": [
+          {
+            "name": "recipient",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "protocol_fee_bps",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::integer::u16"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "protocol_fee_recipient",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "tournament_protocol_fee_bps",
+        "inputs": [
+          {
+            "name": "tournament_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u16"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "GameContextImpl",
+    "interface_name": "game_components_interfaces::metagame::context::IMetagameContext"
   },
   {
     "type": "interface",
@@ -316,6 +455,24 @@
     ]
   },
   {
+    "type": "struct",
+    "name": "game_components_interfaces::distribution::TieredConfig",
+    "members": [
+      {
+        "name": "head_ratio",
+        "type": "(core::integer::u16, core::integer::u16)"
+      },
+      {
+        "name": "head_count",
+        "type": "core::integer::u16"
+      },
+      {
+        "name": "head_share_bps",
+        "type": "core::integer::u16"
+      }
+    ]
+  },
+  {
     "type": "enum",
     "name": "game_components_interfaces::distribution::Distribution",
     "variants": [
@@ -334,6 +491,14 @@
       {
         "name": "Custom",
         "type": "core::array::Span::<core::integer::u16>"
+      },
+      {
+        "name": "Geometric",
+        "type": "(core::integer::u16, core::integer::u16)"
+      },
+      {
+        "name": "Tiered",
+        "type": "game_components_interfaces::distribution::TieredConfig"
       }
     ]
   },
@@ -918,6 +1083,22 @@
         "inputs": [
           {
             "name": "tournament_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::array::Array::<core::integer::u16>"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "prize_distribution_shares",
+        "inputs": [
+          {
+            "name": "prize_id",
             "type": "core::integer::u64"
           }
         ],
@@ -1828,72 +2009,6 @@
     ]
   },
   {
-    "type": "impl",
-    "name": "BudokanFeeExtensionAdminImpl",
-    "interface_name": "budokan::budokan::Budokan::IBudokanFeeExtensionAdmin"
-  },
-  {
-    "type": "interface",
-    "name": "budokan::budokan::Budokan::IBudokanFeeExtensionAdmin",
-    "items": [
-      {
-        "type": "function",
-        "name": "approve_fee_extension",
-        "inputs": [
-          {
-            "name": "extension",
-            "type": "core::starknet::contract_address::ContractAddress"
-          },
-          {
-            "name": "approved",
-            "type": "core::bool"
-          }
-        ],
-        "outputs": [],
-        "state_mutability": "external"
-      },
-      {
-        "type": "function",
-        "name": "set_fee_extension_gating",
-        "inputs": [
-          {
-            "name": "enabled",
-            "type": "core::bool"
-          }
-        ],
-        "outputs": [],
-        "state_mutability": "external"
-      },
-      {
-        "type": "function",
-        "name": "is_fee_extension_approved",
-        "inputs": [
-          {
-            "name": "extension",
-            "type": "core::starknet::contract_address::ContractAddress"
-          }
-        ],
-        "outputs": [
-          {
-            "type": "core::bool"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "fee_extension_gating_enabled",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "core::bool"
-          }
-        ],
-        "state_mutability": "view"
-      }
-    ]
-  },
-  {
     "type": "event",
     "name": "game_components_embeddable_game_standard::metagame::metagame_component::MetagameComponent::Event",
     "kind": "enum",
@@ -2216,6 +2331,59 @@
   },
   {
     "type": "event",
+    "name": "budokan::events::ProtocolFeeBpsUpdated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bps",
+        "type": "core::integer::u16",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan::events::ProtocolFeeRecipientUpdated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "recipient",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan::events::FeeExtensionApprovalUpdated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "extension",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "approved",
+        "type": "core::bool",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan::events::FeeExtensionGatingUpdated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "enabled",
+        "type": "core::bool",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
     "name": "budokan::budokan::Budokan::Event",
     "kind": "enum",
     "variants": [
@@ -2313,98 +2481,16 @@
         "name": "ProtocolFeeRecipientUpdated",
         "type": "budokan::events::ProtocolFeeRecipientUpdated",
         "kind": "nested"
-      }
-    ]
-  },
-  {
-    "type": "interface",
-    "name": "budokan::budokan::Budokan::IBudokanProtocolFeeAdmin",
-    "items": [
-      {
-        "type": "function",
-        "name": "set_protocol_fee_bps",
-        "inputs": [
-          {
-            "name": "bps",
-            "type": "core::integer::u16"
-          }
-        ],
-        "outputs": [],
-        "state_mutability": "external"
       },
       {
-        "type": "function",
-        "name": "set_protocol_fee_recipient",
-        "inputs": [
-          {
-            "name": "recipient",
-            "type": "core::starknet::contract_address::ContractAddress"
-          }
-        ],
-        "outputs": [],
-        "state_mutability": "external"
+        "name": "FeeExtensionApprovalUpdated",
+        "type": "budokan::events::FeeExtensionApprovalUpdated",
+        "kind": "nested"
       },
       {
-        "type": "function",
-        "name": "protocol_fee_bps",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "core::integer::u16"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "protocol_fee_recipient",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "core::starknet::contract_address::ContractAddress"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "tournament_protocol_fee_bps",
-        "inputs": [
-          {
-            "name": "tournament_id",
-            "type": "core::integer::u64"
-          }
-        ],
-        "outputs": [
-          {
-            "type": "core::integer::u16"
-          }
-        ],
-        "state_mutability": "view"
-      }
-    ]
-  },
-  {
-    "type": "event",
-    "name": "budokan::events::ProtocolFeeBpsUpdated",
-    "kind": "struct",
-    "members": [
-      {
-        "name": "bps",
-        "type": "core::integer::u16",
-        "kind": "data"
-      }
-    ]
-  },
-  {
-    "type": "event",
-    "name": "budokan::events::ProtocolFeeRecipientUpdated",
-    "kind": "struct",
-    "members": [
-      {
-        "name": "recipient",
-        "type": "core::starknet::contract_address::ContractAddress",
-        "kind": "key"
+        "name": "FeeExtensionGatingUpdated",
+        "type": "budokan::events::FeeExtensionGatingUpdated",
+        "kind": "nested"
       }
     ]
   }

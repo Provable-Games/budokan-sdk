@@ -31,6 +31,7 @@
 
 import {
   byteArray,
+  cairo,
   CairoCustomEnum,
   CairoOption,
   CairoOptionVariant,
@@ -69,7 +70,27 @@ export type DistributionSpec =
   | { kind: "linear"; weight: number }
   | { kind: "exponential"; weight: number }
   | { kind: "uniform" }
-  | { kind: "custom"; weights: number[] };
+  | { kind: "custom"; weights: number[] }
+  /**
+   * Geometric decay: each place gets `ratioB / ratioA` of the one above, and
+   * first place takes ~`1 - ratioB/ratioA` of the pool at ANY field size.
+   * Requires a fixed `distributionCount` within `maxGeometricPayouts(ratioA)`
+   * — the contract refuses anything else at creation.
+   */
+  | { kind: "geometric"; ratioA: number; ratioB: number }
+  /**
+   * Geometric head over a flat tail — the large-field curve. The head covers
+   * `headCount` places and takes `headShareBps` of the pool; every remaining
+   * place splits the rest evenly. Requires a fixed `distributionCount`
+   * strictly greater than `headCount`.
+   */
+  | {
+      kind: "tiered";
+      ratioA: number;
+      ratioB: number;
+      headCount: number;
+      headShareBps: number;
+    };
 
 export interface EntryFeeArgs {
   tokenAddress: string;
@@ -722,21 +743,23 @@ function scaleWeight(client: number): number {
  * active variant" invariant holds.
  */
 function encodeDistribution(d: DistributionSpec): CairoCustomEnum {
+  // Every variant must be listed (active one set, rest undefined) for
+  // starknet.js to map the enum against the ABI. Order matches the Cairo
+  // declaration: Linear, Exponential, Uniform, Custom, Geometric, Tiered.
+  const variants = {
+    Linear: undefined as unknown,
+    Exponential: undefined as unknown,
+    Uniform: undefined as unknown,
+    Custom: undefined as unknown,
+    Geometric: undefined as unknown,
+    Tiered: undefined as unknown,
+  };
+
   if (d.kind === "linear") {
-    return new CairoCustomEnum({
-      Linear: scaleWeight(d.weight),
-      Exponential: undefined,
-      Uniform: undefined,
-      Custom: undefined,
-    });
+    return new CairoCustomEnum({ ...variants, Linear: scaleWeight(d.weight) });
   }
   if (d.kind === "exponential") {
-    return new CairoCustomEnum({
-      Linear: undefined,
-      Exponential: scaleWeight(d.weight),
-      Uniform: undefined,
-      Custom: undefined,
-    });
+    return new CairoCustomEnum({ ...variants, Exponential: scaleWeight(d.weight) });
   }
   if (d.kind === "custom") {
     // Custom carries the on-chain Span<u16> verbatim (basis points, one per
@@ -759,21 +782,53 @@ function encodeDistribution(d: DistributionSpec): CairoCustomEnum {
         `Custom distribution weights must sum to 10000 bps (100%), got ${sum}`,
       );
     }
+    return new CairoCustomEnum({ ...variants, Custom: d.weights });
+  }
+  if (d.kind === "geometric") {
+    assertGeometricRatio(d.ratioA, d.ratioB);
+    // Cairo tuple (u16, u16): starknet.js serializes numeric-keyed objects.
+    return new CairoCustomEnum({ ...variants, Geometric: cairo.tuple(d.ratioA, d.ratioB) });
+  }
+  if (d.kind === "tiered") {
+    assertGeometricRatio(d.ratioA, d.ratioB);
+    if (!Number.isInteger(d.headCount) || d.headCount < 1) {
+      throw new Error("Tiered headCount must be a positive integer");
+    }
+    if (
+      !Number.isInteger(d.headShareBps) ||
+      d.headShareBps <= 0 ||
+      d.headShareBps >= 10000
+    ) {
+      throw new Error(
+        "Tiered headShareBps must be strictly between 0 and 10000 — at either extreme one tier pays nothing",
+      );
+    }
     return new CairoCustomEnum({
-      Linear: undefined,
-      Exponential: undefined,
-      Uniform: undefined,
-      Custom: d.weights,
+      ...variants,
+      Tiered: {
+        head_ratio: cairo.tuple(d.ratioA, d.ratioB),
+        head_count: d.headCount,
+        head_share_bps: d.headShareBps,
+      },
     });
   }
   // Uniform has no payload. CallData.compile emits just the variant tag
   // when unwrap() returns an empty object.
-  return new CairoCustomEnum({
-    Linear: undefined,
-    Exponential: undefined,
-    Uniform: {},
-    Custom: undefined,
-  });
+  return new CairoCustomEnum({ ...variants, Uniform: {} });
+}
+
+/**
+ * Ratio rules shared by Geometric and Tiered's head, mirroring the contract:
+ * a > b > 0 (a real decay), and both terms fit 8 bits (the packed-storage
+ * slot). The reach bound needs the paid-place count — see
+ * `validateDistributionCount`.
+ */
+function assertGeometricRatio(a: number, b: number): void {
+  if (!Number.isInteger(a) || !Number.isInteger(b) || b < 1 || a <= b || a > 255) {
+    throw new Error(
+      `Geometric ratio must satisfy 255 >= a > b > 0 (each place gets b/a of the one above), got (${a}, ${b})`,
+    );
+  }
 }
 
 function pushRewardTypeFelts(out: string[], reward: RewardType): void {

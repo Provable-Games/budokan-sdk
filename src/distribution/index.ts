@@ -321,3 +321,15 @@ export function sponsorPrizePayout(prize: Prize, position: number): bigint {
   if (pct <= 0) return 0n;
   return (BigInt(prize.amount ?? "0") * BigInt(Math.floor(pct * 10000))) / 1_000_000n;
 }
+
+// Exact settlement-mirroring maths + authoring-time validation for all six
+// curve variants (including Geometric and Tiered).
+export {
+  MAX_EXACT_EXPONENT,
+  maxGeometricPayouts,
+  exactPayoutAt,
+  exactPayouts,
+  payoutPercentages,
+  validateDistributionSpec,
+} from "./exact.js";
+export type { DistributionValidation } from "./exact.js";

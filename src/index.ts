@@ -167,6 +167,15 @@ export {
   entryFeePositionPayout,
   sponsorPrizePayout,
 } from "./distribution/index.js";
+export {
+  MAX_EXACT_EXPONENT,
+  maxGeometricPayouts,
+  exactPayoutAt,
+  exactPayouts,
+  payoutPercentages,
+  validateDistributionSpec,
+} from "./distribution/index.js";
+export type { DistributionValidation } from "./distribution/index.js";
 export type {
   DistributionKind,
   ParsedDistribution,

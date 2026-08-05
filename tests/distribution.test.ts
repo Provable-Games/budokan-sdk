@@ -273,3 +273,94 @@ describe("parseDistribution — API Custom shape", () => {
     expect(distributionPercentages(parsed, 10)).toEqual([30, 20, 14, 10, 8, 6, 4, 3, 3, 2]);
   });
 });
+
+// =========================================================================
+// Exact payout maths — values pinned against the contract's own tests
+// =========================================================================
+
+import {
+  exactPayoutAt,
+  exactPayouts,
+  maxGeometricPayouts,
+  validateDistributionSpec,
+} from "../src/distribution/exact.ts";
+
+describe("exactPayoutAt", () => {
+  test("linear w1.0, 5 places, 10000 pool matches the contract split", () => {
+    const spec = { kind: "linear", weight: 1 } as const;
+    expect(exactPayouts(spec, 5, 10_000n)).toEqual([3333n, 2666n, 2000n, 1333n, 666n]);
+  });
+
+  test("exponential k=5 winner over 10 places matches the contract", () => {
+    expect(
+      exactPayoutAt({ kind: "exponential", weight: 5 }, 1, 10, 1_000_000n),
+    ).toBe(452_847n);
+  });
+
+  test("geometric (10,7): each place gets 70% of the one above, to a unit", () => {
+    const spec = { kind: "geometric", ratioA: 10, ratioB: 7 } as const;
+    const pool = 1_000_000_000_000_000_000n;
+    expect(exactPayoutAt(spec, 1, 10, pool)).toBe(308720592627384808n);
+    expect(exactPayoutAt(spec, 2, 10, pool)).toBe(216104414839169366n);
+  });
+
+  test("tiered flagship over 10,000 places matches the contract end-to-end", () => {
+    const spec = {
+      kind: "tiered",
+      ratioA: 10,
+      ratioB: 7,
+      headCount: 39,
+      headShareBps: 8000,
+    } as const;
+    const pool = 1_000_000_000_000_000_000n;
+    expect(exactPayoutAt(spec, 1, 10000, pool)).toBe(240000218290681776n);
+    expect(exactPayoutAt(spec, 2, 10000, pool)).toBe(168000152803477243n);
+    expect(exactPayoutAt(spec, 40, 10000, pool)).toBe(20078305391024n);
+    expect(exactPayoutAt(spec, 10000, 10000, pool)).toBe(20078305391024n);
+  });
+});
+
+describe("maxGeometricPayouts", () => {
+  test("matches the contract's documented reach", () => {
+    expect(maxGeometricPayouts(2)).toBe(129);
+    expect(maxGeometricPayouts(3)).toBe(81);
+    expect(maxGeometricPayouts(10)).toBe(39);
+  });
+});
+
+describe("validateDistributionSpec", () => {
+  test("dynamic-count geometric is refused, mirroring the contract", () => {
+    const v = validateDistributionSpec({ kind: "geometric", ratioA: 10, ratioB: 7 }, 0);
+    expect(v.ok).toBe(false);
+    expect(v.errors[0]).toContain("fixed paid-places count");
+  });
+
+  test("geometric past its reach is refused with the bound", () => {
+    const v = validateDistributionSpec({ kind: "geometric", ratioA: 10, ratioB: 7 }, 40);
+    expect(v.ok).toBe(false);
+    expect(v.errors[0]).toContain("at most 39 places");
+  });
+
+  test("tiered needs count > head and a head share inside (0, 100%)", () => {
+    const bad = validateDistributionSpec(
+      { kind: "tiered", ratioA: 10, ratioB: 7, headCount: 39, headShareBps: 8000 },
+      39,
+    );
+    expect(bad.ok).toBe(false);
+    const good = validateDistributionSpec(
+      { kind: "tiered", ratioA: 10, ratioB: 7, headCount: 39, headShareBps: 8000 },
+      10000,
+    );
+    expect(good.ok).toBe(true);
+  });
+
+  test("last-place-pays-zero is caught when the pool is known", () => {
+    const v = validateDistributionSpec(
+      { kind: "exponential", weight: 3 },
+      200,
+      1_000_000n,
+    );
+    expect(v.ok).toBe(false);
+    expect(v.errors[0]).toContain("Last place would receive zero");
+  });
+});
