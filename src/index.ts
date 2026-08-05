@@ -227,8 +227,14 @@ export {
   buildMerkleConfig,
   buildTournamentValidatorConfig,
   buildTournamentQualificationProof,
+  classifyEntryFeeTrust,
+  getEntryFeeTrust,
 } from "./extensions/index.js";
 export type {
+  EntryFeeTrust,
+  EntryFeeTrustLevel,
+  EntryFeeTrustReport,
+  ClassifyEntryFeeTrustInput,
   ExtensionPresetKind,
   Erc20BalanceConfig,
   OpusTrovesConfig,

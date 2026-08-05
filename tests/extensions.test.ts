@@ -281,3 +281,95 @@ describe("buildTournamentValidatorConfig layout", () => {
     ).toEqual(["1", "2", "3", "9"]);
   });
 });
+
+// =========================================================================
+// Entry-fee trust classification
+// =========================================================================
+
+import {
+  classifyEntryFeeTrust,
+  getEntryFeeTrust,
+} from "../src/extensions/feeTrust.ts";
+
+describe("classifyEntryFeeTrust", () => {
+  test("no fee -> none, nothing to enforce", () => {
+    const t = classifyEntryFeeTrust({ hasEntryFee: false });
+    expect(t.level).toBe("none");
+    expect(t.protocolFeeEnforcedOnChain).toBe(false);
+  });
+
+  test("builtin fee -> custodial, protocol fee contract-enforced", () => {
+    const t = classifyEntryFeeTrust({ hasEntryFee: true });
+    expect(t.level).toBe("custodial");
+    expect(t.protocolFeeEnforcedOnChain).toBe(true);
+  });
+
+  test("approved extension -> vetted, fee honored by convention not enforcement", () => {
+    const t = classifyEntryFeeTrust({
+      hasEntryFee: true,
+      extensionAddress: "0xabc",
+      extensionApproved: true,
+      gatingEnabled: true,
+    });
+    expect(t.level).toBe("vetted-extension");
+    expect(t.extensionAddress).toBe("0xabc");
+    expect(t.protocolFeeEnforcedOnChain).toBe(false);
+    expect(t.gatingEnabled).toBe(true);
+  });
+
+  test("unapproved extension -> unvetted", () => {
+    const t = classifyEntryFeeTrust({
+      hasEntryFee: true,
+      extensionAddress: "0xabc",
+      extensionApproved: false,
+    });
+    expect(t.level).toBe("unvetted-extension");
+    expect(t.gatingEnabled).toBe(false);
+  });
+});
+
+describe("getEntryFeeTrust", () => {
+  // Stub Budokan contract: only `call` and `address` are consulted.
+  function stubContract(reads: Record<string, unknown>) {
+    return {
+      address: "0xbudokan",
+      call: async (entrypoint: string) => {
+        if (!(entrypoint in reads)) throw new Error(`unexpected call ${entrypoint}`);
+        return reads[entrypoint];
+      },
+    } as never;
+  }
+
+  test("assembles registry verdict and protocol-fee terms in one report", async () => {
+    const contract = stubContract({
+      fee_extension_gating_enabled: false,
+      tournament_protocol_fee_bps: 250n,
+      protocol_fee_recipient: 0xda0n,
+      is_fee_extension_approved: true,
+    });
+    const report = await getEntryFeeTrust(contract, {
+      tournamentId: "7",
+      hasEntryFee: true,
+      extensionAddress: "0xfee",
+    });
+    expect(report.level).toBe("vetted-extension");
+    expect(report.protocolFeeBps).toBe(250);
+    expect(report.protocolFeeRecipient).toBe("0xda0");
+    expect(report.protocolFeeEnforcedOnChain).toBe(false);
+  });
+
+  test("builtin fee skips the registry read entirely", async () => {
+    const contract = stubContract({
+      fee_extension_gating_enabled: false,
+      tournament_protocol_fee_bps: 250n,
+      protocol_fee_recipient: 0xda0n,
+      // is_fee_extension_approved deliberately absent: calling it would throw
+    });
+    const report = await getEntryFeeTrust(contract, {
+      tournamentId: "7",
+      hasEntryFee: true,
+    });
+    expect(report.level).toBe("custodial");
+    expect(report.protocolFeeEnforcedOnChain).toBe(true);
+  });
+});

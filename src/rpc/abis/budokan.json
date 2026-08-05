@@ -1828,6 +1828,72 @@
     ]
   },
   {
+    "type": "impl",
+    "name": "BudokanFeeExtensionAdminImpl",
+    "interface_name": "budokan::budokan::Budokan::IBudokanFeeExtensionAdmin"
+  },
+  {
+    "type": "interface",
+    "name": "budokan::budokan::Budokan::IBudokanFeeExtensionAdmin",
+    "items": [
+      {
+        "type": "function",
+        "name": "approve_fee_extension",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
+            "name": "approved",
+            "type": "core::bool"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "set_fee_extension_gating",
+        "inputs": [
+          {
+            "name": "enabled",
+            "type": "core::bool"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "is_fee_extension_approved",
+        "inputs": [
+          {
+            "name": "extension",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "fee_extension_gating_enabled",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
     "type": "event",
     "name": "game_components_embeddable_game_standard::metagame::metagame_component::MetagameComponent::Event",
     "kind": "enum",
