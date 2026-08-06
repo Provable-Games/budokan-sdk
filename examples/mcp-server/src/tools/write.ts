@@ -26,6 +26,8 @@ import {
   tournamentPageUrl,
   type Call,
   type CreateTournamentArgs,
+  type CurveStyle,
+  recommendDistribution,
   type DistributionSpec,
   type EntryFeeArgs,
   type EntryRequirementArgs,
@@ -78,12 +80,25 @@ async function executeCalls(
   return { txHash: tx.transaction_hash, receipt };
 }
 
+const payoutStyleParam = z
+  .enum(["equal", "gentle", "balanced", "topHeavy", "winnerTakesMost"])
+  .optional()
+  .describe(
+    "RECOMMENDED way to set the payout structure. Pick by intent; the right on-chain curve for " +
+      "the field size is chosen automatically (steep styles keep their headline share at ANY " +
+      "winnersCount — the engine switches curve families under the hood so you never have to). " +
+      "equal: everyone the same. gentle: mild taper, ~2x first vs last. balanced: clear podium, " +
+      "healthy tail (good default). topHeavy: ~30% to 1st. winnerTakesMost: ~50% to 1st. " +
+      "Mutually exclusive with distribution/distributionWeight(s). Use preview_payouts first to " +
+      "show the user the split before creating.",
+  );
+
 const distributionParam = z
   .enum(["exponential", "linear", "uniform", "custom"])
   .optional()
   .describe(
-    "How the pool splits across winners (default exponential). Use 'custom' to give an exact " +
-      "per-place split via distributionWeights",
+    "ADVANCED: explicit curve family — prefer payoutStyle unless the user asks for a specific " +
+      "curve. Use 'custom' to give an exact per-place split via distributionWeights",
   );
 
 const distributionWeightsParam = z
@@ -176,7 +191,16 @@ function buildDistribution(
   weight: number | undefined,
   weightsPct: number[] | undefined,
   count: number | undefined,
+  style?: string,
 ): DistributionSpec {
+  if (style !== undefined) {
+    if (kind !== undefined || weight !== undefined || weightsPct !== undefined) {
+      throw new Error(
+        "payoutStyle is mutually exclusive with distribution/distributionWeight(s) — pick one way to describe the split.",
+      );
+    }
+    return recommendDistribution(style as CurveStyle, count ?? 10);
+  }
   if (kind === "custom" || weightsPct !== undefined) {
     if (!weightsPct || weightsPct.length === 0) {
       throw new Error(
@@ -322,6 +346,7 @@ export function registerWriteTools(server: McpServer) {
             token: z.string().describe("Token symbol (STRK, ETH, USDC, LORDS…) or 0x address"),
             amount: z.string().describe("Entry fee per player in human units, e.g. '5' or '0.25'"),
             winnersCount: z.number().int().min(1).optional().describe("Top placements sharing the pool (default 10)"),
+            payoutStyle: payoutStyleParam,
             distribution: distributionParam,
             distributionWeight: z.number().int().min(1).optional(),
             distributionWeights: distributionWeightsParam,
@@ -393,6 +418,7 @@ export function registerWriteTools(server: McpServer) {
               input.entryFee.distributionWeight,
               input.entryFee.distributionWeights,
               input.entryFee.winnersCount ?? 10,
+              input.entryFee.payoutStyle,
             ),
             distributionCount: input.entryFee.winnersCount ?? 10,
           };
