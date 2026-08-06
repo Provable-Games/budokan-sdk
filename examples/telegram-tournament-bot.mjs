@@ -1276,3 +1276,4 @@ async function shutdown() {
 }
 
 // CI note: pushed to mint fresh workflow runs after concurrency-cancelled attempts.
+// (Second trigger: prior push event dropped in the 2026-08-06 Actions outage.)
