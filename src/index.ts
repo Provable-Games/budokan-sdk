@@ -174,7 +174,9 @@ export {
   exactPayouts,
   payoutPercentages,
   validateDistributionSpec,
+  recommendDistribution,
 } from "./distribution/index.js";
+export type { CurveStyle } from "./distribution/index.js";
 export type { DistributionValidation } from "./distribution/index.js";
 export type {
   DistributionKind,

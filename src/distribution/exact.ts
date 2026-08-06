@@ -230,3 +230,74 @@ export function validateDistributionSpec(
 
   return { ok: errors.length === 0, errors };
 }
+
+// ---------------------------------------------------------------------------
+// Curve recommendation — creator intent in, variant out.
+//
+// The six Distribution variants are implementation vocabulary (closed-form
+// sums, reach bounds, storage shapes). Creators think in two terms: how many
+// places get paid, and how top-heavy the split is. This maps that intent to
+// the right variant so UIs never have to surface "Geometric vs Tiered" — the
+// curve adapts to the paid-places count, never the other way around.
+// ---------------------------------------------------------------------------
+
+/** Creator-facing curve styles, gentlest to steepest. */
+export type CurveStyle =
+  | "equal"
+  | "gentle"
+  | "balanced"
+  | "topHeavy"
+  | "winnerTakesMost";
+
+/**
+ * Pick the variant + parameters for a style at a given field size.
+ *
+ * Guarantees: the result always passes `validateDistributionSpec` for
+ * `paidPlaces` (reach bounds respected, tiered head strictly under the
+ * count), and the *shape intent* holds at any size — steep styles switch
+ * from a pure Geometric to a Tiered head as the field outgrows the ratio's
+ * reach, so first place keeps its headline share while every place stays
+ * paid.
+ */
+export function recommendDistribution(
+  style: CurveStyle,
+  paidPlaces: number,
+): DistributionSpec {
+  const n = Math.max(1, Math.floor(paidPlaces));
+  switch (style) {
+    case "equal":
+      return { kind: "uniform" };
+    case "gentle":
+      // Mild linear taper; ~2x between first and last on mid fields.
+      return { kind: "linear", weight: 1 };
+    case "balanced":
+      // Quadratic power law — a clear podium without starving the tail.
+      return { kind: "exponential", weight: 2 };
+    case "topHeavy": {
+      // ~30% to 1st (70% decay). Past the ratio's reach, keep the same
+      // decay as a Tiered head over ~10% of the field taking 60%.
+      const ratio = { ratioA: 10, ratioB: 7 };
+      const reach = maxGeometricPayouts(ratio.ratioA);
+      if (n <= reach) return { kind: "geometric", ...ratio };
+      return {
+        kind: "tiered",
+        ...ratio,
+        headCount: Math.min(reach, Math.max(3, Math.round(n / 10)), n - 1),
+        headShareBps: 6000,
+      };
+    }
+    case "winnerTakesMost": {
+      // ~50% to 1st (50% decay; deepest reach of the family). Past reach,
+      // a Tiered head takes 80%.
+      const ratio = { ratioA: 2, ratioB: 1 };
+      const reach = maxGeometricPayouts(ratio.ratioA);
+      if (n <= reach) return { kind: "geometric", ...ratio };
+      return {
+        kind: "tiered",
+        ...ratio,
+        headCount: Math.min(reach, Math.max(3, Math.round(n / 10)), n - 1),
+        headShareBps: 8000,
+      };
+    }
+  }
+}

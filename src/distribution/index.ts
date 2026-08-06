@@ -331,5 +331,7 @@ export {
   exactPayouts,
   payoutPercentages,
   validateDistributionSpec,
+  recommendDistribution,
 } from "./exact.js";
+export type { CurveStyle } from "./exact.js";
 export type { DistributionValidation } from "./exact.js";

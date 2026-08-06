@@ -364,3 +364,40 @@ describe("validateDistributionSpec", () => {
     expect(v.errors[0]).toContain("Last place would receive zero");
   });
 });
+
+import { recommendDistribution, validateDistributionSpec as vds } from "../src/distribution/exact.ts";
+
+describe("recommendDistribution", () => {
+  const styles = ["equal", "gentle", "balanced", "topHeavy", "winnerTakesMost"] as const;
+  const sizes = [1, 2, 3, 10, 39, 40, 100, 129, 130, 500, 3000, 10000];
+
+  test("every style validates at every field size — the curve adapts to the count", () => {
+    for (const style of styles) {
+      for (const n of sizes) {
+        const spec = recommendDistribution(style, n);
+        const v = vds(spec, n);
+        if (!v.ok) throw new Error(`${style}@${n}: ${v.errors.join("; ")} (${JSON.stringify(spec)})`);
+      }
+    }
+  });
+
+  test("steep styles hold their headline share across the geometric/tiered switch", () => {
+    // 30 places: pure geometric, 1st ≈ 30%. 300 places: tiered, head keeps
+    // the decay — 1st still gets a real headline, not a power-law fade.
+    const small = recommendDistribution("topHeavy", 30);
+    const large = recommendDistribution("topHeavy", 300);
+    expect(small.kind).toBe("geometric");
+    expect(large.kind).toBe("tiered");
+    const p1Small = exactPayoutAt(small, 1, 30, 1_000_000n);
+    const p1Large = exactPayoutAt(large, 1, 300, 1_000_000n);
+    expect(Number(p1Small)).toBeGreaterThan(250_000); // ~30%
+    expect(Number(p1Large)).toBeGreaterThan(150_000); // headline survives scale
+  });
+
+  test("tiered heads are derived from the count, never force the count up", () => {
+    for (const n of [40, 50, 500, 10000]) {
+      const spec = recommendDistribution("winnerTakesMost", n);
+      if (spec.kind === "tiered") expect(spec.headCount).toBeLessThan(n);
+    }
+  });
+});
