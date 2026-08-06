@@ -1274,3 +1274,5 @@ async function shutdown() {
   // process shutdown, not as a temporary pause/resume mechanism.
   client.destroy();
 }
+
+// CI note: pushed to mint fresh workflow runs after concurrency-cancelled attempts.
