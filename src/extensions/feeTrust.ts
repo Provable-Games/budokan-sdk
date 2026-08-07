@@ -24,6 +24,7 @@
 
 import type { Contract } from "starknet";
 import { budokanTournamentProtocolFeeInfo } from "../rpc/budokan.js";
+import { normalizeAddress } from "../utils/address.js";
 
 /**
  * Curated fee-extension vetting, per chain (keys match `CHAINS`). An address
@@ -162,6 +163,17 @@ export async function getEntryFeeTrust(
   },
   options: GetEntryFeeTrustOptions = {},
 ): Promise<EntryFeeTrustReport> {
+  // No entry fee -> nothing on-chain to consult; skip the read entirely (it
+  // would also reject against pre-info-view deployments).
+  if (!tournament.hasEntryFee) {
+    return {
+      ...classifyEntryFeeTrust({ hasEntryFee: false }),
+      protocolFeeBps: 0,
+      protocolFeeRecipient: normalizeAddress("0x0"),
+      protocolFeeLicense: "",
+    };
+  }
+
   const info = await budokanTournamentProtocolFeeInfo(
     contract,
     tournament.tournamentId,

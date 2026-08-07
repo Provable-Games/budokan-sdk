@@ -1,6 +1,7 @@
 import type { Contract } from "starknet";
 import { RpcError } from "../errors/index.js";
 import { decodeByteArray } from "./decode.js";
+import { normalizeAddress } from "../utils/address.js";
 
 // =========================================================================
 // Helpers
@@ -70,7 +71,9 @@ function decodeProtocolFeeInfo(result: unknown): ProtocolFeeInfo {
   return {
     license: decodeByteArray(r?.license),
     feeBps: Number(r?.fee_bps ?? 0),
-    recipient: `0x${BigInt((r?.recipient as string | number | bigint) ?? 0).toString(16)}`,
+    recipient: normalizeAddress(
+      `0x${BigInt((r?.recipient as string | number | bigint) ?? 0).toString(16)}`,
+    ),
   };
 }
 
@@ -126,6 +129,6 @@ export async function budokanProtocolFeeRecipient(
 ): Promise<string> {
   return wrapRpcCall(async () => {
     const result = await contract.call("protocol_fee_recipient", []);
-    return `0x${BigInt(result as string | number | bigint).toString(16)}`;
+    return normalizeAddress(`0x${BigInt(result as string | number | bigint).toString(16)}`);
   }, contract.address);
 }

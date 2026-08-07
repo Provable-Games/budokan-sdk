@@ -375,7 +375,7 @@ describe("getEntryFeeTrust", () => {
     );
     expect(report.level).toBe("vetted-extension");
     expect(report.protocolFeeBps).toBe(250);
-    expect(report.protocolFeeRecipient).toBe("0xda0");
+    expect(report.protocolFeeRecipient).toBe("0x" + "da0".padStart(64, "0"));
     expect(report.protocolFeeLicense).toBe("pay the declared protocol fee");
     expect(report.protocolFeeEnforcedOnChain).toBe(false);
   });
@@ -411,6 +411,18 @@ describe("getEntryFeeTrust", () => {
     expect(report.protocolFeeLicense).toBe(
       "extensions must pay the declared protocol fee to the recipient",
     );
+  });
+
+  test("no entry fee short-circuits without any RPC read", async () => {
+    // Stub with no readable entrypoints: any call would throw.
+    const report = await getEntryFeeTrust(stubContract({}), {
+      tournamentId: "7",
+      hasEntryFee: false,
+    });
+    expect(report.level).toBe("none");
+    expect(report.protocolFeeBps).toBe(0);
+    expect(report.protocolFeeLicense).toBe("");
+    expect(report.protocolFeeRecipient).toBe("0x" + "".padStart(64, "0"));
   });
 
   test("builtin fee stays custodial and contract-enforced", async () => {
