@@ -29,6 +29,19 @@ Creating a tournament — gather these from the user before calling create_tourn
 6. Token behaviour: soulbound (default false → entries are transferable game NFTs; true → non-transferable, can't be sold or moved). Ask when the spec implies identity-bound entries (e.g. allowlist/holder tournaments) but doesn't say. (paymaster also exists but is highly irrelevant right now — no game has one funded — and is only exposed for a future update; leave it unset.)
 7. Other timings/behaviour worth confirming when unstated: submission window after play (submissionSeconds, default 24h), whether lower score wins (leaderboardAscending), and whether the game run must be finished before submitting (gameMustBeOver).
 
+Payout structure — how to get the split the user wants:
+- Preferred: set entryFee.payoutStyle by INTENT and let the engine pick the on-chain curve for the
+  field size. equal = everyone the same · gentle = mild taper (~2x first vs last) · balanced =
+  clear podium, healthy tail (good default) · topHeavy = ~30% to 1st AT ANY winnersCount ·
+  winnerTakesMost = ~50% to 1st. Steep styles keep their headline share as winnersCount grows —
+  the engine switches curve families (geometric -> tiered head + flat tail) automatically, so
+  never try to pick curves for size yourself.
+- Exact hand-authored splits (esports 50/25/15/10, sponsor-mandated): distributionWeights.
+- Always call preview_payouts first and show the user the split (top places + last place) before
+  create_tournament; amounts it returns are exact to the wei of what claims will transfer.
+- The legacy distribution/distributionWeight params are advanced overrides; do not combine them
+  with payoutStyle.
+
 Config-awareness: create_tournament exposes more than a typical spec covers. Before broadcasting, scan the options the user did NOT mention — soulbound, submission window, leaderboard direction, gating entry limit, entry-fee shares/winnersCount, registration window vs open — and briefly surface the defaults you're about to apply so the user can catch anything missed, rather than silently accepting defaults.
 
 Before broadcasting: call create_tournament with dryRun:true and show the user a summary for confirmation. Check wallet_status once per session (funded + deployed). Never ask the user to paste a private key into the conversation — keys are configured on the server process (SNCAST_ACCOUNT or STARKNET_PRIVATE_KEY env) or via generate_wallet.

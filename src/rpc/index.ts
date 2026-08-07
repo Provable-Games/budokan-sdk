@@ -11,4 +11,10 @@ export {
   viewerLeaderboard,
   viewerPrizes,
 } from "./viewer.js";
-export { budokanTournamentDistributionShares } from "./budokan.js";
+export {
+  budokanTournamentDistributionShares,
+  budokanIsFeeExtensionApproved,
+  budokanFeeExtensionGatingEnabled,
+  budokanTournamentProtocolFeeBps,
+  budokanProtocolFeeRecipient,
+} from "./budokan.js";

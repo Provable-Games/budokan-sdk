@@ -9,6 +9,11 @@ import {
   getGameDefaults,
   tournamentPageUrl,
   type Tournament,
+  recommendDistribution,
+  validateDistributionSpec,
+  exactPayouts,
+  type CurveStyle,
+  type DistributionSpec,
 } from "@provable-games/budokan-sdk";
 import { budokanClient, denshokanClient } from "../clients.ts";
 import { formatToolError } from "../format-error.ts";
@@ -242,6 +247,72 @@ export function registerReadTools(server: McpServer) {
             description: s.description,
             settings: s.settings,
           })),
+        });
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "preview_payouts",
+    {
+      title: "Preview a payout structure",
+      description:
+        "Pure calculator — no chain access. Given a payout style (or an explicit curve) and the " +
+        "number of paid places, returns the exact per-place split the contract will settle: " +
+        "percentages, and precise token amounts when a pool size is supplied. Call this BEFORE " +
+        "create_tournament to show the user the split and iterate until it matches their intent. " +
+        "Styles: equal (everyone the same), gentle (~2x first vs last), balanced (clear podium, " +
+        "good default), topHeavy (~30% to 1st at any size), winnerTakesMost (~50% to 1st). The " +
+        "engine picks the on-chain curve for the field size automatically; amounts equal what " +
+        "claims will actually transfer, to the wei.",
+      inputSchema: {
+        winnersCount: z.number().int().min(1).max(10000).describe("Paid places"),
+        payoutStyle: z
+          .enum(["equal", "gentle", "balanced", "topHeavy", "winnerTakesMost"])
+          .optional()
+          .describe("Intent style (recommended). Omit only when giving customWeights."),
+        customWeights: z
+          .array(z.number().min(0).max(100))
+          .optional()
+          .describe(
+            "Exact per-place percentages, best-to-worst, summing to 100 — for hand-authored splits",
+          ),
+        poolAmount: z
+          .string()
+          .optional()
+          .describe("Optional pool size in smallest token units to get exact per-place amounts"),
+      },
+    },
+    async ({ winnersCount, payoutStyle, customWeights, poolAmount }) => {
+      try {
+        const spec: DistributionSpec = customWeights
+          ? { kind: "custom", weights: customWeights.map((p) => Math.round(p * 100)) }
+          : recommendDistribution((payoutStyle ?? "balanced") as CurveStyle, winnersCount);
+        const validation = validateDistributionSpec(
+          spec,
+          winnersCount,
+          poolAmount !== undefined ? BigInt(poolAmount) : undefined,
+        );
+        if (!validation.ok) {
+          return jsonResult({ valid: false, errors: validation.errors, resolvedCurve: spec });
+        }
+        const SCALE = 1_000_000_000_000n;
+        const shares = exactPayouts(spec, winnersCount, SCALE);
+        const percentages = shares.map((v) => Number((v * 10000n) / SCALE) / 100);
+        const amounts =
+          poolAmount !== undefined
+            ? exactPayouts(spec, winnersCount, BigInt(poolAmount)).map(String)
+            : undefined;
+        return jsonResult({
+          valid: true,
+          resolvedCurve: spec,
+          note:
+            "resolvedCurve is the on-chain variant chosen for this field size — creators never " +
+            "need to pick it; pass the same payoutStyle to create_tournament.",
+          percentages,
+          ...(amounts ? { amounts } : {}),
         });
       } catch (error) {
         return errorResult(error);

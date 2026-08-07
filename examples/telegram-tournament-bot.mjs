@@ -800,44 +800,32 @@ function formatTournament(tournament) {
 }
 
 // A prize row with payoutPosition === 0 is a distributed pool — the indexer
-// stores the pool total once and the per-position split is derived from
-// distributionType + distributionCount + distributionWeight (or the explicit
-// distributionShares array for custom). Expand it into per-position rows so
-// each line shows the actual amount a placement will receive.
-//
-// Mirrors the client logic in
-// budokan/client/src/lib/utils/prizeDistribution.ts and the canonical
-// percentage formula in metagame-sdk/src/utils/formatting.ts:calculateDistribution.
+// stores the pool total once; per-position amounts are derived from
+// distributionType (+ weight / shares / distributionParams). Expanded here
+// with the EXACT settlement maths the contract uses — integer bigint,
+// `pool * W(p) / sum(W)`, truncated down — so every line equals the wei the
+// claim will transfer. (The previous version mirrored the legacy client
+// percentages: basis-point grid + rounding dust swept onto 1st place, which
+// painted a phantom headline on large fields and didn't know the Geometric /
+// Tiered variants at all.)
 function expandPrize(prize) {
   if (prize.payoutPosition !== 0 && prize.payoutPosition !== null) return [prize];
   if (prize.tokenType !== "erc20") return [prize];
 
-  const distCount = Number(prize.distributionCount ?? 0);
-  if (distCount <= 0) return [prize];
+  const n = Number(prize.distributionCount ?? 0);
+  if (n <= 0) return [prize];
 
-  const totalAmount = (() => {
+  const pool = (() => {
     try { return BigInt(prize.amount ?? 0); } catch { return 0n; }
   })();
-  const distType = String(prize.distributionType ?? "uniform").toLowerCase();
-  // The client passes `distributionWeight / 10` to calculateDistribution;
-  // mirror that so we land on the same percentages. Default weight is 10
-  // (= 1.0 once divided), matching the client fallback.
-  const rawWeight = Number(prize.distributionWeight ?? 10);
 
-  let percentages;
-  if (distType === "custom" && Array.isArray(prize.distributionShares) && prize.distributionShares.length > 0) {
-    const totalShares = prize.distributionShares.reduce((a, b) => a + b, 0);
-    percentages = totalShares === 0
-      ? prize.distributionShares.map(() => 0)
-      : prize.distributionShares.map((s) => (s / totalShares) * 100);
-  } else {
-    percentages = calculateDistributionPercentages(distCount, rawWeight / 10, distType);
-  }
+  const amounts = exactPayoutAmounts(prize, n, pool);
+  if (!amounts) return [prize];
 
-  return percentages.map((pct, index) => ({
+  return amounts.map((amount, index) => ({
     ...prize,
     payoutPosition: index + 1,
-    amount: ((totalAmount * BigInt(Math.floor(pct * 100))) / 10000n).toString(),
+    amount: amount.toString(),
     distributionType: null,
     distributionCount: null,
     distributionWeight: null,
@@ -845,35 +833,76 @@ function expandPrize(prize) {
   }));
 }
 
-// Percentage shares for a distributed prize pool. Returns an array of length
-// `positions` summing to 100. Ported verbatim from
-// metagame-sdk/src/utils/formatting.ts:calculateDistribution (the linear and
-// exponential branches both use `weight` as already pre-scaled by the caller).
-function calculateDistributionPercentages(positions, weight, distributionType) {
-  if (positions <= 0) return [];
+// Exact per-position amounts for all six curve variants, mirroring
+// game-components distribution::payout (and budokan-sdk's exactPayouts).
+// `params` is the indexer's distribution_params jsonb:
+// { ratioA, ratioB } for Geometric, plus { headCount, headShareBps } for
+// Tiered. Returns null for shapes we can't resolve (falls back to showing
+// the undivided pool row).
+function exactPayoutAmounts(prize, n, pool) {
+  const type = String(prize.distributionType ?? "uniform").toLowerCase();
+  const params = prize.distributionParams ?? {};
+  const w = BigInt(Math.round(Number(prize.distributionWeight ?? 10))); // contract scale: 10 = 1.0
 
-  let raw = [];
-  if (distributionType === "uniform") {
-    raw = Array(positions).fill(1);
-  } else if (distributionType === "linear") {
-    for (let i = 0; i < positions; i++) {
-      const positionValue = positions - i;
-      raw.push(1 + (positionValue - 1) * (weight / 10));
+  const intPow = (base, exp) => {
+    let acc = 1n, b = base, e = exp;
+    while (e > 0) {
+      if (e % 2 === 1) acc *= b;
+      e = Math.floor(e / 2);
+      if (e > 0) b *= b;
     }
-  } else {
-    // "exponential" (the contract default for unspecified types)
-    for (let i = 0; i < positions; i++) {
-      raw.push(Math.pow(1 - i / positions, weight));
-    }
+    return acc;
+  };
+  const powerSum = (k, nn) => {
+    const m = BigInt(nn), m1 = m + 1n;
+    if (k === 1) return (m * m1) / 2n;
+    if (k === 2) return (m * m1 * (2n * m + 1n)) / 6n;
+    if (k === 3) return (m * m * m1 * m1) / 4n;
+    if (k === 4) return (m * m1 * (2n * m + 1n) * (3n * m * m + 3n * m - 1n)) / 30n;
+    if (k === 5) return (m * m * m1 * m1 * (2n * m * m + 2n * m - 1n)) / 12n;
+    return null;
+  };
+  const split = (weightAt, sum) => {
+    if (sum === null || sum <= 0n) return null;
+    return Array.from({ length: n }, (_, i) => (pool * weightAt(i + 1)) / sum);
+  };
+
+  if (type === "custom") {
+    const shares = Array.isArray(prize.distributionShares) ? prize.distributionShares : null;
+    if (!shares || shares.length === 0) return null;
+    const sum = shares.slice(0, n).reduce((a, b) => a + BigInt(b), 0n);
+    return split((p) => BigInt(shares[p - 1] ?? 0), sum);
   }
-
-  const total = raw.reduce((a, b) => a + b, 0);
-  if (total === 0) return Array(positions).fill(0);
-
-  const bp = raw.map((d) => Math.floor((d / total) * 10000));
-  const remaining = 10000 - bp.reduce((a, b) => a + b, 0);
-  if (remaining !== 0) bp[0] += remaining;
-  return bp.map((b) => b / 100);
+  if (type === "uniform") return split(() => 1n, BigInt(n));
+  if (type === "linear") {
+    const sum = 10n * BigInt(n) + (w * BigInt(n) * BigInt(n - 1)) / 2n;
+    return split((p) => 10n + BigInt(n - p) * w, sum);
+  }
+  if (type === "exponential") {
+    const k = Number(w / 10n);
+    const sum = powerSum(k, n);
+    return split((p) => intPow(BigInt(n - p + 1), k), sum);
+  }
+  if (type === "geometric") {
+    const a = BigInt(params.ratioA ?? 0), b = BigInt(params.ratioB ?? 0);
+    if (a <= b || b < 1n) return null;
+    const sum = (intPow(a, n) - intPow(b, n)) / (a - b);
+    return split((p) => intPow(a, n - p) * intPow(b, p - 1), sum);
+  }
+  if (type === "tiered") {
+    const a = BigInt(params.ratioA ?? 0), b = BigInt(params.ratioB ?? 0);
+    const m = Number(params.headCount ?? 0), bps = BigInt(params.headShareBps ?? 0);
+    if (a <= b || b < 1n || m < 1 || m >= n || bps <= 0n || bps >= 10000n) return null;
+    const headPool = (pool * bps) / 10000n;
+    const headSum = (intPow(a, m) - intPow(b, m)) / (a - b);
+    const tailEach = (pool - headPool) / BigInt(n - m);
+    return Array.from({ length: n }, (_, i) => {
+      const p = i + 1;
+      if (p <= m) return (headPool * (intPow(a, m - p) * intPow(b, p - 1))) / headSum;
+      return tailEach;
+    });
+  }
+  return null;
 }
 
 function tokenInfo(address) {
@@ -1245,3 +1274,6 @@ async function shutdown() {
   // process shutdown, not as a temporary pause/resume mechanism.
   client.destroy();
 }
+
+// CI note: pushed to mint fresh workflow runs after concurrency-cancelled attempts.
+// (Second trigger: prior push event dropped in the 2026-08-06 Actions outage.)

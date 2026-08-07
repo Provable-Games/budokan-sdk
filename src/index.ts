@@ -167,6 +167,17 @@ export {
   entryFeePositionPayout,
   sponsorPrizePayout,
 } from "./distribution/index.js";
+export {
+  MAX_EXACT_EXPONENT,
+  maxGeometricPayouts,
+  exactPayoutAt,
+  exactPayouts,
+  payoutPercentages,
+  validateDistributionSpec,
+  recommendDistribution,
+} from "./distribution/index.js";
+export type { CurveStyle } from "./distribution/index.js";
+export type { DistributionValidation } from "./distribution/index.js";
 export type {
   DistributionKind,
   ParsedDistribution,
@@ -227,8 +238,14 @@ export {
   buildMerkleConfig,
   buildTournamentValidatorConfig,
   buildTournamentQualificationProof,
+  classifyEntryFeeTrust,
+  getEntryFeeTrust,
 } from "./extensions/index.js";
 export type {
+  EntryFeeTrust,
+  EntryFeeTrustLevel,
+  EntryFeeTrustReport,
+  ClassifyEntryFeeTrustInput,
   ExtensionPresetKind,
   Erc20BalanceConfig,
   OpusTrovesConfig,

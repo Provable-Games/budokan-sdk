@@ -225,3 +225,14 @@ export function buildTournamentQualificationProof(
 ): string[] {
   return [qualifyingTournamentId, tokenId, String(position)];
 }
+
+export {
+  classifyEntryFeeTrust,
+  getEntryFeeTrust,
+} from "./feeTrust.js";
+export type {
+  EntryFeeTrust,
+  EntryFeeTrustLevel,
+  EntryFeeTrustReport,
+  ClassifyEntryFeeTrustInput,
+} from "./feeTrust.js";
