@@ -352,9 +352,16 @@ describe("getEntryFeeTrust", () => {
     } as never;
   }
 
+  // License modeled as the raw ByteArray struct starknet.js actually returns
+  // for `contract.call` — NOT a pre-decoded string. "pay the declared
+  // protocol fee" is 29 bytes, so it rides entirely in `pending_word`.
   const infoRead = {
     tournament_protocol_fee_info: {
-      license: "pay the declared protocol fee",
+      license: {
+        data: [],
+        pending_word: 0x70617920746865206465636c617265642070726f746f636f6c20666565n,
+        pending_word_len: 29n,
+      },
       fee_bps: 250n,
       recipient: 0xda0n,
     },
@@ -380,6 +387,30 @@ describe("getEntryFeeTrust", () => {
       extensionAddress: "0xfee",
     });
     expect(report.level).toBe("unvetted-extension");
+  });
+
+  test("decodes a multi-chunk ByteArray license (data felts + empty pending)", async () => {
+    // 62 bytes = exactly two 31-byte data chunks, nothing pending.
+    const report = await getEntryFeeTrust(
+      stubContract({
+        tournament_protocol_fee_info: {
+          license: {
+            data: [
+              0x657874656e73696f6e73206d7573742070617920746865206465636c617265n,
+              0x642070726f746f636f6c2066656520746f2074686520726563697069656e74n,
+            ],
+            pending_word: 0n,
+            pending_word_len: 0n,
+          },
+          fee_bps: 250n,
+          recipient: 0xda0n,
+        },
+      }),
+      { tournamentId: "7", hasEntryFee: true },
+    );
+    expect(report.protocolFeeLicense).toBe(
+      "extensions must pay the declared protocol fee to the recipient",
+    );
   });
 
   test("builtin fee stays custodial and contract-enforced", async () => {

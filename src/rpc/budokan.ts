@@ -1,5 +1,6 @@
 import type { Contract } from "starknet";
 import { RpcError } from "../errors/index.js";
+import { decodeByteArray } from "./decode.js";
 
 // =========================================================================
 // Helpers
@@ -67,7 +68,7 @@ export interface ProtocolFeeInfo {
 function decodeProtocolFeeInfo(result: unknown): ProtocolFeeInfo {
   const r = result as { license?: unknown; fee_bps?: unknown; recipient?: unknown };
   return {
-    license: typeof r?.license === "string" ? r.license : String(r?.license ?? ""),
+    license: decodeByteArray(r?.license),
     feeBps: Number(r?.fee_bps ?? 0),
     recipient: `0x${BigInt((r?.recipient as string | number | bigint) ?? 0).toString(16)}`,
   };
