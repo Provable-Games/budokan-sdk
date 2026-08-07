@@ -140,12 +140,14 @@ export interface EntryFeeTrustReport extends EntryFeeTrust {
 }
 
 export interface GetEntryFeeTrustOptions {
-  /**
-   * Override the vetted list (defaults to `VETTED_FEE_EXTENSIONS[chain]`,
-   * or the union of all chains' lists when no `chain` is given).
-   */
+  /** Override the vetted list (defaults to `VETTED_FEE_EXTENSIONS[chain]`). */
   vettedExtensions?: readonly string[];
-  /** Chain key into `VETTED_FEE_EXTENSIONS` (e.g. "mainnet", "sepolia"). */
+  /**
+   * Chain key into `VETTED_FEE_EXTENSIONS` (e.g. "mainnet", "sepolia").
+   * Without it (and without `vettedExtensions`) nothing is vetted — vetting
+   * is chain-scoped, and unioning chains would leak a mainnet verdict onto a
+   * sepolia tournament.
+   */
   chain?: string;
 }
 
@@ -185,9 +187,7 @@ export async function getEntryFeeTrust(
 
   const vettedList =
     options.vettedExtensions ??
-    (options.chain
-      ? (VETTED_FEE_EXTENSIONS[options.chain] ?? [])
-      : Object.values(VETTED_FEE_EXTENSIONS).flat());
+    (options.chain ? (VETTED_FEE_EXTENSIONS[options.chain] ?? []) : []);
 
   return {
     ...classifyEntryFeeTrust({

@@ -386,6 +386,35 @@ describe("getEntryFeeTrust", () => {
     expect(report.protocolFeeEnforcedOnChain).toBe(false);
   });
 
+  test("vetting is chain-scoped: another chain's list never applies", async () => {
+    const { VETTED_FEE_EXTENSIONS } = await import("../src/extensions/feeTrust.ts");
+    (VETTED_FEE_EXTENSIONS as Record<string, readonly string[]>).mainnet = ["0xfee"];
+    try {
+      const onSepolia = await getEntryFeeTrust(
+        stubContract(infoRead),
+        { tournamentId: "7", hasEntryFee: true, extensionAddress: "0xfee" },
+        { chain: "sepolia" },
+      );
+      expect(onSepolia.level).toBe("unvetted-extension");
+
+      const noChain = await getEntryFeeTrust(stubContract(infoRead), {
+        tournamentId: "7",
+        hasEntryFee: true,
+        extensionAddress: "0xfee",
+      });
+      expect(noChain.level).toBe("unvetted-extension");
+
+      const onMainnet = await getEntryFeeTrust(
+        stubContract(infoRead),
+        { tournamentId: "7", hasEntryFee: true, extensionAddress: "0xfee" },
+        { chain: "mainnet" },
+      );
+      expect(onMainnet.level).toBe("vetted-extension");
+    } finally {
+      (VETTED_FEE_EXTENSIONS as Record<string, readonly string[]>).mainnet = [];
+    }
+  });
+
   test("extension defaults to unvetted while the curated list is empty", async () => {
     const report = await getEntryFeeTrust(stubContract(infoRead), {
       tournamentId: "7",
