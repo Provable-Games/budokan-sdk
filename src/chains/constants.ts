@@ -13,8 +13,10 @@ export const CHAINS: Record<string, ChainConfig> = {
     rpcUrl: "https://rpc.provable.games/rpc",
     apiBaseUrl: "https://budokan-api-production.up.railway.app",
     wsUrl: "wss://budokan-api-production.up.railway.app/ws",
-    budokanAddress: "0x012eb6054aa269c3e60013693f650650d81952de60072f446406d2a89f0b518e",
-    viewerAddress: "0x0486819bbeca6b5f4a6a4700495beee1de0694a145678da412f64967ae8ed281",
+    // Fresh-architecture deployment (post-#315, 2026-08-07): exact payouts,
+    // Geometric/Tiered, protocol_fee_info + license views. Fee OFF at genesis.
+    budokanAddress: "0x01f2c86ab22ded7f2de9084578ce72a1f7b590d5be6bd5f912ac8053128c20c2",
+    viewerAddress: "0x01af740a39e88a0e617b84ffcd0dc7f0f2f34b2bf4bcb5be0dce3ed9858fadb7",
     bracketAddress: "0x03b7b2b43a449b27b7e19400baa8d1eea8f05a6ad9416dace77b781414e4d66f",
   },
   sepolia: {
