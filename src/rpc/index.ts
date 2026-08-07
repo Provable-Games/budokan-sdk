@@ -13,8 +13,9 @@ export {
 } from "./viewer.js";
 export {
   budokanTournamentDistributionShares,
-  budokanIsFeeExtensionApproved,
-  budokanFeeExtensionGatingEnabled,
+  budokanProtocolFeeInfo,
+  budokanTournamentProtocolFeeInfo,
   budokanTournamentProtocolFeeBps,
   budokanProtocolFeeRecipient,
 } from "./budokan.js";
+export type { ProtocolFeeInfo } from "./budokan.js";

@@ -10,9 +10,11 @@
  *
  * - **Extension** — an external contract collects, custodies, and pays out
  *   the fees; Budokan is a pure dispatcher. The pool, refunds, and the
- *   protocol fee are all only as good as the extension's code. Budokan keeps
- *   an owner-governed on-chain registry of vetted fee extensions so this
- *   trust difference is legible.
+ *   protocol fee are all only as good as the extension's code. The contract
+ *   deliberately does NOT gate these (unenforceable rules shouldn't wear
+ *   enforcement costumes on-chain); instead it publishes its terms — rate,
+ *   recipient, and license text — via `tournament_protocol_fee_info`, and
+ *   vetting lives here, in a curated per-chain list.
  *
  * This module turns that into a badge any app can show next to a
  * tournament's entry fee. It is deliberately structural about its inputs —
@@ -21,12 +23,42 @@
  */
 
 import type { Contract } from "starknet";
-import {
-  budokanFeeExtensionGatingEnabled,
-  budokanIsFeeExtensionApproved,
-  budokanProtocolFeeRecipient,
-  budokanTournamentProtocolFeeBps,
-} from "../rpc/budokan.js";
+import { budokanTournamentProtocolFeeInfo } from "../rpc/budokan.js";
+import { normalizeAddress } from "../utils/address.js";
+
+/**
+ * Curated fee-extension vetting, per chain (keys match `CHAINS`). An address
+ * belongs here after its custody, refund, and protocol-fee-honoring behavior
+ * has been reviewed. Empty until the first extension passes review.
+ */
+export const VETTED_FEE_EXTENSIONS: Record<string, readonly string[]> = {
+  mainnet: [],
+  sepolia: [],
+};
+
+/** Address-normalized membership test against the curated list. */
+export function isVettedFeeExtension(
+  extensionAddress: string,
+  vettedList: readonly string[],
+): boolean {
+  // BigInt("") and BigInt(" ") are 0n, not throws — so zero must be handled
+  // explicitly: the zero address is never a real extension, and treating it
+  // as one would let an empty-string list entry "vet" an empty input.
+  let target: bigint;
+  try {
+    target = BigInt(extensionAddress);
+  } catch {
+    return false;
+  }
+  if (target === 0n) return false;
+  return vettedList.some((addr) => {
+    try {
+      return BigInt(addr) === target;
+    } catch {
+      return false;
+    }
+  });
+}
 
 /** Trust level of a tournament's entry-fee handling. */
 export type EntryFeeTrustLevel =
@@ -34,9 +66,9 @@ export type EntryFeeTrustLevel =
   | "none"
   /** BuiltIn fee: Budokan-custodied, waterfall and protocol fee contract-enforced. */
   | "custodial"
-  /** Extension fee whose contract is in Budokan's vetted registry. */
+  /** Extension fee whose contract is in the curated vetted list. */
   | "vetted-extension"
-  /** Extension fee whose contract is NOT in the registry — extension code is the only guarantee. */
+  /** Extension fee outside the vetted list — extension code is the only guarantee. */
   | "unvetted-extension";
 
 export interface EntryFeeTrust {
@@ -49,12 +81,6 @@ export interface EntryFeeTrust {
    * For `none` there is no fee, so nothing to enforce.
    */
   protocolFeeEnforcedOnChain: boolean;
-  /**
-   * True when Budokan is currently refusing unapproved fee extensions at
-   * creation. An `unvetted-extension` tournament can only exist from before
-   * gating was enabled (or while it is off).
-   */
-  gatingEnabled: boolean;
 }
 
 export interface ClassifyEntryFeeTrustInput {
@@ -66,40 +92,35 @@ export interface ClassifyEntryFeeTrustInput {
    * `entryFeeExtensionAddress` column.
    */
   extensionAddress?: string | null;
-  /** Registry verdict for `extensionAddress` (ignored for BuiltIn fees). */
-  extensionApproved?: boolean;
-  /** Current gating state (advisory registry vs hard allowlist). */
-  gatingEnabled?: boolean;
+  /**
+   * Curated-list verdict for `extensionAddress` (ignored for BuiltIn fees).
+   * Compute with `isVettedFeeExtension` against `VETTED_FEE_EXTENSIONS`
+   * (or your own list).
+   */
+  extensionVetted?: boolean;
 }
 
 /**
  * Pure classification — no network. Feed it fields from wherever you already
- * have them (API row + a cached registry read).
+ * have them (API row + the curated list).
  */
 export function classifyEntryFeeTrust(
   input: ClassifyEntryFeeTrustInput,
 ): EntryFeeTrust {
-  const gatingEnabled = input.gatingEnabled ?? false;
-
   if (!input.hasEntryFee) {
-    return { level: "none", protocolFeeEnforcedOnChain: false, gatingEnabled };
+    return { level: "none", protocolFeeEnforcedOnChain: false };
   }
 
   if (!input.extensionAddress) {
-    return {
-      level: "custodial",
-      protocolFeeEnforcedOnChain: true,
-      gatingEnabled,
-    };
+    return { level: "custodial", protocolFeeEnforcedOnChain: true };
   }
 
   return {
-    level: input.extensionApproved ? "vetted-extension" : "unvetted-extension",
+    level: input.extensionVetted ? "vetted-extension" : "unvetted-extension",
     extensionAddress: input.extensionAddress,
     // Extension custody: the contract cannot skim what it never holds; the
     // fee is honored by the extension per the on-chain terms, not enforced.
     protocolFeeEnforcedOnChain: false,
-    gatingEnabled,
   };
 }
 
@@ -107,17 +128,37 @@ export function classifyEntryFeeTrust(
 export interface EntryFeeTrustReport extends EntryFeeTrust {
   /** Snapshotted protocol-fee rate for this tournament, in basis points. */
   protocolFeeBps: number;
-  /** DAO treasury the fee routes to (zero address when unset). */
+  /** DAO treasury the fee routes to (zero address when unset). Read live. */
   protocolFeeRecipient: string;
+  /**
+   * The on-chain license text stating the payment obligation — Budokan's
+   * `default_protocol_fee_license()` unless the owner has set custom terms.
+   * Surface this next to an unvetted-extension warning: it is the platform's
+   * published expectation of the extension.
+   */
+  protocolFeeLicense: string;
+}
+
+export interface GetEntryFeeTrustOptions {
+  /** Override the vetted list (defaults to `VETTED_FEE_EXTENSIONS[chain]`). */
+  vettedExtensions?: readonly string[];
+  /**
+   * Chain key into `VETTED_FEE_EXTENSIONS` (e.g. "mainnet", "sepolia").
+   * Without it (and without `vettedExtensions`) nothing is vetted — vetting
+   * is chain-scoped, and unioning chains would leak a mainnet verdict onto a
+   * sepolia tournament.
+   */
+  chain?: string;
 }
 
 /**
- * One-call trust report for a tournament, reading the registry and the
- * tournament's protocol-fee terms over RPC.
+ * One-call trust report for a tournament: a single
+ * `tournament_protocol_fee_info` read supplies rate + recipient + license,
+ * and the curated list supplies the vetting verdict.
  *
  * `contract` is a Budokan `Contract` (see `createContract` +
- * `abis/budokan.json`). Registry views exist from the fresh deployment
- * onward; against an older deployment the reads reject with `RpcError`.
+ * `abis/budokan.json`). The info view exists from the fresh deployment
+ * onward; against an older deployment the read rejects with `RpcError`.
  */
 export async function getEntryFeeTrust(
   contract: Contract,
@@ -126,25 +167,38 @@ export async function getEntryFeeTrust(
     hasEntryFee: boolean;
     extensionAddress?: string | null;
   },
+  options: GetEntryFeeTrustOptions = {},
 ): Promise<EntryFeeTrustReport> {
-  const [gatingEnabled, protocolFeeBps, protocolFeeRecipient, extensionApproved] =
-    await Promise.all([
-      budokanFeeExtensionGatingEnabled(contract),
-      budokanTournamentProtocolFeeBps(contract, tournament.tournamentId),
-      budokanProtocolFeeRecipient(contract),
-      tournament.extensionAddress
-        ? budokanIsFeeExtensionApproved(contract, tournament.extensionAddress)
-        : Promise.resolve(false),
-    ]);
+  // No entry fee -> nothing on-chain to consult; skip the read entirely (it
+  // would also reject against pre-info-view deployments).
+  if (!tournament.hasEntryFee) {
+    return {
+      ...classifyEntryFeeTrust({ hasEntryFee: false }),
+      protocolFeeBps: 0,
+      protocolFeeRecipient: normalizeAddress("0x0"),
+      protocolFeeLicense: "",
+    };
+  }
+
+  const info = await budokanTournamentProtocolFeeInfo(
+    contract,
+    tournament.tournamentId,
+  );
+
+  const vettedList =
+    options.vettedExtensions ??
+    (options.chain ? (VETTED_FEE_EXTENSIONS[options.chain] ?? []) : []);
 
   return {
     ...classifyEntryFeeTrust({
       hasEntryFee: tournament.hasEntryFee,
       extensionAddress: tournament.extensionAddress,
-      extensionApproved,
-      gatingEnabled,
+      extensionVetted: tournament.extensionAddress
+        ? isVettedFeeExtension(tournament.extensionAddress, vettedList)
+        : false,
     }),
-    protocolFeeBps,
-    protocolFeeRecipient,
+    protocolFeeBps: info.feeBps,
+    protocolFeeRecipient: info.recipient,
+    protocolFeeLicense: info.license,
   };
 }

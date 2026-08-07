@@ -289,6 +289,7 @@ describe("buildTournamentValidatorConfig layout", () => {
 import {
   classifyEntryFeeTrust,
   getEntryFeeTrust,
+  isVettedFeeExtension,
 } from "../src/extensions/feeTrust.ts";
 
 describe("classifyEntryFeeTrust", () => {
@@ -304,27 +305,44 @@ describe("classifyEntryFeeTrust", () => {
     expect(t.protocolFeeEnforcedOnChain).toBe(true);
   });
 
-  test("approved extension -> vetted, fee honored by convention not enforcement", () => {
+  test("vetted extension -> fee honored by convention not enforcement", () => {
     const t = classifyEntryFeeTrust({
       hasEntryFee: true,
       extensionAddress: "0xabc",
-      extensionApproved: true,
-      gatingEnabled: true,
+      extensionVetted: true,
     });
     expect(t.level).toBe("vetted-extension");
     expect(t.extensionAddress).toBe("0xabc");
     expect(t.protocolFeeEnforcedOnChain).toBe(false);
-    expect(t.gatingEnabled).toBe(true);
   });
 
-  test("unapproved extension -> unvetted", () => {
+  test("extension outside the curated list -> unvetted", () => {
     const t = classifyEntryFeeTrust({
       hasEntryFee: true,
       extensionAddress: "0xabc",
-      extensionApproved: false,
+      extensionVetted: false,
     });
     expect(t.level).toBe("unvetted-extension");
-    expect(t.gatingEnabled).toBe(false);
+  });
+});
+
+describe("isVettedFeeExtension", () => {
+  test("matches addresses regardless of zero-padding", () => {
+    const list = ["0x0abc"];
+    expect(isVettedFeeExtension("0xabc", list)).toBe(true);
+    expect(isVettedFeeExtension("0x00abc", list)).toBe(true);
+    expect(isVettedFeeExtension("0xdef", list)).toBe(false);
+  });
+
+  test("malformed addresses are never vetted, never throw", () => {
+    expect(isVettedFeeExtension("not-hex", ["0xabc"])).toBe(false);
+    expect(isVettedFeeExtension("0xabc", ["not-hex"])).toBe(false);
+  });
+
+  test("zero/empty addresses are never vetted (BigInt('') is 0n, not a throw)", () => {
+    expect(isVettedFeeExtension("", [""])).toBe(false);
+    expect(isVettedFeeExtension(" ", ["0x0"])).toBe(false);
+    expect(isVettedFeeExtension("0x0", ["0x0"])).toBe(false);
   });
 });
 
@@ -340,32 +358,110 @@ describe("getEntryFeeTrust", () => {
     } as never;
   }
 
-  test("assembles registry verdict and protocol-fee terms in one report", async () => {
-    const contract = stubContract({
-      fee_extension_gating_enabled: false,
-      tournament_protocol_fee_bps: 250n,
-      protocol_fee_recipient: 0xda0n,
-      is_fee_extension_approved: true,
-    });
-    const report = await getEntryFeeTrust(contract, {
+  // License modeled as the raw ByteArray struct starknet.js actually returns
+  // for `contract.call` — NOT a pre-decoded string. "pay the declared
+  // protocol fee" is 29 bytes, so it rides entirely in `pending_word`.
+  const infoRead = {
+    tournament_protocol_fee_info: {
+      license: {
+        data: [],
+        pending_word: 0x70617920746865206465636c617265642070726f746f636f6c20666565n,
+        pending_word_len: 29n,
+      },
+      fee_bps: 250n,
+      recipient: 0xda0n,
+    },
+  };
+
+  test("one info read supplies rate, recipient, and license terms", async () => {
+    const report = await getEntryFeeTrust(
+      stubContract(infoRead),
+      { tournamentId: "7", hasEntryFee: true, extensionAddress: "0xfee" },
+      { vettedExtensions: ["0xfee"] },
+    );
+    expect(report.level).toBe("vetted-extension");
+    expect(report.protocolFeeBps).toBe(250);
+    expect(report.protocolFeeRecipient).toBe("0x" + "da0".padStart(64, "0"));
+    expect(report.protocolFeeLicense).toBe("pay the declared protocol fee");
+    expect(report.protocolFeeEnforcedOnChain).toBe(false);
+  });
+
+  test("vetting is chain-scoped: another chain's list never applies", async () => {
+    const { VETTED_FEE_EXTENSIONS } = await import("../src/extensions/feeTrust.ts");
+    (VETTED_FEE_EXTENSIONS as Record<string, readonly string[]>).mainnet = ["0xfee"];
+    try {
+      const onSepolia = await getEntryFeeTrust(
+        stubContract(infoRead),
+        { tournamentId: "7", hasEntryFee: true, extensionAddress: "0xfee" },
+        { chain: "sepolia" },
+      );
+      expect(onSepolia.level).toBe("unvetted-extension");
+
+      const noChain = await getEntryFeeTrust(stubContract(infoRead), {
+        tournamentId: "7",
+        hasEntryFee: true,
+        extensionAddress: "0xfee",
+      });
+      expect(noChain.level).toBe("unvetted-extension");
+
+      const onMainnet = await getEntryFeeTrust(
+        stubContract(infoRead),
+        { tournamentId: "7", hasEntryFee: true, extensionAddress: "0xfee" },
+        { chain: "mainnet" },
+      );
+      expect(onMainnet.level).toBe("vetted-extension");
+    } finally {
+      (VETTED_FEE_EXTENSIONS as Record<string, readonly string[]>).mainnet = [];
+    }
+  });
+
+  test("extension defaults to unvetted while the curated list is empty", async () => {
+    const report = await getEntryFeeTrust(stubContract(infoRead), {
       tournamentId: "7",
       hasEntryFee: true,
       extensionAddress: "0xfee",
     });
-    expect(report.level).toBe("vetted-extension");
-    expect(report.protocolFeeBps).toBe(250);
-    expect(report.protocolFeeRecipient).toBe("0xda0");
-    expect(report.protocolFeeEnforcedOnChain).toBe(false);
+    expect(report.level).toBe("unvetted-extension");
   });
 
-  test("builtin fee skips the registry read entirely", async () => {
-    const contract = stubContract({
-      fee_extension_gating_enabled: false,
-      tournament_protocol_fee_bps: 250n,
-      protocol_fee_recipient: 0xda0n,
-      // is_fee_extension_approved deliberately absent: calling it would throw
+  test("decodes a multi-chunk ByteArray license (data felts + empty pending)", async () => {
+    // 62 bytes = exactly two 31-byte data chunks, nothing pending.
+    const report = await getEntryFeeTrust(
+      stubContract({
+        tournament_protocol_fee_info: {
+          license: {
+            data: [
+              0x657874656e73696f6e73206d7573742070617920746865206465636c617265n,
+              0x642070726f746f636f6c2066656520746f2074686520726563697069656e74n,
+            ],
+            pending_word: 0n,
+            pending_word_len: 0n,
+          },
+          fee_bps: 250n,
+          recipient: 0xda0n,
+        },
+      }),
+      { tournamentId: "7", hasEntryFee: true },
+    );
+    expect(report.protocolFeeLicense).toBe(
+      "extensions must pay the declared protocol fee to the recipient",
+    );
+  });
+
+  test("no entry fee short-circuits without any RPC read", async () => {
+    // Stub with no readable entrypoints: any call would throw.
+    const report = await getEntryFeeTrust(stubContract({}), {
+      tournamentId: "7",
+      hasEntryFee: false,
     });
-    const report = await getEntryFeeTrust(contract, {
+    expect(report.level).toBe("none");
+    expect(report.protocolFeeBps).toBe(0);
+    expect(report.protocolFeeLicense).toBe("");
+    expect(report.protocolFeeRecipient).toBe("0x" + "".padStart(64, "0"));
+  });
+
+  test("builtin fee stays custodial and contract-enforced", async () => {
+    const report = await getEntryFeeTrust(stubContract(infoRead), {
       tournamentId: "7",
       hasEntryFee: true,
     });
