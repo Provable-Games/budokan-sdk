@@ -41,12 +41,16 @@ export function isVettedFeeExtension(
   extensionAddress: string,
   vettedList: readonly string[],
 ): boolean {
+  // BigInt("") and BigInt(" ") are 0n, not throws — so zero must be handled
+  // explicitly: the zero address is never a real extension, and treating it
+  // as one would let an empty-string list entry "vet" an empty input.
   let target: bigint;
   try {
     target = BigInt(extensionAddress);
   } catch {
     return false;
   }
+  if (target === 0n) return false;
   return vettedList.some((addr) => {
     try {
       return BigInt(addr) === target;

@@ -338,6 +338,12 @@ describe("isVettedFeeExtension", () => {
     expect(isVettedFeeExtension("not-hex", ["0xabc"])).toBe(false);
     expect(isVettedFeeExtension("0xabc", ["not-hex"])).toBe(false);
   });
+
+  test("zero/empty addresses are never vetted (BigInt('') is 0n, not a throw)", () => {
+    expect(isVettedFeeExtension("", [""])).toBe(false);
+    expect(isVettedFeeExtension(" ", ["0x0"])).toBe(false);
+    expect(isVettedFeeExtension("0x0", ["0x0"])).toBe(false);
+  });
 });
 
 describe("getEntryFeeTrust", () => {
