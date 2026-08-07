@@ -21,11 +21,11 @@ export const CHAINS: Record<string, ChainConfig> = {
     rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
     apiBaseUrl: "https://budokan-api-sepolia.up.railway.app",
     wsUrl: "wss://budokan-api-sepolia.up.railway.app/ws",
-    // The contract budokan.gg + budokan-api-sepolia actually index. The prior
-    // value (0x074cc8…) was a different deployment the indexer doesn't watch, so
-    // tournaments created there never showed up in the app/API.
-    budokanAddress: "0x07edaa23494bf6832b306310e2e933c1907674bf680ea84bc87fcbfb6e5c3aa4",
-    viewerAddress: "0x0794dc020f79afce437ffea14ead0d7b83ecb4ea758e92cb99e0a0dffccaedde",
+    // Mainnet-parity deployment (budokan #315, 2026-08-07): exact payouts,
+    // Geometric/Tiered, protocol_fee_info + license views. This is the
+    // contract budokan.gg + budokan-api-sepolia index.
+    budokanAddress: "0x011067f85b3ad43e6d0555d2dd55f9b0013ff86d35ad5e40e9343989ed3ba000",
+    viewerAddress: "0x042e7d012b0c6e1cee122beb79e8cefce674fc480939771391809034adde7ecd",
     bracketAddress: "0x0751bd2c742c4c09f02f4af0fb4da51c582b22058ca62784dfa074c3490fa7a8",
   },
 } as const;
