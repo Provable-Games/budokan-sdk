@@ -240,12 +240,15 @@ export {
   buildTournamentQualificationProof,
   classifyEntryFeeTrust,
   getEntryFeeTrust,
+  isVettedFeeExtension,
+  VETTED_FEE_EXTENSIONS,
 } from "./extensions/index.js";
 export type {
   EntryFeeTrust,
   EntryFeeTrustLevel,
   EntryFeeTrustReport,
   ClassifyEntryFeeTrustInput,
+  GetEntryFeeTrustOptions,
   ExtensionPresetKind,
   Erc20BalanceConfig,
   OpusTrovesConfig,

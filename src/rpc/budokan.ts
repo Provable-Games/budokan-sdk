@@ -42,42 +42,64 @@ export async function budokanTournamentDistributionShares(
 }
 
 // =========================================================================
-// Fee-extension trust reads (Budokan fresh deployment onward)
+// Protocol-fee terms (Budokan fresh deployment onward)
 // =========================================================================
 //
 // Extension entry fees are custodied by the extension contract, not by
 // Budokan — so the protocol fee, refunds, and ultimately the pool itself
-// are only as trustworthy as the extension's code. Budokan keeps an
-// owner-governed on-chain registry of vetted fee extensions, plus a gating
-// flag: while gating is disabled (the deployment default) the registry is
-// advisory and creation stays permissionless; when enabled,
-// `create_tournament` refuses unapproved fee extensions outright.
-//
-// These reads are the raw registry surface. Most apps want
-// `getEntryFeeTrust` / `classifyEntryFeeTrust` from `extensions/feeTrust`,
-// which turn them into a badge level.
+// are only as trustworthy as the extension's code. The contract publishes
+// its terms instead of gating: `tournament_protocol_fee_info` returns the
+// rate snapshotted at creation, the live recipient, and license text
+// stating the payment obligation (mirroring game-components' GameFeeInfo).
+// Most apps want `getEntryFeeTrust` / `classifyEntryFeeTrust` from
+// `extensions/feeTrust`, which turn these into a badge level.
 
-/** Whether `extension` is in Budokan's vetted fee-extension registry. */
-export async function budokanIsFeeExtensionApproved(
+/** Decoded `ProtocolFeeInfo`: the platform's published fee terms. */
+export interface ProtocolFeeInfo {
+  /** License text stating the payment obligation. */
+  license: string;
+  /** Basis points of entry-fee revenue owed. */
+  feeBps: number;
+  /** Address the fee routes to (zero when unset). */
+  recipient: string;
+}
+
+function decodeProtocolFeeInfo(result: unknown): ProtocolFeeInfo {
+  const r = result as { license?: unknown; fee_bps?: unknown; recipient?: unknown };
+  return {
+    license: typeof r?.license === "string" ? r.license : String(r?.license ?? ""),
+    feeBps: Number(r?.fee_bps ?? 0),
+    recipient: `0x${BigInt((r?.recipient as string | number | bigint) ?? 0).toString(16)}`,
+  };
+}
+
+/**
+ * Current global protocol-fee terms: rate + recipient + license in one call.
+ * For what a specific tournament owes, use
+ * `budokanTournamentProtocolFeeInfo` — rates are snapshotted at creation.
+ */
+export async function budokanProtocolFeeInfo(
   contract: Contract,
-  extensionAddress: string,
-): Promise<boolean> {
+): Promise<ProtocolFeeInfo> {
   return wrapRpcCall(async () => {
-    const result = await contract.call("is_fee_extension_approved", [extensionAddress]);
-    return Boolean(result);
+    const result = await contract.call("protocol_fee_info", []);
+    return decodeProtocolFeeInfo(result);
   }, contract.address);
 }
 
 /**
- * Whether the registry is enforced at `create_tournament` (true), or
- * advisory only (false — the permissionless deployment default).
+ * A tournament's protocol-fee terms: the bps snapshotted at creation (what
+ * this tournament owes), the LIVE recipient (a treasury rotation never
+ * strands compliant payments), and the license text. THE integration call
+ * for a compliant fee extension.
  */
-export async function budokanFeeExtensionGatingEnabled(
+export async function budokanTournamentProtocolFeeInfo(
   contract: Contract,
-): Promise<boolean> {
+  tournamentId: string,
+): Promise<ProtocolFeeInfo> {
   return wrapRpcCall(async () => {
-    const result = await contract.call("fee_extension_gating_enabled", []);
-    return Boolean(result);
+    const result = await contract.call("tournament_protocol_fee_info", [tournamentId]);
+    return decodeProtocolFeeInfo(result);
   }, contract.address);
 }
 

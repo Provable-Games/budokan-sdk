@@ -229,10 +229,13 @@ export function buildTournamentQualificationProof(
 export {
   classifyEntryFeeTrust,
   getEntryFeeTrust,
+  isVettedFeeExtension,
+  VETTED_FEE_EXTENSIONS,
 } from "./feeTrust.js";
 export type {
   EntryFeeTrust,
   EntryFeeTrustLevel,
   EntryFeeTrustReport,
   ClassifyEntryFeeTrustInput,
+  GetEntryFeeTrustOptions,
 } from "./feeTrust.js";
