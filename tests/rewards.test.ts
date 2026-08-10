@@ -35,6 +35,7 @@ const distributedPrize: Prize = {
   distributionType: "uniform",
   distributionWeight: null,
   distributionShares: null,
+  distributionParams: null,
   distributionCount: 3,
   sponsorAddress: "0x0",
   extensionAddress: null,
@@ -52,6 +53,7 @@ const singleNftPrize: Prize = {
   distributionType: null,
   distributionWeight: null,
   distributionShares: null,
+  distributionParams: null,
   distributionCount: null,
   sponsorAddress: "0x0",
   extensionAddress: null,
@@ -266,5 +268,72 @@ describe("getDistributableRewards", () => {
     expect(refunds.length).toBe(2);
     // per-token refund = 5% of one entry fee (1_000_000) = 50_000
     expect(refunds[0]!.amount).toBe(50_000n);
+  });
+});
+
+// ===========================================================================
+// Post-#311 curves in reward resolution.
+//
+// Before this, a Geometric/Tiered sponsored prize failed `isRawTokenPrize`
+// (the guard's allowed-type list predated the variants), so `getClaimableRewards`
+// skipped it outright and `getRawTokenPrizes` threw on it. A real, claimable
+// reward simply never appeared.
+// ===========================================================================
+describe("Geometric / Tiered rewards", () => {
+  const geometricPrize: Prize = {
+    prizeId: "200",
+    tournamentId: "10",
+    payoutPosition: 0,
+    tokenAddress: "0xerc20",
+    tokenType: "erc20",
+    amount: "1000000",
+    tokenId: null,
+    distributionType: "geometric",
+    distributionWeight: null,
+    distributionShares: null,
+    distributionParams: { ratioA: 10, ratioB: 7 },
+    distributionCount: 3,
+    sponsorAddress: "0x0",
+    extensionAddress: null,
+    extensionConfig: null,
+  };
+
+  test("a Geometric sponsor prize is resolved, not dropped", () => {
+    const rewards = getClaimableRewards({
+      placements,
+      tournaments: [tournament],
+      prizes: [geometricPrize],
+      existingClaims: [],
+    });
+    const distributed = rewards.filter((r) => r.source === "sponsor_distributed");
+    expect(distributed.length).toBe(1);
+    // W(p) = a^(n-p) * b^(p-1) over n=3 → 100:70:49, sum 219.
+    // 1st = 1_000_000 * 100 / 219 = 456621 (floor), as the contract settles.
+    expect(distributed[0]!.amount).toBe(456621n);
+    expect(distributed[0]!.amountIsExact).toBe(true);
+  });
+
+  test("a Geometric prize missing its params is surfaced as an estimate", () => {
+    const rewards = getClaimableRewards({
+      placements,
+      tournaments: [tournament],
+      prizes: [{ ...geometricPrize, distributionParams: null }],
+      existingClaims: [],
+    });
+    const distributed = rewards.filter((r) => r.source === "sponsor_distributed");
+    // Still offered — hiding a real claim is worse than approximating it.
+    expect(distributed.length).toBe(1);
+    expect(distributed[0]!.amountIsExact).toBe(false);
+  });
+
+  test("curve-free rewards are always exact", () => {
+    const rewards = getClaimableRewards({
+      placements,
+      tournaments: [tournament],
+      prizes: [singleNftPrize],
+      existingClaims: [],
+    });
+    const single = rewards.find((r) => r.source === "sponsor_single");
+    expect(single?.amountIsExact).toBe(true);
   });
 });

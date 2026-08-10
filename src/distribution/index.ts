@@ -25,7 +25,9 @@
  * module fixes that by taking `protocolFeeShare` as an explicit input.
  */
 
+import type { DistributionSpec } from "../calldata/index.js";
 import type { Prize } from "../types/prize.js";
+import { MAX_EXACT_EXPONENT, exactPayoutAt, payoutPercentages } from "./exact.js";
 
 const BASIS_POINTS = 10000n;
 
@@ -76,17 +78,31 @@ export type DistributionKind =
   | "exponential"
   | "uniform"
   | "custom"
+  | "geometric"
+  | "tiered"
   | "unknown";
 
 export interface ParsedDistribution {
   type: DistributionKind;
   /**
    * Raw weight as stored on-chain (scaled ×10 — e.g. `10` = 1.0). `0` for
-   * Uniform/Custom. `distributionPercentages` divides by 10 internally.
+   * Uniform/Custom/Geometric/Tiered. `distributionPercentages` divides by 10
+   * internally.
    */
   weight: number;
   /** For Custom distributions, the raw u16 basis-point shares (one per paid position). */
   customWeights?: number[];
+  /**
+   * Geometric/Tiered decay ratio: each place takes `ratioB / ratioA` of the
+   * one above it. Absent when the source didn't carry the curve parameters
+   * (an API older than the `distribution_params` columns), in which case the
+   * curve cannot be reproduced and callers fall back to Uniform.
+   */
+  ratioA?: number;
+  ratioB?: number;
+  /** Tiered only: geometric head size, and the share of the pool it takes (bps). */
+  headCount?: number;
+  headShareBps?: number;
 }
 
 const KNOWN_KEYS: Record<string, DistributionKind> = {
@@ -94,7 +110,48 @@ const KNOWN_KEYS: Record<string, DistributionKind> = {
   exponential: "exponential",
   uniform: "uniform",
   custom: "custom",
+  geometric: "geometric",
+  tiered: "tiered",
 };
+
+/**
+ * Read Geometric/Tiered curve parameters out of whichever wire shape carried
+ * them: the API's snake_case (`ratio_a`), the SDK/indexer camelCase
+ * (`ratioA`), or the Cairo tuple starknet.js renders as numeric keys
+ * (`{ "0": a, "1": b }`). Missing values stay `undefined` so callers can tell
+ * "no params" from "zero".
+ */
+function extractCurveParams(
+  kind: DistributionKind,
+  bag: Record<string, unknown>,
+): Pick<ParsedDistribution, "ratioA" | "ratioB" | "headCount" | "headShareBps"> {
+  if (kind !== "geometric" && kind !== "tiered") return {};
+  const num = (v: unknown): number | undefined => {
+    if (v === undefined || v === null) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const params: Pick<
+    ParsedDistribution,
+    "ratioA" | "ratioB" | "headCount" | "headShareBps"
+  > = {
+    ratioA: num(bag.ratio_a ?? bag.ratioA ?? (bag as Record<string, unknown>)["0"]),
+    ratioB: num(bag.ratio_b ?? bag.ratioB ?? (bag as Record<string, unknown>)["1"]),
+  };
+  if (kind === "tiered") {
+    params.headCount = num(bag.head_count ?? bag.headCount);
+    params.headShareBps = num(bag.head_share_bps ?? bag.headShareBps);
+  }
+  return params;
+}
+
+/** Tiered nests its ratio in a `head_ratio` tuple; flatten it onto the bag. */
+function flattenHeadRatio(inner: Record<string, unknown>): Record<string, unknown> {
+  const hr = inner.head_ratio ?? inner.headRatio;
+  return typeof hr === "object" && hr !== null
+    ? { ...inner, ...(hr as Record<string, unknown>) }
+    : inner;
+}
 
 /**
  * Normalize the many wire shapes of the Cairo `Distribution` enum into a flat
@@ -131,6 +188,19 @@ export function parseDistribution(dist: unknown): ParsedDistribution {
         customWeights: Array.isArray(shares) ? shares.map((v) => Number(v)) : [],
       };
     }
+    if (kind === "geometric" || kind === "tiered") {
+      // The API serves the params flattened onto the distribution object; the
+      // indexer/SDK nest them under `params` / `distributionParams`.
+      const rec = dist as Record<string, unknown>;
+      const nested = (rec.params ?? rec.distributionParams) as unknown;
+      const bag = flattenHeadRatio({
+        ...rec,
+        ...(typeof nested === "object" && nested !== null
+          ? (nested as Record<string, unknown>)
+          : {}),
+      });
+      return { type: kind, weight: 0, ...extractCurveParams(kind, bag) };
+    }
     return { type: kind, weight: Number(explicit.weight ?? 0) };
   }
 
@@ -148,6 +218,20 @@ export function parseDistribution(dist: unknown): ParsedDistribution {
     if (kind === "custom") {
       const arr = Array.isArray(value) ? value.map((v) => Number(v)) : [];
       return { type: "custom", weight: 0, customWeights: arr };
+    }
+
+    // Geometric carries a `(u16, u16)` tuple; Tiered a struct whose ratio is
+    // itself a nested tuple. Both arrive as objects, never a bare number.
+    if (kind === "geometric" || kind === "tiered") {
+      const inner =
+        typeof value === "object" && value !== null
+          ? (value as Record<string, unknown>)
+          : {};
+      return {
+        type: kind,
+        weight: 0,
+        ...extractCurveParams(kind, flattenHeadRatio(inner)),
+      };
     }
 
     // Linear / Exponential carry a numeric weight.
@@ -170,14 +254,102 @@ export function parseDistribution(dist: unknown): ParsedDistribution {
  */
 export function prizeDistribution(prize: Pick<
   Prize,
-  "distributionType" | "distributionWeight" | "distributionShares"
+  | "distributionType"
+  | "distributionWeight"
+  | "distributionShares"
+  | "distributionParams"
 >): ParsedDistribution {
   const type = KNOWN_KEYS[String(prize.distributionType ?? "uniform").toLowerCase()] ?? "uniform";
   if (type === "custom") {
     return { type, weight: 0, customWeights: prize.distributionShares ?? [] };
   }
+  if (type === "geometric" || type === "tiered") {
+    const bag = flattenHeadRatio(
+      (prize.distributionParams ?? {}) as Record<string, unknown>,
+    );
+    return { type, weight: 0, ...extractCurveParams(type, bag) };
+  }
   // Default weight matches the client (10 → 1.0) when missing.
   return { type, weight: prize.distributionWeight ?? 10 };
+}
+
+/**
+ * Lift a parsed distribution to the {@link DistributionSpec} the exact
+ * settlement maths consumes, or `null` when the curve can't be reproduced
+ * faithfully. Callers fall back to the legacy basis-point estimate on `null`.
+ *
+ * Returns `null` for:
+ *  - `unknown` — an unrecognized variant,
+ *  - Geometric/Tiered whose parameters didn't survive the wire (see
+ *    `ParsedDistribution.ratioA`),
+ *  - Exponential at a fractional exponent. The contract has refused these
+ *    since #311 ("whole number from 1 to 5"), but tournaments created on the
+ *    pre-#311 deployment can still carry one, and those settle with the old
+ *    basis-point maths — so the estimate must too.
+ *  - Custom whose share count doesn't match the paid places.
+ */
+export function toDistributionSpec(
+  dist: ParsedDistribution,
+  count: number,
+): DistributionSpec | null {
+  switch (dist.type) {
+    case "uniform":
+      return { kind: "uniform" };
+    case "linear":
+      // On-chain weight is ×10; DistributionSpec carries client units.
+      return { kind: "linear", weight: dist.weight / 10 };
+    case "exponential": {
+      const k = dist.weight / 10;
+      if (!Number.isInteger(k) || k < 1 || k > MAX_EXACT_EXPONENT) return null;
+      return { kind: "exponential", weight: k };
+    }
+    case "custom": {
+      const weights = dist.customWeights ?? [];
+      if (weights.length !== count) return null;
+      return { kind: "custom", weights };
+    }
+    case "geometric": {
+      const { ratioA, ratioB } = dist;
+      if (!isRatio(ratioA, ratioB)) return null;
+      return { kind: "geometric", ratioA: ratioA as number, ratioB: ratioB as number };
+    }
+    case "tiered": {
+      const { ratioA, ratioB, headCount, headShareBps } = dist;
+      if (!isRatio(ratioA, ratioB)) return null;
+      if (
+        !Number.isInteger(headCount) ||
+        !Number.isInteger(headShareBps) ||
+        (headCount as number) < 1 ||
+        (headShareBps as number) <= 0 ||
+        (headShareBps as number) >= 10000 ||
+        // The tail divisor `count - headCount` must be positive, exactly as
+        // the contract asserts before settling.
+        count <= (headCount as number)
+      ) {
+        return null;
+      }
+      return {
+        kind: "tiered",
+        ratioA: ratioA as number,
+        ratioB: ratioB as number,
+        headCount: headCount as number,
+        headShareBps: headShareBps as number,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/** The contract's ratio rule: `255 >= a > b > 0`, both whole. */
+function isRatio(a: number | undefined, b: number | undefined): boolean {
+  return (
+    Number.isInteger(a) &&
+    Number.isInteger(b) &&
+    (b as number) > 0 &&
+    (a as number) > (b as number) &&
+    (a as number) <= 255
+  );
 }
 
 /**
@@ -196,6 +368,11 @@ export function distributionPercentages(
   count: number,
 ): number[] {
   if (count <= 0) return [];
+
+  // Preferred path: the same integer maths the contract settles with, so the
+  // rendered shape matches the transferred amounts for every supported curve.
+  const spec = toDistributionSpec(dist, count);
+  if (spec) return payoutPercentages(spec, count);
 
   if (dist.type === "custom") {
     const cw = dist.customWeights ?? [];
@@ -298,7 +475,12 @@ export function entryFeePositionPayout(
   const split = entryFeeSplit(input);
   if (split.positionPool <= 0n) return 0n;
 
-  const pcts = distributionPercentages(parseDistribution(input.distribution), distCount);
+  const parsed = parseDistribution(input.distribution);
+  const spec = toDistributionSpec(parsed, distCount);
+  // Exact path: bit-for-bit what `_claim_entry_fee_position` transfers.
+  if (spec) return exactPayoutAt(spec, position, distCount, split.positionPool);
+
+  const pcts = distributionPercentages(parsed, distCount);
   const pct = pcts[position - 1] ?? 0;
   if (pct <= 0) return 0n;
   // Carry 4 extra decimals on pct so 0.0001% slices don't vanish (matches client).
@@ -316,10 +498,16 @@ export function sponsorPrizePayout(prize: Prize, position: number): bigint {
   const distCount = Number(prize.distributionCount ?? 0);
   if (distCount <= 0 || position < 1 || position > distCount) return 0n;
 
-  const pcts = distributionPercentages(prizeDistribution(prize), distCount);
+  const pool = BigInt(prize.amount ?? "0");
+  const parsed = prizeDistribution(prize);
+  const spec = toDistributionSpec(parsed, distCount);
+  // Exact path: bit-for-bit what `_claim_distributed_prize` transfers.
+  if (spec) return exactPayoutAt(spec, position, distCount, pool);
+
+  const pcts = distributionPercentages(parsed, distCount);
   const pct = pcts[position - 1] ?? 0;
   if (pct <= 0) return 0n;
-  return (BigInt(prize.amount ?? "0") * BigInt(Math.floor(pct * 10000))) / 1_000_000n;
+  return (pool * BigInt(Math.floor(pct * 10000))) / 1_000_000n;
 }
 
 // Exact settlement-mirroring maths + authoring-time validation for all six

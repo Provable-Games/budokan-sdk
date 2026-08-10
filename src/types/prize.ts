@@ -17,6 +17,14 @@ export interface Prize {
   /** Populated only when `distributionType === "custom"`. Each entry is a u16
    *  basis-point share summing to 10000, one per paid position. */
   distributionShares: number[] | null;
+  /**
+   * Curve parameters for the variants that are neither a single weight nor an
+   * explicit shares array — `geometric` (`ratioA`/`ratioB`) and `tiered`
+   * (those plus `headCount`/`headShareBps`). Null for every other type, and
+   * null from an API predating the `distribution_params` column, in which case
+   * the curve can't be reproduced and payout estimates fall back to Uniform.
+   */
+  distributionParams: Record<string, number> | null;
   distributionCount: number | null;
   sponsorAddress: string;
   /** Extension contract address; only set when `tokenType === "extension"`. */

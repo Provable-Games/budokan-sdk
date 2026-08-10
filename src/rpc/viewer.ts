@@ -9,6 +9,7 @@ import type { PaginatedResult } from "../types/common.js";
 import type { Phase } from "../types/tournament.js";
 import { RpcError } from "../errors/index.js";
 import { tournamentPhase } from "../phase/index.js";
+import { parseDistribution } from "../distribution/index.js";
 import { num } from "starknet";
 import { decodeByteArray } from "./decode.js";
 
@@ -291,6 +292,7 @@ function parsePrize(raw: unknown): Prize {
       distributionType: null,
       distributionWeight: null,
       distributionShares: null,
+      distributionParams: null,
       distributionCount: null,
       sponsorAddress: num.toHex(record.sponsor_address as bigint),
       extensionAddress:
@@ -318,6 +320,7 @@ function parsePrize(raw: unknown): Prize {
   let distributionType: string | null = null;
   let distributionWeight: number | null = null;
   let distributionShares: number[] | null = null;
+  let distributionParams: Record<string, number> | null = null;
   let distributionCount: number | null = null;
   // NOTE: the `tournament_prizes` PrizeRecord does not carry the prize's
   // leaderboard position (it's assigned at add_prize time and stored
@@ -360,6 +363,20 @@ function parsePrize(raw: unknown): Prize {
             distributionShares = Array.isArray(distValue)
               ? (distValue as unknown[]).map((v) => Number(v))
               : null;
+          } else if (
+            distributionType === "geometric" ||
+            distributionType === "tiered"
+          ) {
+            // These carry curve parameters, not a scalar weight: Geometric a
+            // `(u16, u16)` tuple, Tiered a struct nesting that tuple. Reuse
+            // `parseDistribution` rather than re-deriving the wire shapes.
+            const parsed = parseDistribution(distInner);
+            const params: Record<string, number> = {};
+            if (parsed.ratioA != null) params.ratioA = parsed.ratioA;
+            if (parsed.ratioB != null) params.ratioB = parsed.ratioB;
+            if (parsed.headCount != null) params.headCount = parsed.headCount;
+            if (parsed.headShareBps != null) params.headShareBps = parsed.headShareBps;
+            distributionParams = Object.keys(params).length > 0 ? params : null;
           } else {
             distributionWeight = distValue != null ? Number(distValue) : null;
           }
@@ -387,6 +404,7 @@ function parsePrize(raw: unknown): Prize {
     distributionType,
     distributionWeight,
     distributionShares,
+    distributionParams,
     distributionCount,
     sponsorAddress: num.toHex(record.sponsor_address as bigint),
     extensionAddress: null,
