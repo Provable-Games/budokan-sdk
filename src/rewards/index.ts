@@ -16,7 +16,14 @@
 
 import { buildClaimRewardCall } from "../calldata/index.js";
 import type { Call, RewardType } from "../calldata/index.js";
-import { entryFeeSplit, entryFeePositionPayout, sponsorPrizePayout } from "../distribution/index.js";
+import {
+  entryFeeSplit,
+  entryFeePositionPayout,
+  parseDistribution,
+  prizeDistribution,
+  sponsorPrizePayout,
+  toDistributionSpec,
+} from "../distribution/index.js";
 import { isRawTokenPrize } from "../utils/prizes.js";
 import type { Tournament } from "../types/tournament.js";
 import type { Prize, RewardClaim } from "../types/prize.js";
@@ -48,6 +55,30 @@ export interface ClaimableReward {
   amount?: bigint;
   /** ERC721 token id, when applicable. */
   tokenId?: string | null;
+  /**
+   * Whether `amount` is the exact figure the contract will transfer (computed
+   * with the same integer maths) or a fallback estimate. `false` only when the
+   * curve can't be reproduced — a Geometric/Tiered distribution whose
+   * parameters the data source didn't carry, or a pre-#311 fractional
+   * Exponential — in which case the amount is a Uniform approximation and a UI
+   * should qualify it ("≈"). The claim call itself is unaffected: the contract
+   * computes the payout, this figure never travels on-chain.
+   */
+  amountIsExact: boolean;
+}
+
+/**
+ * Whether the entry-fee curve can be settled with the contract's exact maths
+ * at this paid-places count, or only approximated. See
+ * `ClaimableReward.amountIsExact`.
+ */
+function entryFeeCurveIsExact(distribution: unknown, count: number): boolean {
+  return toDistributionSpec(parseDistribution(distribution), count) !== null;
+}
+
+/** As {@link entryFeeCurveIsExact}, for a distributed sponsor prize. */
+function prizeCurveIsExact(prize: Prize, count: number): boolean {
+  return toDistributionSpec(prizeDistribution(prize), count) !== null;
 }
 
 export interface GetClaimableRewardsInput {
@@ -123,6 +154,7 @@ export function getClaimableRewards(
             tokenAddress: ef.tokenAddress,
             tokenType: "erc20",
             amount,
+            amountIsExact: entryFeeCurveIsExact(ef.distribution, efDistCount),
             reward: { kind: "entry_fee_position", position: pos },
           });
         }
@@ -157,6 +189,8 @@ export function getClaimableRewards(
           tokenType,
           amount: tokenType === "erc20" ? BigInt(prize.amount ?? "0") : undefined,
           tokenId: prize.tokenId,
+          // A single-position prize is the escrowed amount verbatim — no curve.
+          amountIsExact: true,
           reward: { kind: "prize_single", prizeId: prize.prizeId },
         });
         continue;
@@ -181,6 +215,7 @@ export function getClaimableRewards(
         tokenAddress: prize.tokenAddress,
         tokenType: "erc20",
         amount,
+        amountIsExact: prizeCurveIsExact(prize, dc),
         reward: {
           kind: "prize_distributed",
           prizeId: prize.prizeId,
@@ -271,9 +306,12 @@ export function getDistributableRewards(
     amount: bigint,
     reward: RewardType,
     tokenId?: string,
+    // Fixed bps shares (creator, protocol fee, refund) carry no curve, so they
+    // default to exact; the curve-derived callers pass their own verdict.
+    amountIsExact: boolean = true,
   ): ClaimableReward => ({
     tournamentId: t.id, tournamentName: name, source, position,
-    tokenAddress, tokenType: "erc20", amount, tokenId, reward,
+    tokenAddress, tokenType: "erc20", amount, tokenId, amountIsExact, reward,
   });
 
   // ---- entry-fee pool ----
@@ -296,6 +334,7 @@ export function getDistributableRewards(
 
     // Position payouts (1-indexed, 1..distributionCount).
     const distCount = Number(ef.distributionCount ?? 0);
+    const positionsAreExact = entryFeeCurveIsExact(ef.distribution, distCount);
     for (let pos = 1; pos <= distCount; pos++) {
       if (claimedPositions.has(pos)) continue;
       const amount = entryFeePositionPayout(
@@ -303,7 +342,7 @@ export function getDistributableRewards(
         pos,
       );
       if (amount <= 0n) continue;
-      out.push(erc20Reward("entry_fee_position", pos, ef.tokenAddress, amount, { kind: "entry_fee_position", position: pos }));
+      out.push(erc20Reward("entry_fee_position", pos, ef.tokenAddress, amount, { kind: "entry_fee_position", position: pos }, undefined, positionsAreExact));
     }
 
     // Fixed shares (one claim each).
@@ -332,6 +371,7 @@ export function getDistributableRewards(
     if (!isRawTokenPrize(prize)) continue;
     const dc = prize.distributionCount ?? 0;
     if (dc > 0) {
+      const slicesAreExact = prizeCurveIsExact(prize, dc);
       for (let pos = 1; pos <= dc; pos++) {
         if (claimedDistributed.has(`${prize.prizeId}:${pos}`)) continue;
         const amount = sponsorPrizePayout(prize, pos);
@@ -339,6 +379,7 @@ export function getDistributableRewards(
         out.push(erc20Reward(
           "sponsor_distributed", pos, prize.tokenAddress, amount,
           { kind: "prize_distributed", prizeId: prize.prizeId, payoutPosition: pos },
+          undefined, slicesAreExact,
         ));
       }
     } else {
@@ -349,6 +390,7 @@ export function getDistributableRewards(
         position: prize.payoutPosition ?? 0, tokenAddress: prize.tokenAddress, tokenType,
         amount: tokenType === "erc20" ? BigInt(prize.amount ?? "0") : undefined,
         tokenId: prize.tokenId,
+        amountIsExact: true,
         reward: { kind: "prize_single", prizeId: prize.prizeId },
       });
     }

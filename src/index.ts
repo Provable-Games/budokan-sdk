@@ -162,6 +162,7 @@ export type { SubmittableScore } from "./leaderboard/index.js";
 export {
   parseDistribution,
   prizeDistribution,
+  toDistributionSpec,
   distributionPercentages,
   entryFeeSplit,
   entryFeePositionPayout,

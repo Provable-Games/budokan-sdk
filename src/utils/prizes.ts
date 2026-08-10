@@ -44,8 +44,19 @@ function isDistributionType(value: unknown): value is string {
     value === "linear" ||
     value === "exponential" ||
     value === "uniform" ||
-    value === "custom"
+    value === "custom" ||
+    // Added by budokan #311. Omitting these made every Geometric/Tiered
+    // sponsored prize fail `isRawTokenPrize`, which drops it from reward
+    // resolution entirely and throws in `getRawTokenPrizes`.
+    value === "geometric" ||
+    value === "tiered"
   );
+}
+
+/** Treats an absent `distributionParams` (older API, field not serialized) the
+ *  same as an explicit null. */
+function hasNoDistributionParams(prize: Prize): boolean {
+  return (prize.distributionParams ?? null) === null;
 }
 
 function hasNoDistributionFields(prize: Prize): boolean {
@@ -53,7 +64,8 @@ function hasNoDistributionFields(prize: Prize): boolean {
     prize.distributionType === null &&
     prize.distributionWeight === null &&
     prize.distributionShares === null &&
-    prize.distributionCount === null
+    prize.distributionCount === null &&
+    hasNoDistributionParams(prize)
   );
 }
 
@@ -73,12 +85,35 @@ function hasValidDistributionFields(prize: Prize): boolean {
   }
 
   if (prize.distributionType === "uniform") {
-    return prize.distributionWeight === null && prize.distributionShares === null;
+    return (
+      prize.distributionWeight === null &&
+      prize.distributionShares === null &&
+      hasNoDistributionParams(prize)
+    );
+  }
+
+  // Geometric/Tiered carry curve parameters instead of a scalar weight. The
+  // params are deliberately NOT required: an API predating the
+  // `distribution_params` columns serves the prize without them, and that
+  // prize is still real and still claimable — it just can't be sized exactly
+  // (see `ClaimableReward.amountIsExact`). Rejecting it here would hide the
+  // reward, which is strictly worse than approximating it.
+  if (
+    prize.distributionType === "geometric" ||
+    prize.distributionType === "tiered"
+  ) {
+    return (
+      prize.distributionWeight === null &&
+      prize.distributionShares === null &&
+      (hasNoDistributionParams(prize) ||
+        typeof prize.distributionParams === "object")
+    );
   }
 
   return (
     isNonNegativeIntegerNumber(prize.distributionWeight) &&
-    prize.distributionShares === null
+    prize.distributionShares === null &&
+    hasNoDistributionParams(prize)
   );
 }
 

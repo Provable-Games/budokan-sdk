@@ -96,14 +96,41 @@ describe("distributionPercentages", () => {
     expect(distributionPercentages({ type: "uniform", weight: 0 }, 0)).toEqual([]);
   });
 
-  test("matches the reference client formula (weight ÷ 10 then calculateDistribution)", () => {
-    // On-chain weight 10 → client passes 1.0 → JS divides by 10 again.
-    // Asserting the value pins parity with budokan client rendering.
-    const pcts = distributionPercentages({ type: "linear", weight: 10 }, 3);
-    // share_i = 1 + (positionValue-1)*0.1 → 1.2, 1.1, 1.0; total 3.3
-    expect(pcts[0]).toBeCloseTo(36.36, 1);
-    expect(pcts[1]).toBeCloseTo(33.33, 1);
-    expect(pcts[2]).toBeCloseTo(30.3, 1);
+  test("matches the contract's Linear weights, not the old double-÷10 estimate", () => {
+    // The contract's W(p) = 10 + (n - p) * w with w the raw on-chain weight,
+    // so Linear(10) over 4 places is 40:30:20:10 — pinned by
+    // game-components `test_linear_weights_are_exact` (first takes 4/10).
+    //
+    // The previous reference formula divided the weight by 10 twice
+    // (`distributionPercentages` once, `calculateDistribution` again), which
+    // rendered a curve 10x too shallow: 28.26% for the winner instead of 40%.
+    // budokan.gg showed the same shallow curve, so the two agreed with each
+    // other and disagreed with the chain.
+    const pcts = distributionPercentages({ type: "linear", weight: 10 }, 4);
+    expect(pcts[0]).toBeCloseTo(40, 5);
+    expect(pcts[1]).toBeCloseTo(30, 5);
+    expect(pcts[2]).toBeCloseTo(20, 5);
+    expect(pcts[3]).toBeCloseTo(10, 5);
+  });
+
+  test("matches the contract's Exponential weights", () => {
+    // Exponential(20) → k=2 over 3 places: weights 9:4:1, sum 14.
+    // game-components `test_exponential_weights_are_exact`.
+    // Percentages are 2-dp quantized (chart shape, not amounts) — same
+    // resolution the legacy basis-point path returned.
+    const pcts = distributionPercentages({ type: "exponential", weight: 20 }, 3);
+    expect(pcts[0]).toBeCloseTo((9 / 14) * 100, 1);
+    expect(pcts[1]).toBeCloseTo((4 / 14) * 100, 1);
+    expect(pcts[2]).toBeCloseTo((1 / 14) * 100, 1);
+  });
+
+  test("geometric without params falls back to uniform", () => {
+    // An API predating the distribution_params columns serves the type with
+    // no ratio. Uniform is the documented fallback — approximate, never a
+    // crash, and flagged via ClaimableReward.amountIsExact.
+    expect(distributionPercentages({ type: "geometric", weight: 0 }, 4)).toEqual([
+      25, 25, 25, 25,
+    ]);
   });
 });
 
@@ -399,5 +426,142 @@ describe("recommendDistribution", () => {
       const spec = recommendDistribution("winnerTakesMost", n);
       if (spec.kind === "tiered") expect(spec.headCount).toBeLessThan(n);
     }
+  });
+});
+
+// ===========================================================================
+// Contract parity for the post-#311 curves.
+//
+// Every expected value below is lifted from game-components v1.1.12's own
+// payout tests (`packages/utilities/src/distribution/tests/test_payout.cairo`)
+// — the exact code the deployed contract settles with. If one of these drifts,
+// the SDK is quoting an amount the chain will not transfer.
+// ===========================================================================
+describe("Geometric / Tiered parity with the contract", () => {
+  test("parses the Cairo tuple shape for Geometric", () => {
+    // Cairo `(u16, u16)` reaches starknet.js as numeric keys.
+    expect(parseDistribution({ variant: { Geometric: { 0: 10, 1: 7 } } })).toEqual({
+      type: "geometric",
+      weight: 0,
+      ratioA: 10,
+      ratioB: 7,
+    });
+  });
+
+  test("parses the API's snake_case shape for Geometric", () => {
+    expect(
+      parseDistribution({ type: "Geometric", ratio_a: 10, ratio_b: 7 }),
+    ).toEqual({ type: "geometric", weight: 0, ratioA: 10, ratioB: 7 });
+  });
+
+  test("parses Tiered, flattening the nested head_ratio tuple", () => {
+    expect(
+      parseDistribution({
+        variant: {
+          Tiered: { head_ratio: { 0: 10, 1: 7 }, head_count: 39, head_share_bps: 8000 },
+        },
+      }),
+    ).toEqual({
+      type: "tiered",
+      weight: 0,
+      ratioA: 10,
+      ratioB: 7,
+      headCount: 39,
+      headShareBps: 8000,
+    });
+  });
+
+  test("parses the API's flat snake_case shape for Tiered", () => {
+    expect(
+      parseDistribution({
+        type: "Tiered",
+        ratio_a: 10,
+        ratio_b: 7,
+        head_count: 39,
+        head_share_bps: 8000,
+      }),
+    ).toEqual({
+      type: "tiered",
+      weight: 0,
+      ratioA: 10,
+      ratioB: 7,
+      headCount: 39,
+      headShareBps: 8000,
+    });
+  });
+
+  test("Geometric(10,7) entry-fee payouts match calculate_payout exactly", () => {
+    // test_geometric_ratio_holds_between_adjacent_positions: pool 1e18,
+    // n = 10 → 1st 308720592627384808, 2nd 216104414839169366.
+    const input = {
+      amount: 10n ** 18n, // one entry, whole pool to positions
+      entryCount: 1,
+      tournamentCreatorShare: 0,
+      gameCreatorShare: 0,
+      refundShare: 0,
+      protocolFeeShare: 0,
+      distribution: { type: "Geometric", ratio_a: 10, ratio_b: 7 },
+      distributionCount: 10,
+    };
+    expect(entryFeePositionPayout(input, 1)).toBe(308720592627384808n);
+    expect(entryFeePositionPayout(input, 2)).toBe(216104414839169366n);
+  });
+
+  test("the flagship Tiered curve matches calculate_payout over 10,000 places", () => {
+    // test_tiered_pays_a_headline_first_prize_over_ten_thousand_places.
+    const prize = {
+      prizeId: "1",
+      tournamentId: "1",
+      payoutPosition: 0,
+      tokenAddress: "0xtoken",
+      tokenType: "erc20" as const,
+      amount: (10n ** 18n).toString(),
+      tokenId: null,
+      distributionType: "tiered",
+      distributionWeight: null,
+      distributionShares: null,
+      distributionParams: {
+        ratioA: 10,
+        ratioB: 7,
+        headCount: 39,
+        headShareBps: 8000,
+      },
+      distributionCount: 10000,
+      sponsorAddress: "0xsponsor",
+      extensionAddress: null,
+      extensionConfig: null,
+    } satisfies Prize;
+
+    expect(sponsorPrizePayout(prize, 1)).toBe(240000218290681776n);
+    expect(sponsorPrizePayout(prize, 2)).toBe(168000152803477243n);
+    expect(sponsorPrizePayout(prize, 39)).toBe(311843831108n);
+    // Every tail place takes an identical slice of what the head left.
+    expect(sponsorPrizePayout(prize, 40)).toBe(20078305391024n);
+    expect(sponsorPrizePayout(prize, 10000)).toBe(20078305391024n);
+  });
+
+  test("a Geometric prize without params is approximated, not dropped", () => {
+    // The reward must still surface — hiding a real claim is worse than
+    // quoting it approximately (flagged by ClaimableReward.amountIsExact).
+    const prize = {
+      prizeId: "1",
+      tournamentId: "1",
+      payoutPosition: 0,
+      tokenAddress: "0xtoken",
+      tokenType: "erc20" as const,
+      amount: "1000",
+      tokenId: null,
+      distributionType: "geometric",
+      distributionWeight: null,
+      distributionShares: null,
+      distributionParams: null,
+      distributionCount: 4,
+      sponsorAddress: "0xsponsor",
+      extensionAddress: null,
+      extensionConfig: null,
+    } satisfies Prize;
+
+    expect(sponsorPrizePayout(prize, 1)).toBe(250n);
+    expect(sponsorPrizePayout(prize, 4)).toBe(250n);
   });
 });
