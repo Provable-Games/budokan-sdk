@@ -1,0 +1,48 @@
+[
+  {
+    "type": "struct",
+    "name": "game_components_interfaces::structs::token::GameCreatorInfo",
+    "members": [
+      {
+        "name": "creator",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "license",
+        "type": "core::byte_array::ByteArray"
+      },
+      {
+        "name": "fee_numerator",
+        "type": "core::integer::u16"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "game_components_interfaces::token::creator::IMinigameTokenCreator",
+    "items": [
+      {
+        "type": "function",
+        "name": "game_creator_info",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "game_components_interfaces::structs::token::GameCreatorInfo"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "game_creator_address",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  }
+]

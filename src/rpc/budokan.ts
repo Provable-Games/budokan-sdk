@@ -132,3 +132,80 @@ export async function budokanProtocolFeeRecipient(
     return normalizeAddress(`0x${BigInt(result as string | number | bigint).toString(16)}`);
   }, contract.address);
 }
+
+// =========================================================================
+// Game token creator surface
+// =========================================================================
+
+/**
+ * SRC5 id for the token creator surface
+ * (`game_components_interfaces::token::creator::IMINIGAME_TOKEN_CREATOR_ID`).
+ * A game token that predates the surface does not register it.
+ */
+export const IMINIGAME_TOKEN_CREATOR_ID =
+  "0x21531ca59c09f4a8554a0c390d8054188d27b19148c9039f0279f2b66a86de7";
+
+export interface GameCreatorInfo {
+  /** Address the game's fee share is paid to. */
+  creator: string;
+  /** License text stating the payment obligation. */
+  license: string;
+  /** Basis points of entry-fee revenue the game requires. */
+  feeNumerator: number;
+}
+
+function decodeGameCreatorInfo(result: unknown): GameCreatorInfo {
+  const r = result as {
+    creator?: unknown;
+    license?: unknown;
+    fee_numerator?: unknown;
+  };
+  return {
+    creator: normalizeAddress(
+      `0x${BigInt((r?.creator as string | number | bigint) ?? 0).toString(16)}`,
+    ),
+    license: decodeByteArray(r?.license),
+    feeNumerator: Number(r?.fee_numerator ?? 0),
+  };
+}
+
+/**
+ * A game's declared payee and monetization fee, read from its token's creator
+ * surface.
+ *
+ * Budokan enforces `feeNumerator` as a FLOOR at `create_tournament`: a
+ * tournament whose `game_creator_share` is below it reverts. Before v2 this
+ * came from the minigame registry (`get_game_fee_info(game_id)`); v2 retired
+ * the registry and the token declares it directly, so this is the call that
+ * tells a create flow what share it must offer.
+ *
+ * `creator` is resolved LIVE at claim time by the contract, so a game whose
+ * owner rotates the payout address is paid at the new address for anything
+ * not yet claimed. Do not cache it against a tournament.
+ *
+ * Lite tokens are self-bound — the game contract IS its token — so `contract`
+ * is the game address.
+ *
+ * Throws `RpcError` when the token predates the creator surface (no such
+ * entrypoint). Callers that treat "no declared fee" as a floor of zero should
+ * catch and default; that matches the contract, which applies a zero floor to
+ * a game declaring nothing.
+ */
+export async function budokanGameCreatorInfo(
+  contract: Contract,
+): Promise<GameCreatorInfo> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("game_creator_info", []);
+    return decodeGameCreatorInfo(result);
+  }, contract.address);
+}
+
+/** Just the payee. Prefer `budokanGameCreatorInfo` when the fee is also needed. */
+export async function budokanGameCreatorAddress(
+  contract: Contract,
+): Promise<string> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("game_creator_address", []);
+    return normalizeAddress(`0x${BigInt(result as string | number | bigint).toString(16)}`);
+  }, contract.address);
+}
