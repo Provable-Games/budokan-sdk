@@ -342,6 +342,7 @@ export type {
 // Game fee floor (token game-fee surface)
 export {
   getGameFeeFloor,
+  MalformedFeeError,
   minGameFeeShareBps,
   isGameFeeShareValid,
 } from "./games/gameFee.js";

@@ -49,11 +49,31 @@ export interface GameFeeFloor {
 const BPS_DENOMINATOR = 10_000;
 
 /**
+ * Whether a failure means the caller gave up, rather than the chain answering.
+ * Covers `AbortController` (DOMException "AbortError"), the SDK's own timeout
+ * wrapper, and the common node/undici shapes.
+ */
+function isAbortOrTimeout(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  const message = (error as { message?: unknown }).message;
+  if (name === "AbortError" || name === "TimeoutError") return true;
+  return typeof message === "string" && /abort|timed? ?out/i.test(message);
+}
+
+/**
  * A token declared a fee that is not a basis-point rate. Distinct from
  * `RpcError` so the catch below can rethrow it without treating it as a
  * transport failure to classify.
  */
-export class MalformedFeeError extends RpcError {}
+export class MalformedFeeError extends RpcError {
+  constructor(message: string, contractAddress?: string) {
+    super(message, contractAddress);
+    // Without this the name stays "RpcError" and the distinction is
+    // unobservable at runtime — the reason for the subclass in the first place.
+    this.name = "MalformedFeeError";
+  }
+}
 
 /** True for an integer in 0..10000; anything else is not a basis-point rate. */
 function isBasisPoints(n: number): boolean {
@@ -131,6 +151,12 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
     // swallow it as "declares nothing" — turning a malformed token back into
     // a valid free game, which is the bug the throw was added to fix.
     if (error instanceof MalformedFeeError) throw error;
+
+    // A cancelled or timed-out read is not a token without a surface. Probing
+    // after an abort issues a SECOND request against a caller who has already
+    // walked away, and if that probe answers `false` the call resolves to a
+    // zero floor — so a cancelled read can still commit stale state.
+    if (isAbortOrTimeout(error)) throw error;
 
     // Degrade ONLY for a token that has no game-fee surface. Everything else —
     // an RPC outage, a bad provider, a contract built from the wrong ABI, a

@@ -27,10 +27,7 @@ const contractThrowing = (error: unknown, supportsSurface = false): Contract =>
   ({
     address: "0xgame",
     call: async (method: string) => {
-      if (method === "supports_interface") {
-        if (supportsSurface === null) throw error;
-        return supportsSurface;
-      }
+      if (method === "supports_interface") return supportsSurface;
       throw error;
     },
   }) as unknown as Contract;
@@ -243,6 +240,10 @@ describe("public entry surface", () => {
     expect(typeof entry.minGameFeeShareBps).toBe("function");
     expect(typeof entry.gameFeeContract).toBe("function");
     expect(Array.isArray(entry.GAME_FEE_ABI)).toBe(true);
+    // Consumers must be able to tell malformed on-chain terms from a
+    // transport failure; that needs both the export and a distinct `name`.
+    expect(typeof entry.MalformedFeeError).toBe("function");
+    expect(new entry.MalformedFeeError("x").name).toBe("MalformedFeeError");
     expect(typeof entry.IMINIGAME_TOKEN_GAME_FEE_ID).toBe("string");
   });
 
@@ -255,5 +256,31 @@ describe("public entry surface", () => {
     }
     expect(names.has("game_fee_terms")).toBe(true);
     expect(names.has("game_fee_recipient")).toBe(true);
+  });
+});
+
+describe("cancellation", () => {
+  // An abort is the caller giving up, not a token without a surface. Probing
+  // afterwards issues a second request against someone who has walked away —
+  // and if it answers `false`, the read resolves to a zero floor and the
+  // caller can commit stale state from a request it cancelled.
+  test("propagates an abort instead of probing and degrading", async () => {
+    let probes = 0;
+    const aborted = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+    });
+    const contract = {
+      address: "0xgame",
+      call: async (method: string) => {
+        if (method === "supports_interface") {
+          probes += 1;
+          return false; // would degrade to a zero floor if reached
+        }
+        throw aborted;
+      },
+    } as unknown as Contract;
+
+    await expect(getGameFeeFloor(contract)).rejects.toThrow(/aborted/);
+    expect(probes).toBe(0);
   });
 });
