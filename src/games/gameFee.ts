@@ -44,6 +44,16 @@ export interface GameFeeFloor {
 /** Basis-point denominator; shares are integers in 0..10000. */
 const BPS_DENOMINATOR = 10_000;
 
+/** True for an integer in 0..10000; anything else is not a basis-point rate. */
+function isBasisPoints(n: number): boolean {
+  return Number.isInteger(n) && n >= 0 && n <= BPS_DENOMINATOR;
+}
+
+/**
+ * Template for an undeclared floor. Callers get a COPY — this is module-level
+ * and `GameFeeFloor` is mutable, so handing out the shared reference would let
+ * one consumer's mutation change every later undeclared read in the process.
+ */
 const UNDECLARED: GameFeeFloor = {
   feeBps: 0,
   recipient: null,
@@ -82,10 +92,17 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
     // module contradict each other: `minGameFeeShareBps` would hand a create
     // flow 500 bps while `isGameFeeShareValid` rejected any non-zero share,
     // because Budokan has nowhere to route it.
-    if (recipient === null) return UNDECLARED;
+    if (recipient === null) return { ...UNDECLARED };
 
     return {
-      feeBps: Number.isFinite(info.feeNumerator) ? info.feeNumerator : 0,
+      // `fee_numerator` is a u16 on-chain, so a malformed or hostile token can
+      // declare up to 65535 — well past the 10000 bps ceiling. Left unclamped
+      // it reaches `minGameFeeShareBps`, which would then recommend a share
+      // `buildCreateTournamentCall` rejects outright: the same contradiction
+      // between this module's halves that the zero-recipient case produced,
+      // arrived at from the other end. Out of range is malformed, not a
+      // 655% fee, so it reads as no declared fee.
+      feeBps: isBasisPoints(info.feeNumerator) ? info.feeNumerator : 0,
       recipient,
       license: info.license,
       declared: true,
@@ -99,7 +116,7 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
     // failure reported a 0% floor for a game that requires 5%, the create flow
     // offered a share below the floor, and `create_tournament` reverted with a
     // message pointing at the wrong cause. Nothing surfaced the real fault.
-    if (isMissingEntrypoint(error)) return UNDECLARED;
+    if (isMissingEntrypoint(error)) return { ...UNDECLARED };
     throw error;
   }
 }

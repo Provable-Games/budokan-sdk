@@ -141,6 +141,37 @@ describe("getGameFeeFloor", () => {
     ).rejects.toThrow(/not deployed/);
   });
 
+  // `fee_numerator` is a u16, so 65535 is representable and nothing upstream
+  // clamps it. Left through, `minGameFeeShareBps` would recommend a value
+  // `buildCreateTournamentCall` rejects — the same two-halves contradiction as
+  // the zero-recipient case, reached from the opposite end.
+  test("treats an out-of-range fee_numerator as no declared fee", async () => {
+    const floor = await getGameFeeFloor(
+      contractReturning({ recipient: 0x1n, license: "terms", fee_numerator: 65535 }),
+    );
+    expect(floor.feeBps).toBe(0);
+    expect(minGameFeeShareBps(floor)).toBe(0);
+    // The boundary itself stays valid.
+    const atCeiling = await getGameFeeFloor(
+      contractReturning({ recipient: 0x1n, license: "terms", fee_numerator: 10000 }),
+    );
+    expect(atCeiling.feeBps).toBe(10000);
+  });
+
+  // Undeclared results must not share one mutable object, or a consumer
+  // mutating one corrupts every later undeclared read in the process.
+  test("returns a fresh object for each undeclared read", async () => {
+    const a = await getGameFeeFloor(
+      contractThrowing(new Error("ENTRYPOINT_NOT_FOUND: game_fee_terms")),
+    );
+    const b = await getGameFeeFloor(
+      contractThrowing(new Error("ENTRYPOINT_NOT_FOUND: game_fee_terms")),
+    );
+    expect(a).not.toBe(b);
+    a.feeBps = 9999;
+    expect(b.feeBps).toBe(0);
+  });
+
   test("reports a real recipient and fee", async () => {
     const floor = await getGameFeeFloor(
       contractReturning({ recipient: 0x1n, license: "terms", fee_numerator: 500 }),
