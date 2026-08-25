@@ -48,6 +48,13 @@ export interface GameFeeFloor {
 /** Basis-point denominator; shares are integers in 0..10000. */
 const BPS_DENOMINATOR = 10_000;
 
+/**
+ * A token declared a fee that is not a basis-point rate. Distinct from
+ * `RpcError` so the catch below can rethrow it without treating it as a
+ * transport failure to classify.
+ */
+export class MalformedFeeError extends RpcError {}
+
 /** True for an integer in 0..10000; anything else is not a basis-point rate. */
 function isBasisPoints(n: number): boolean {
   return Number.isInteger(n) && n >= 0 && n <= BPS_DENOMINATOR;
@@ -104,7 +111,7 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
     // `isGameFeeShareValid(floor, 0)` said yes to a create call that reverts.
     // Malformed input is not a floor — surface it.
     if (!isBasisPoints(info.feeNumerator)) {
-      throw new RpcError(
+      throw new MalformedFeeError(
         `Game declares a fee_numerator outside 0-${BPS_DENOMINATOR} basis points ` +
           `(${info.feeNumerator}); no share can satisfy it`,
         contract.address,
@@ -118,6 +125,13 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
       declared: true,
     };
   } catch (error: unknown) {
+    // Our own validation failure, raised inside the `try` above. Rethrow
+    // before the probe: it is not a transport failure to classify, the probe
+    // would cost a wasted round-trip, and a probe answering `false` would
+    // swallow it as "declares nothing" — turning a malformed token back into
+    // a valid free game, which is the bug the throw was added to fix.
+    if (error instanceof MalformedFeeError) throw error;
+
     // Degrade ONLY for a token that has no game-fee surface. Everything else —
     // an RPC outage, a bad provider, a contract built from the wrong ABI, a
     // cancelled request — must propagate.
@@ -156,9 +170,18 @@ async function lacksGameFeeSurface(contract: Contract): Promise<boolean> {
     const supported = await contract.call("supports_interface", [
       IMINIGAME_TOKEN_GAME_FEE_ID,
     ]);
-    // starknet.js decodes a Cairo bool as `false` or `0n` depending on
-    // parsing strategy; treat either as a clean negative.
-    return supported === false || supported === 0n;
+    // `GAME_FEE_ABI` types this `core::bool`, so v9 decodes a JS boolean —
+    // but unwrap a boxed result too. If a future parsing change returned
+    // `[false]` or `{ "0": false }`, an un-normalised compare would match
+    // neither branch, report "surface present", and throw on a legitimately
+    // old token: the create-flow break this degradation exists to prevent,
+    // reached through a decoding detail.
+    const value = Array.isArray(supported)
+      ? supported[0]
+      : supported !== null && typeof supported === "object"
+        ? Object.values(supported)[0]
+        : supported;
+    return value === false || value === 0n;
   } catch {
     return false;
   }

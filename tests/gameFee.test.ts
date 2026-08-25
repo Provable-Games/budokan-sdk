@@ -165,6 +165,37 @@ describe("getGameFeeFloor", () => {
   // clamps it. Left through, `minGameFeeShareBps` would recommend a value
   // `buildCreateTournamentCall` rejects — the same two-halves contradiction as
   // the zero-recipient case, reached from the opposite end.
+  // The probe must not get a chance to swallow our own validation error: a
+  // token whose SRC5 answers `false` would otherwise turn a malformed fee back
+  // into a valid free game.
+  test("surfaces a malformed fee even when the surface probe says no", async () => {
+    const contract = {
+      address: "0xgame",
+      call: async (method: string) =>
+        method === "supports_interface"
+          ? false
+          : { recipient: 0x1n, license: "terms", fee_numerator: 65535 },
+    } as unknown as Contract;
+    await expect(getGameFeeFloor(contract)).rejects.toThrow(/basis points/);
+  });
+
+  // A boxed decode must still read as "no surface" rather than falling through
+  // and throwing on a legitimately old token.
+  test("degrades when the surface probe returns a boxed false", async () => {
+    for (const boxed of [[false], { "0": false }]) {
+      const contract = {
+        address: "0xgame",
+        call: async (method: string) => {
+          if (method === "supports_interface") return boxed;
+          throw new Error("Contract error");
+        },
+      } as unknown as Contract;
+      const floor = await getGameFeeFloor(contract);
+      expect(floor.declared).toBe(false);
+      expect(floor.feeBps).toBe(0);
+    }
+  });
+
   test("throws on a fee_numerator outside basis points", async () => {
     // Coercing it to 0 turned a token nobody can satisfy into a valid free
     // game, so `isGameFeeShareValid(floor, 0)` said yes to a reverting call.

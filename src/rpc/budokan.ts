@@ -143,6 +143,17 @@ export async function budokanProtocolFeeRecipient(
  * SRC5 id for the token's game-fee surface
  * (`game_components_interfaces::token::game_fee::IMINIGAME_TOKEN_GAME_FEE_ID`).
  * A game token that predates the surface does not register it.
+ *
+ * This is the highest-consequence literal in the package: a wrong id makes
+ * `supports_interface` answer `false` for EVERY token, so every game reads as
+ * declaring no fee — silently, since nothing errors. The retired
+ * `0x21531ca…` did exactly that.
+ *
+ * Asserting it here would be circular — TypeScript cannot import a Cairo
+ * constant, so the test would compare the literal to itself. The real guard
+ * lives in budokan's contract suite, where the constant IS importable:
+ * `test_game_fee_interface_id_matches_the_value_the_client_hardcodes` fails on
+ * any repin that moves it, and names this file. Keep the two in step.
  */
 export const IMINIGAME_TOKEN_GAME_FEE_ID =
   "0x171bf98e08ae98315df3e68477e24275ef5755111c1984db851c344b3907bb0";
