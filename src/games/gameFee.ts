@@ -77,11 +77,18 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
     } catch {
       recipient = null;
     }
+    // No payee means no fee, full stop. Carrying the token's `fee_numerator`
+    // through while reporting `declared: false` made the two halves of this
+    // module contradict each other: `minGameFeeShareBps` would hand a create
+    // flow 500 bps while `isGameFeeShareValid` rejected any non-zero share,
+    // because Budokan has nowhere to route it.
+    if (recipient === null) return UNDECLARED;
+
     return {
       feeBps: Number.isFinite(info.feeNumerator) ? info.feeNumerator : 0,
       recipient,
       license: info.license,
-      declared: recipient !== null,
+      declared: true,
     };
   } catch (error: unknown) {
     // Degrade ONLY for a token that has no game-fee surface. Everything else —
@@ -107,7 +114,11 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
 function isMissingEntrypoint(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  return /ENTRYPOINT_NOT_FOUND|Entry ?point .* not found|is not deployed/i.test(message);
+  // Deliberately NOT matching "is not deployed": that is a wrong address or a
+  // wrong chain, and reading it as "this game declares no fee" hides an
+  // integration error behind a plausible-looking zero floor — the exact
+  // failure this classification exists to stop.
+  return /ENTRYPOINT_NOT_FOUND|Entry ?point .* not found/i.test(message);
 }
 
 /**

@@ -121,8 +121,23 @@ describe("getGameFeeFloor", () => {
     );
     expect(floor.recipient).toBeNull();
     expect(floor.declared).toBe(false);
+    // The assertion my first pass omitted, and the reviewer caught: an
+    // undeclared floor must be ZEROED, not left carrying the token's
+    // fee_numerator. Otherwise minGameFeeShareBps recommends a share
+    // isGameFeeShareValid rejects.
+    expect(floor.feeBps).toBe(0);
+    expect(minGameFeeShareBps(floor)).toBe(0);
     expect(isGameFeeShareValid(floor, 0)).toBe(true);
     expect(isGameFeeShareValid(floor, 500)).toBe(false);
+  });
+
+  // A wrong address or wrong chain is an integration error, not a game
+  // declining to charge. Reporting it as undeclared hides it behind a
+  // plausible zero floor.
+  test("propagates an undeployed-contract error", async () => {
+    await expect(
+      getGameFeeFloor(contractThrowing(new Error("Contract not found: is not deployed"))),
+    ).rejects.toThrow(/not deployed/);
   });
 
   test("reports a real recipient and fee", async () => {

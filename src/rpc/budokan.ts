@@ -1,6 +1,6 @@
-import { Contract } from "starknet";
-import type { Abi, ProviderInterface } from "starknet";
+import type { Abi, Contract, RpcProvider } from "starknet";
 import gameFeeAbi from "./abis/gameFee.json" with { type: "json" };
+import { createContract } from "./provider.js";
 import { RpcError } from "../errors/index.js";
 import { decodeByteArray } from "./decode.js";
 import { normalizeAddress } from "../utils/address.js";
@@ -207,16 +207,19 @@ export const GAME_FEE_ABI = gameFeeAbi as Abi;
  *
  * `address` is the GAME address: the standard puts token, settings and
  * objectives at one contract, and the fee surface lives there with them.
+ *
+ * Async, and routed through `createContract`, because `starknet` is loaded
+ * lazily on purpose — `provider.ts` caches a dynamic `import("starknet")` so
+ * that importing this package does not pull the whole RPC stack in. `index.ts`
+ * statically re-exports this module, so a value import of `Contract` here
+ * would make every consumer load `starknet` at import time, including
+ * API-only ones and bundles that do not have it installed.
  */
 export function gameFeeContract(
   address: string,
-  provider: ProviderInterface,
-): Contract {
-  return new Contract({
-    abi: GAME_FEE_ABI,
-    address,
-    providerOrAccount: provider,
-  });
+  provider: RpcProvider,
+): Promise<Contract> {
+  return createContract(GAME_FEE_ABI, address, provider);
 }
 
 export async function budokanGameFeeTerms(
