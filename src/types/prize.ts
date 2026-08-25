@@ -67,7 +67,7 @@ export type ExtensionPrize = Prize & {
  * variants of the on-chain `RewardType` enum (Prize::Single, Prize::Distributed,
  * EntryFee::Position / TournamentCreator / GameFee / Refund / ProtocolFee).
  * The variant-specific fields below are populated only for the kinds that carry
- * them; the three pure-marker kinds (tournament_creator, game_creator,
+ * them; the three pure-marker kinds (tournament_creator, game_fee,
  * protocol_fee) leave all four nullable fields null.
  */
 export type RewardClaimKind =

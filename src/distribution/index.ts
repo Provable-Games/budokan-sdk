@@ -20,7 +20,7 @@
  * Entry-fee split semantics follow the contract
  * (`packages/rewards/src/budokan_rewards.cairo::_claim_entry_fee_position`):
  * the position pool is the entry-fee pool **minus** the tournament-creator,
- * game-creator, refund, *and protocol-fee* shares. The client historically
+ * game-fee, refund, *and protocol-fee* shares. The client historically
  * omitted the protocol fee here and over-counted the position pool — this
  * module fixes that by taking `protocolFeeShare` as an explicit input.
  */
@@ -424,7 +424,7 @@ function bps(total: bigint, share: number | null | undefined): bigint {
 
 /**
  * Split a built-in entry-fee pool into its on-chain components. The position
- * pool reserves the tournament-creator, game-creator, refund, *and* protocol
+ * pool reserves the tournament-creator, game-fee, refund, *and* protocol
  * fee — matching `_claim_entry_fee_position`'s `available_share`.
  *
  * Note: each component is floored independently (sub-wei dust may not sum to

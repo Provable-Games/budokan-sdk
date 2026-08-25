@@ -6,6 +6,7 @@ import {
   type GameFeeFloor,
 } from "../src/games/gameFee.ts";
 import type { Contract } from "starknet";
+import { GAME_FEE_ABI } from "../src/rpc/budokan.ts";
 
 /** Minimal stand-in for the one method `getGameFeeFloor` reaches through. */
 const contractReturning = (result: unknown): Contract =>
@@ -146,5 +147,33 @@ describe("getGameFeeFloor", () => {
     );
     expect(floor.declared).toBe(true);
     expect(floor.feeBps).toBe(500);
+  });
+});
+
+// The finding this covers: `gameFeeContract`/`GAME_FEE_ABI` were exported from
+// `src/rpc/budokan.ts` but not from the entry, so no published consumer could
+// reach them — and `getGameFeeFloor` takes a `Contract` they are the supported
+// way to build. Importing through the entry is what makes that regression
+// visible; importing the module directly would pass either way.
+describe("public entry surface", () => {
+  test("exposes the fee-floor read path", async () => {
+    const entry = await import("../src/index.ts");
+    expect(typeof entry.getGameFeeFloor).toBe("function");
+    expect(typeof entry.isGameFeeShareValid).toBe("function");
+    expect(typeof entry.minGameFeeShareBps).toBe("function");
+    expect(typeof entry.gameFeeContract).toBe("function");
+    expect(Array.isArray(entry.GAME_FEE_ABI)).toBe(true);
+    expect(typeof entry.IMINIGAME_TOKEN_GAME_FEE_ID).toBe("string");
+  });
+
+  test("the exported ABI declares the entrypoints the reads call", () => {
+    const names = new Set<string>();
+    for (const item of GAME_FEE_ABI as Array<Record<string, unknown>>) {
+      if (item.type === "interface") {
+        for (const f of item.items as Array<{ name: string }>) names.add(f.name);
+      }
+    }
+    expect(names.has("game_fee_terms")).toBe(true);
+    expect(names.has("game_fee_recipient")).toBe(true);
   });
 });
