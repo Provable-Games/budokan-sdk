@@ -137,9 +137,7 @@ export function getClaimableRewards(
             amount: ef.amount ?? "0",
             entryCount: tournament.entryCount ?? 0,
             tournamentCreatorShare: ef.tournamentCreatorShare,
-            // RHS is metagame-sdk's EntryFee. Renamed on its main (0.2.0)
-            // but not published; flip to `ef.gameFeeShare` on the repin.
-            gameFeeShare: ef.gameCreatorShare,
+            gameFeeShare: ef.gameFeeShare,
             refundShare: ef.refundShare,
             protocolFeeShare: tournament.protocolFeeShare,
             distribution: ef.distribution,
@@ -328,8 +326,7 @@ export function getDistributableRewards(
       amount: ef.amount ?? "0",
       entryCount: t.entryCount ?? 0,
       tournamentCreatorShare: ef.tournamentCreatorShare ?? 0,
-      // metagame-sdk's EntryFee again — see above.
-      gameFeeShare: ef.gameCreatorShare ?? 0,
+      gameFeeShare: ef.gameFeeShare ?? 0,
       refundShare: ef.refundShare ?? 0,
       protocolFeeShare,
     };

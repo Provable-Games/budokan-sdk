@@ -17,7 +17,7 @@ const tournament = {
     tokenAddress: "0xfee",
     amount: "1000000",
     tournamentCreatorShare: 0,
-    gameCreatorShare: 0,
+    gameFeeShare: 0,
     refundShare: 0,
     distribution: { Uniform: {} },
     distributionCount: 3,
@@ -187,7 +187,7 @@ describe("getDistributableRewards", () => {
       tokenAddress: "0xfee",
       amount: "1000000", // total pool 10_000_000
       tournamentCreatorShare: 1000, // 10%
-      gameCreatorShare: 500, // 5%
+      gameFeeShare: 500, // 5%
       refundShare: 500, // 5%
       distribution: { Uniform: {} },
       distributionCount: 3,
