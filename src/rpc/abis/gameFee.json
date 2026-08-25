@@ -1,0 +1,70 @@
+[
+  {
+    "type": "struct",
+    "name": "game_components_interfaces::structs::token::GameFeeTerms",
+    "members": [
+      {
+        "name": "recipient",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "license",
+        "type": "core::byte_array::ByteArray"
+      },
+      {
+        "name": "fee_numerator",
+        "type": "core::integer::u16"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "game_components_interfaces::token::game_fee::IMinigameTokenGameFee",
+    "items": [
+      {
+        "type": "function",
+        "name": "game_fee_terms",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "game_components_interfaces::structs::token::GameFeeTerms"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "game_fee_recipient",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "openzeppelin_introspection::interface::ISRC5",
+    "items": [
+      {
+        "type": "function",
+        "name": "supports_interface",
+        "inputs": [
+          {
+            "name": "interface_id",
+            "type": "core::felt252"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  }
+]

@@ -338,3 +338,23 @@ export type {
   BracketStatus,
   CreateBracketConfig,
 } from "./onchain-brackets/index.js";
+
+// Game fee floor (token game-fee surface)
+export {
+  getGameFeeFloor,
+  MalformedFeeError,
+  minGameFeeShareBps,
+  isGameFeeShareValid,
+} from "./games/gameFee.js";
+export type { GameFeeFloor } from "./games/gameFee.js";
+export {
+  budokanGameFeeTerms,
+  budokanGameFeeRecipient,
+  // The factory and ABI are the supported way to build the `Contract` these
+  // reads take. Exported from the module but not the entry, they were
+  // unreachable for any published consumer.
+  gameFeeContract,
+  GAME_FEE_ABI,
+  IMINIGAME_TOKEN_GAME_FEE_ID,
+} from "./rpc/budokan.js";
+export type { GameFeeTerms } from "./rpc/budokan.js";

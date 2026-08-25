@@ -22,6 +22,7 @@ function wrapRpcCall<T>(fn: () => Promise<T>, contractAddress?: string): Promise
     throw new RpcError(
       error instanceof Error ? error.message : "RPC call failed",
       contractAddress,
+      { cause: error },
     );
   });
 }
@@ -145,7 +146,7 @@ function parseTournament(
         tokenAddress: entryFeeToken,
         amount: entryFeeAmount,
         tournamentCreatorShare: Number(ef.tournament_creator_share ?? 0),
-        gameCreatorShare: Number(ef.game_creator_share ?? 0),
+        gameFeeShare: Number(ef.game_fee_share ?? 0),
         refundShare: Number(ef.refund_share ?? 0),
         distribution: (ef.distribution as Distribution) ?? null,
         distributionCount: Number(ef.distribution_count ?? 0),
@@ -775,8 +776,8 @@ function translateCairoRewardType(rewardType: unknown): TranslatedRewardClaim {
     if (subVariant === "TournamentCreator" || subBag?.TournamentCreator !== undefined) {
       return rewardClaim({ claimKind: "entry_fee_tournament_creator" });
     }
-    if (subVariant === "GameCreator" || subBag?.GameCreator !== undefined) {
-      return rewardClaim({ claimKind: "entry_fee_game_creator" });
+    if (subVariant === "GameFee" || subBag?.GameFee !== undefined) {
+      return rewardClaim({ claimKind: "entry_fee_game_fee" });
     }
     if (subVariant === "ProtocolFee" || subBag?.ProtocolFee !== undefined) {
       return rewardClaim({ claimKind: "entry_fee_protocol_fee" });

@@ -140,13 +140,13 @@ describe("entryFeeSplit", () => {
       amount: "1000",
       entryCount: 10, // total = 10_000
       tournamentCreatorShare: 1000, // 10%
-      gameCreatorShare: 500, // 5%
+      gameFeeShare: 500, // 5%
       refundShare: 500, // 5%
       protocolFeeShare: 300, // 3%
     });
     expect(split.total).toBe(10_000n);
     expect(split.tournamentCreator).toBe(1000n);
-    expect(split.gameCreator).toBe(500n);
+    expect(split.gameFee).toBe(500n);
     expect(split.refund).toBe(500n);
     expect(split.protocolFee).toBe(300n);
     // available = 10000 - 1000 - 500 - 500 - 300 = 7700 bps
@@ -155,7 +155,7 @@ describe("entryFeeSplit", () => {
     const sum =
       split.positionPool +
       split.tournamentCreator +
-      split.gameCreator +
+      split.gameFee +
       split.refund +
       split.protocolFee;
     expect(sum).toBe(10_000n);
@@ -166,7 +166,7 @@ describe("entryFeeSplit", () => {
       amount: "1000",
       entryCount: 10,
       tournamentCreatorShare: 1000,
-      gameCreatorShare: 500,
+      gameFeeShare: 500,
       refundShare: 500,
     };
     const withProtocol = entryFeeSplit({ ...base, protocolFeeShare: 300 });
@@ -180,7 +180,7 @@ describe("entryFeeSplit", () => {
       amount: "1000",
       entryCount: 1,
       tournamentCreatorShare: 6000,
-      gameCreatorShare: 5000,
+      gameFeeShare: 5000,
     });
     expect(split.availableShareBps).toBe(0);
     expect(split.positionPool).toBe(0n);
@@ -192,10 +192,11 @@ describe("entryFeePositionPayout", () => {
     amount: "1000000",
     entryCount: 10, // total = 10_000_000
     tournamentCreatorShare: 0,
-    gameCreatorShare: 0,
+    gameFeeShare: 0,
     refundShare: 0,
     distribution: { Uniform: {} },
     distributionCount: 4,
+    distributionParams: null,
   };
 
   test("uniform 4-way split over full pool", () => {
@@ -236,6 +237,7 @@ describe("sponsorPrizePayout", () => {
     distributionWeight: null,
     distributionShares: null,
     distributionCount: 4,
+    distributionParams: null,
     sponsorAddress: "0x0",
     extensionAddress: null,
     extensionConfig: null,
@@ -252,6 +254,7 @@ describe("sponsorPrizePayout", () => {
       distributionType: "custom",
       distributionShares: [5000, 3000, 2000],
       distributionCount: 3,
+      distributionParams: null,
     };
     expect(sponsorPrizePayout(custom, 1)).toBe(500_000n);
     expect(sponsorPrizePayout(custom, 2)).toBe(300_000n);
@@ -274,6 +277,7 @@ describe("prizeDistribution", () => {
         distributionType: "custom",
         distributionWeight: null,
         distributionShares: [6000, 4000],
+        distributionParams: null,
       }),
     ).toEqual({ type: "custom", weight: 0, customWeights: [6000, 4000] });
   });
@@ -283,6 +287,7 @@ describe("prizeDistribution", () => {
         distributionType: "linear",
         distributionWeight: null,
         distributionShares: null,
+        distributionParams: null,
       }),
     ).toEqual({ type: "linear", weight: 10 });
   });
@@ -497,11 +502,12 @@ describe("Geometric / Tiered parity with the contract", () => {
       amount: 10n ** 18n, // one entry, whole pool to positions
       entryCount: 1,
       tournamentCreatorShare: 0,
-      gameCreatorShare: 0,
+      gameFeeShare: 0,
       refundShare: 0,
       protocolFeeShare: 0,
       distribution: { type: "Geometric", ratio_a: 10, ratio_b: 7 },
       distributionCount: 10,
+      distributionParams: null,
     };
     expect(entryFeePositionPayout(input, 1)).toBe(308720592627384808n);
     expect(entryFeePositionPayout(input, 2)).toBe(216104414839169366n);

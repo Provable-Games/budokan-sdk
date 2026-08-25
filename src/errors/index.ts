@@ -44,10 +44,14 @@ export class TournamentNotFoundError extends BudokanError {
 export class RpcError extends BudokanError {
   readonly contractAddress?: string;
 
-  constructor(message: string, contractAddress?: string) {
+  constructor(message: string, contractAddress?: string, options?: { cause?: unknown }) {
     super(message);
     this.name = "RpcError";
     this.contractAddress = contractAddress;
+    // Preserve what threw. Wrapping used to keep only the message, so callers
+    // classifying a failure — is this an abort? a timeout? — were left matching
+    // strings, because `name` and the original type were gone by then.
+    if (options && "cause" in options) this.cause = options.cause;
   }
 }
 

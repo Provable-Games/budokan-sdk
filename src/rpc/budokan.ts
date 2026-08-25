@@ -1,4 +1,6 @@
-import type { Contract } from "starknet";
+import type { Abi, Contract, RpcProvider } from "starknet";
+import gameFeeAbi from "./abis/gameFee.json" with { type: "json" };
+import { createContract } from "./provider.js";
 import { RpcError } from "../errors/index.js";
 import { decodeByteArray } from "./decode.js";
 import { normalizeAddress } from "../utils/address.js";
@@ -12,6 +14,7 @@ function wrapRpcCall<T>(fn: () => Promise<T>, contractAddress?: string): Promise
     throw new RpcError(
       error instanceof Error ? error.message : "RPC call failed",
       contractAddress,
+      { cause: error },
     );
   });
 }
@@ -129,6 +132,123 @@ export async function budokanProtocolFeeRecipient(
 ): Promise<string> {
   return wrapRpcCall(async () => {
     const result = await contract.call("protocol_fee_recipient", []);
+    return normalizeAddress(`0x${BigInt(result as string | number | bigint).toString(16)}`);
+  }, contract.address);
+}
+
+// =========================================================================
+// Game token's game-fee surface
+// =========================================================================
+
+/**
+ * SRC5 id for the token's game-fee surface
+ * (`game_components_interfaces::token::game_fee::IMINIGAME_TOKEN_GAME_FEE_ID`).
+ * A game token that predates the surface does not register it.
+ *
+ * This is the highest-consequence literal in the package: a wrong id makes
+ * `supports_interface` answer `false` for EVERY token, so every game reads as
+ * declaring no fee — silently, since nothing errors. The retired
+ * `0x21531ca…` did exactly that.
+ *
+ * Asserting it here would be circular — TypeScript cannot import a Cairo
+ * constant, so the test would compare the literal to itself. The real guard
+ * lives in budokan's contract suite, where the constant IS importable:
+ * `test_game_fee_interface_id_matches_the_value_the_client_hardcodes` fails on
+ * any repin that moves it, and names this file. Keep the two in step.
+ */
+export const IMINIGAME_TOKEN_GAME_FEE_ID =
+  "0x171bf98e08ae98315df3e68477e24275ef5755111c1984db851c344b3907bb0";
+
+export interface GameFeeTerms {
+  /** Address the game's fee share is paid to. */
+  recipient: string;
+  /** License text stating the payment obligation. */
+  license: string;
+  /** Basis points of entry-fee revenue the game requires. */
+  feeNumerator: number;
+}
+
+function decodeGameFeeTerms(result: unknown): GameFeeTerms {
+  const r = result as {
+    recipient?: unknown;
+    license?: unknown;
+    fee_numerator?: unknown;
+  };
+  return {
+    recipient: normalizeAddress(
+      `0x${BigInt((r?.recipient as string | number | bigint) ?? 0).toString(16)}`,
+    ),
+    license: decodeByteArray(r?.license),
+    feeNumerator: Number(r?.fee_numerator ?? 0),
+  };
+}
+
+/**
+ * A game's declared payee and monetization fee, read from its token's game-fee
+ * surface.
+ *
+ * Budokan enforces `feeNumerator` as a FLOOR at `create_tournament`: a
+ * tournament whose `game_fee_share` is below it reverts. Before v2 this
+ * came from the minigame registry (`get_game_fee_info(game_id)`); v2 retired
+ * the registry and the token declares it directly, so this is the call that
+ * tells a create flow what share it must offer.
+ *
+ * `recipient` is resolved LIVE at claim time by the contract, so a game whose
+ * owner rotates the payout address is paid at the new address for anything
+ * not yet claimed. Do not cache it against a tournament.
+ *
+ * Lite tokens are self-bound — the game contract IS its token — so `contract`
+ * is the game address.
+ *
+ * Throws `RpcError` when the token predates the game-fee surface (no such
+ * entrypoint). Callers that treat "no declared fee" as a floor of zero should
+ * catch and default; that matches the contract, which applies a zero floor to
+ * a game declaring nothing.
+ */
+/**
+ * The game-fee surface's ABI, exported because `budokanGameFeeTerms` and
+ * `budokanGameFeeRecipient` take a `Contract` the caller has to construct —
+ * and without this they had no supported way to build one. A contract built
+ * from a different ABI does not fail loudly: the call decodes wrong or throws
+ * inside the helper, and `getGameFeeFloor` then reports a zero floor.
+ */
+export const GAME_FEE_ABI = gameFeeAbi as Abi;
+
+/**
+ * Build a `Contract` for a game's fee surface.
+ *
+ * `address` is the GAME address: the standard puts token, settings and
+ * objectives at one contract, and the fee surface lives there with them.
+ *
+ * Async, and routed through `createContract`, because `starknet` is loaded
+ * lazily on purpose — `provider.ts` caches a dynamic `import("starknet")` so
+ * that importing this package does not pull the whole RPC stack in. `index.ts`
+ * statically re-exports this module, so a value import of `Contract` here
+ * would make every consumer load `starknet` at import time, including
+ * API-only ones and bundles that do not have it installed.
+ */
+export function gameFeeContract(
+  address: string,
+  provider: RpcProvider,
+): Promise<Contract> {
+  return createContract(GAME_FEE_ABI, address, provider);
+}
+
+export async function budokanGameFeeTerms(
+  contract: Contract,
+): Promise<GameFeeTerms> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("game_fee_terms", []);
+    return decodeGameFeeTerms(result);
+  }, contract.address);
+}
+
+/** Just the payee. Prefer `budokanGameFeeTerms` when the fee is also needed. */
+export async function budokanGameFeeRecipient(
+  contract: Contract,
+): Promise<string> {
+  return wrapRpcCall(async () => {
+    const result = await contract.call("game_fee_recipient", []);
     return normalizeAddress(`0x${BigInt(result as string | number | bigint).toString(16)}`);
   }, contract.address);
 }

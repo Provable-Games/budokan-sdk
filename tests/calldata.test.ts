@@ -127,7 +127,7 @@ describe("buildClaimRewardCall enum tags", () => {
     ],
     [{ kind: "entry_fee_position", position: 3 }, ["0x1", "0x0", "0x0", "0x3"]],
     [{ kind: "entry_fee_tournament_creator" }, ["0x1", "0x0", "0x1"]],
-    [{ kind: "entry_fee_game_creator" }, ["0x1", "0x0", "0x2"]],
+    [{ kind: "entry_fee_game_fee" }, ["0x1", "0x0", "0x2"]],
     [{ kind: "entry_fee_refund", tokenId: "9" }, ["0x1", "0x0", "0x3", "0x9"]],
   ];
   for (const [reward, expected] of cases) {
@@ -181,7 +181,7 @@ describe("buildCreateTournamentCall", () => {
         tokenAddress: "0xtoken",
         amount: "1000",
         tournamentCreatorShare: 1000,
-        gameCreatorShare: 500,
+        gameFeeShare: 500,
         refundShare: 0,
         distribution: { kind: "linear", weight: 10 },
         distributionCount: 3,
@@ -235,7 +235,7 @@ describe("buildCreateTournamentCall", () => {
         tokenAddress: "0xtoken",
         amount: "1000",
         tournamentCreatorShare: 0,
-        gameCreatorShare: 500,
+        gameFeeShare: 500,
         refundShare: 0,
         distribution: { kind: "custom", weights: [3000, 2000, 1400, 1000, 800, 600, 400, 300, 300, 200] },
         distributionCount: 10,
@@ -248,7 +248,7 @@ describe("buildCreateTournamentCall", () => {
     tokenAddress: "0xtoken",
     amount: "1000",
     tournamentCreatorShare: 0,
-    gameCreatorShare: 500,
+    gameFeeShare: 500,
     refundShare: 0,
     distribution: { kind: "custom" as const, weights },
     distributionCount,
@@ -290,7 +290,7 @@ describe("buildCreateTournamentCall", () => {
       tokenAddress: "0xtoken",
       amount: "1000",
       tournamentCreatorShare: 1000,
-      gameCreatorShare: 500,
+      gameFeeShare: 500,
       refundShare: 0,
       distribution: { kind: "linear", weight: 10 } as const,
       distributionCount: 3,
@@ -306,7 +306,7 @@ describe("buildCreateTournamentCall", () => {
     expect(() =>
       buildCreateTournamentCall(BUDOKAN, {
         ...base,
-        entryFee: { ...fee, tournamentCreatorShare: 6000, gameCreatorShare: 5000 },
+        entryFee: { ...fee, tournamentCreatorShare: 6000, gameFeeShare: 5000 },
       }),
     ).toThrow(/exceed 100%/);
     expect(() =>
@@ -439,5 +439,29 @@ describe("parseTournamentIdFromReceipt", () => {
   test("returns undefined for empty/absent events", () => {
     expect(parseTournamentIdFromReceipt({}, BUDOKAN)).toBeUndefined();
     expect(parseTournamentIdFromReceipt({ events: [] }, BUDOKAN)).toBeUndefined();
+  });
+});
+
+describe("pushRewardTypeFelts fall-through", () => {
+  // The retired kind is the live case: a descriptor persisted before the
+  // `entry_fee_game_creator` -> `entry_fee_game_fee` rename, or any JS caller,
+  // used to build calldata carrying only the tournament id and revert opaquely
+  // on chain. TypeScript cannot rule that out at the boundary, so the runtime
+  // has to.
+  test("throws on a retired or unknown reward kind", () => {
+    expect(() =>
+      buildClaimRewardCall(BUDOKAN, {
+        tournamentId: "1",
+        reward: { kind: "entry_fee_game_creator" } as never,
+      }),
+    ).toThrow(/Unsupported reward kind: entry_fee_game_creator/);
+  });
+
+  test("still builds the renamed kind", () => {
+    const call = buildClaimRewardCall(BUDOKAN, {
+      tournamentId: "1",
+      reward: { kind: "entry_fee_game_fee" },
+    });
+    expect(call.calldata.slice(1)).toEqual(["0x1", "0x0", "0x2"]);
   });
 });

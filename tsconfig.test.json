@@ -1,0 +1,24 @@
+{
+  // Type-checks `tests/` as well as `src/`, which the base config deliberately
+  // does not: `rootDir`/`outDir` there describe the PUBLISHED build, and adding
+  // tests to it would pull them into the build graph.
+  //
+  // Without this pass nothing type-checks the test suite at all. `bun test`
+  // transpiles without checking, so a fixture can carry a field the type no
+  // longer has: the excess property is silently dropped, the real field reads
+  // `undefined`, and the tests pass while never exercising it. That is exactly
+  // how the `creator` -> `recipient` rename left `tests/gameFee.test.ts` stale
+  // behind a green suite and a "typecheck clean" claim that did not cover it.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    // Tests import each other and `src` with explicit `.ts` extensions, which
+    // the bundler resolves fine but `tsc` rejects unless it is emitting nothing.
+    "allowImportingTsExtensions": true,
+    // `bun:test` has no ambient declaration without this.
+    "types": ["bun"]
+  },
+  "include": ["src", "tests"],
+  "exclude": ["node_modules", "dist"]
+}
