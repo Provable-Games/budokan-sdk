@@ -8,14 +8,29 @@ import {
 import type { Contract } from "starknet";
 import { GAME_FEE_ABI } from "../src/rpc/budokan.ts";
 
-/** Minimal stand-in for the one method `getGameFeeFloor` reaches through. */
+/**
+ * Stand-in for the two entrypoints `getGameFeeFloor` reaches through:
+ * `game_fee_terms`, and the `supports_interface` probe it falls back to.
+ */
 const contractReturning = (result: unknown): Contract =>
-  ({ address: "0xgame", call: async () => result }) as unknown as Contract;
-
-const contractThrowing = (error: unknown): Contract =>
   ({
     address: "0xgame",
-    call: async () => {
+    call: async (method: string) =>
+      method === "supports_interface" ? true : result,
+  }) as unknown as Contract;
+
+/**
+ * `game_fee_terms` fails; `supportsSurface` decides whether that means the
+ * token has no surface (degrade) or the call could not be made (rethrow).
+ */
+const contractThrowing = (error: unknown, supportsSurface = false): Contract =>
+  ({
+    address: "0xgame",
+    call: async (method: string) => {
+      if (method === "supports_interface") {
+        if (supportsSurface === null) throw error;
+        return supportsSurface;
+      }
       throw error;
     },
   }) as unknown as Contract;
@@ -93,9 +108,12 @@ describe("getGameFeeFloor", () => {
   // A token that predates the surface has no such entrypoint. That is
   // information, not a failure — the contract applies a zero floor to a game
   // declaring nothing, so the SDK reports the same.
-  test("reports undeclared when the entrypoint does not exist", async () => {
+  test("reports undeclared when the token has no game-fee surface", async () => {
+    // Deliberately an opaque error, not ENTRYPOINT_NOT_FOUND: starknet.js does
+    // not reliably name the cause, which is why the SRC5 probe decides rather
+    // than the message.
     const floor = await getGameFeeFloor(
-      contractThrowing(new Error("ENTRYPOINT_NOT_FOUND: game_fee_terms")),
+      contractThrowing(new Error("Contract error"), false),
     );
     expect(floor.declared).toBe(false);
     expect(floor.feeBps).toBe(0);
@@ -108,9 +126,9 @@ describe("getGameFeeFloor", () => {
   // error never mentions.
   test("propagates a transport failure instead of reporting no fee", async () => {
     const outage = new Error("fetch failed: ECONNREFUSED");
-    await expect(getGameFeeFloor(contractThrowing(outage))).rejects.toThrow(
-      /ECONNREFUSED/,
-    );
+    await expect(
+      getGameFeeFloor(contractThrowing(outage, true)),
+    ).rejects.toThrow(/ECONNREFUSED/);
   });
 
   // A token can register the surface and still name nobody. There is no payee,
@@ -137,7 +155,9 @@ describe("getGameFeeFloor", () => {
   // plausible zero floor.
   test("propagates an undeployed-contract error", async () => {
     await expect(
-      getGameFeeFloor(contractThrowing(new Error("Contract not found: is not deployed"))),
+      getGameFeeFloor(
+        contractThrowing(new Error("Contract not found: is not deployed"), true),
+      ),
     ).rejects.toThrow(/not deployed/);
   });
 
@@ -145,12 +165,14 @@ describe("getGameFeeFloor", () => {
   // clamps it. Left through, `minGameFeeShareBps` would recommend a value
   // `buildCreateTournamentCall` rejects — the same two-halves contradiction as
   // the zero-recipient case, reached from the opposite end.
-  test("treats an out-of-range fee_numerator as no declared fee", async () => {
-    const floor = await getGameFeeFloor(
-      contractReturning({ recipient: 0x1n, license: "terms", fee_numerator: 65535 }),
-    );
-    expect(floor.feeBps).toBe(0);
-    expect(minGameFeeShareBps(floor)).toBe(0);
+  test("throws on a fee_numerator outside basis points", async () => {
+    // Coercing it to 0 turned a token nobody can satisfy into a valid free
+    // game, so `isGameFeeShareValid(floor, 0)` said yes to a reverting call.
+    await expect(
+      getGameFeeFloor(
+        contractReturning({ recipient: 0x1n, license: "terms", fee_numerator: 65535 }),
+      ),
+    ).rejects.toThrow(/basis points/);
     // The boundary itself stays valid.
     const atCeiling = await getGameFeeFloor(
       contractReturning({ recipient: 0x1n, license: "terms", fee_numerator: 10000 }),
@@ -161,12 +183,8 @@ describe("getGameFeeFloor", () => {
   // Undeclared results must not share one mutable object, or a consumer
   // mutating one corrupts every later undeclared read in the process.
   test("returns a fresh object for each undeclared read", async () => {
-    const a = await getGameFeeFloor(
-      contractThrowing(new Error("ENTRYPOINT_NOT_FOUND: game_fee_terms")),
-    );
-    const b = await getGameFeeFloor(
-      contractThrowing(new Error("ENTRYPOINT_NOT_FOUND: game_fee_terms")),
-    );
+    const a = await getGameFeeFloor(contractThrowing(new Error("no surface"), false));
+    const b = await getGameFeeFloor(contractThrowing(new Error("no surface"), false));
     expect(a).not.toBe(b);
     a.feeBps = 9999;
     expect(b.feeBps).toBe(0);

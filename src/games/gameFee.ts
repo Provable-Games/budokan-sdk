@@ -13,7 +13,11 @@
  */
 
 import type { Contract } from "starknet";
-import { budokanGameFeeTerms } from "../rpc/budokan.js";
+import {
+  budokanGameFeeTerms,
+  IMINIGAME_TOKEN_GAME_FEE_ID,
+} from "../rpc/budokan.js";
+import { RpcError } from "../errors/index.js";
 
 export interface GameFeeFloor {
   /**
@@ -94,15 +98,21 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
     // because Budokan has nowhere to route it.
     if (recipient === null) return { ...UNDECLARED };
 
+    // `fee_numerator` is a u16, so 65535 is representable and nothing upstream
+    // clamps it to basis points. Coercing it to 0 was worse than leaving it:
+    // it turned a token nobody can satisfy into a valid free game, so
+    // `isGameFeeShareValid(floor, 0)` said yes to a create call that reverts.
+    // Malformed input is not a floor — surface it.
+    if (!isBasisPoints(info.feeNumerator)) {
+      throw new RpcError(
+        `Game declares a fee_numerator outside 0-${BPS_DENOMINATOR} basis points ` +
+          `(${info.feeNumerator}); no share can satisfy it`,
+        contract.address,
+      );
+    }
+
     return {
-      // `fee_numerator` is a u16 on-chain, so a malformed or hostile token can
-      // declare up to 65535 — well past the 10000 bps ceiling. Left unclamped
-      // it reaches `minGameFeeShareBps`, which would then recommend a share
-      // `buildCreateTournamentCall` rejects outright: the same contradiction
-      // between this module's halves that the zero-recipient case produced,
-      // arrived at from the other end. Out of range is malformed, not a
-      // 655% fee, so it reads as no declared fee.
-      feeBps: isBasisPoints(info.feeNumerator) ? info.feeNumerator : 0,
+      feeBps: info.feeNumerator,
       recipient,
       license: info.license,
       declared: true,
@@ -116,26 +126,42 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
     // failure reported a 0% floor for a game that requires 5%, the create flow
     // offered a share below the floor, and `create_tournament` reverted with a
     // message pointing at the wrong cause. Nothing surfaced the real fault.
-    if (isMissingEntrypoint(error)) return { ...UNDECLARED };
+    // Ask the token whether it has the surface, rather than guessing from the
+    // error text. A regex over messages was the wrong mechanism: starknet.js
+    // does not reliably say ENTRYPOINT_NOT_FOUND — a missing entrypoint often
+    // arrives as a generic contract error or a nested `execution_error` — so a
+    // legitimately old token would have thrown instead of degrading, which is
+    // the create-flow break this degradation exists to prevent.
+    //
+    // SRC5 answers this directly: `false` for a token without the surface, and
+    // an error only when the call itself cannot be made. So a false is
+    // authoritative, and anything else re-raises the ORIGINAL failure — the
+    // one the caller needs to see.
+    if (await lacksGameFeeSurface(contract)) return { ...UNDECLARED };
     throw error;
   }
 }
 
 /**
- * Whether a call failed because the entrypoint does not exist, rather than
- * because the call could not be made.
+ * Whether the token positively reports that it does not implement the game-fee
+ * surface.
  *
- * Starknet reports this as ENTRYPOINT_NOT_FOUND — deliberately narrow, so an
- * unrecognised failure propagates instead of being read as "declares nothing".
+ * Only a clean `false` counts. If the probe itself fails — wrong address,
+ * wrong chain, RPC down — this returns `false` too, so the caller re-raises
+ * the original error instead of reporting a fee-less game. Silence is never
+ * read as an answer here.
  */
-function isMissingEntrypoint(error: unknown): boolean {
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : "";
-  // Deliberately NOT matching "is not deployed": that is a wrong address or a
-  // wrong chain, and reading it as "this game declares no fee" hides an
-  // integration error behind a plausible-looking zero floor — the exact
-  // failure this classification exists to stop.
-  return /ENTRYPOINT_NOT_FOUND|Entry ?point .* not found/i.test(message);
+async function lacksGameFeeSurface(contract: Contract): Promise<boolean> {
+  try {
+    const supported = await contract.call("supports_interface", [
+      IMINIGAME_TOKEN_GAME_FEE_ID,
+    ]);
+    // starknet.js decodes a Cairo bool as `false` or `0n` depending on
+    // parsing strategy; treat either as a clean negative.
+    return supported === false || supported === 0n;
+  } catch {
+    return false;
+  }
 }
 
 /**
