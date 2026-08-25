@@ -145,8 +145,9 @@ function parseTournament(
         tokenAddress: entryFeeToken,
         amount: entryFeeAmount,
         tournamentCreatorShare: Number(ef.tournament_creator_share ?? 0),
-        // Key is metagame-sdk's EntryFee shape, which has not taken the
-        // rename; the value comes from budokan's ABI, which has.
+        // Key is metagame-sdk's EntryFee shape. Renamed on its main (0.2.0)
+        // but not published; flip this key on the repin. The value comes from
+        // budokan's ABI, which took the rename already.
         gameCreatorShare: Number(ef.game_fee_share ?? 0),
         refundShare: Number(ef.refund_share ?? 0),
         distribution: (ef.distribution as Distribution) ?? null,
