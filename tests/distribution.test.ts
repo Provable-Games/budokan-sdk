@@ -196,6 +196,7 @@ describe("entryFeePositionPayout", () => {
     refundShare: 0,
     distribution: { Uniform: {} },
     distributionCount: 4,
+    distributionParams: null,
   };
 
   test("uniform 4-way split over full pool", () => {
@@ -236,6 +237,7 @@ describe("sponsorPrizePayout", () => {
     distributionWeight: null,
     distributionShares: null,
     distributionCount: 4,
+    distributionParams: null,
     sponsorAddress: "0x0",
     extensionAddress: null,
     extensionConfig: null,
@@ -252,6 +254,7 @@ describe("sponsorPrizePayout", () => {
       distributionType: "custom",
       distributionShares: [5000, 3000, 2000],
       distributionCount: 3,
+      distributionParams: null,
     };
     expect(sponsorPrizePayout(custom, 1)).toBe(500_000n);
     expect(sponsorPrizePayout(custom, 2)).toBe(300_000n);
@@ -274,6 +277,7 @@ describe("prizeDistribution", () => {
         distributionType: "custom",
         distributionWeight: null,
         distributionShares: [6000, 4000],
+        distributionParams: null,
       }),
     ).toEqual({ type: "custom", weight: 0, customWeights: [6000, 4000] });
   });
@@ -283,6 +287,7 @@ describe("prizeDistribution", () => {
         distributionType: "linear",
         distributionWeight: null,
         distributionShares: null,
+        distributionParams: null,
       }),
     ).toEqual({ type: "linear", weight: 10 });
   });
@@ -502,6 +507,7 @@ describe("Geometric / Tiered parity with the contract", () => {
       protocolFeeShare: 0,
       distribution: { type: "Geometric", ratio_a: 10, ratio_b: 7 },
       distributionCount: 10,
+      distributionParams: null,
     };
     expect(entryFeePositionPayout(input, 1)).toBe(308720592627384808n);
     expect(entryFeePositionPayout(input, 2)).toBe(216104414839169366n);

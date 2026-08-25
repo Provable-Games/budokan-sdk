@@ -8,7 +8,10 @@ import {
   extensionAddressFor,
   u256ToLowHigh,
 } from "../src/extensions/index.ts";
-import { buildRegisterAllowlistTreeCall } from "../src/extensions/merkle.ts";
+import {
+  buildRegisterAllowlistTreeCall,
+  type BuildRegisterAllowlistTreeParams,
+} from "../src/extensions/merkle.ts";
 import { normalizeAddress } from "../src/utils/address.ts";
 
 describe("buildTournamentQualificationProof", () => {
@@ -242,15 +245,22 @@ describe("buildRegisterAllowlistTreeCall", () => {
   });
 
   test("rejects mixing addresses with entries, and entriesPerAddress with entries", () => {
+    // Cast deliberately. `BuildRegisterAllowlistTreeParams` encodes
+    // `addresses` XOR `entries` in the type system via `never`, so these
+    // combinations are compile errors — which is the point: the runtime guards
+    // exist for JS callers who never see the types. Testing them requires
+    // stepping around the union the same way such a caller would.
+    const invalid = (p: unknown) =>
+      buildRegisterAllowlistTreeCall(p as BuildRegisterAllowlistTreeParams);
     expect(() =>
-      buildRegisterAllowlistTreeCall({
+      invalid({
         chain: "mainnet",
         addresses: ["0x1"],
         entries: [{ address: "0x2", count: 1 }],
       }),
     ).toThrow(/not both/);
     expect(() =>
-      buildRegisterAllowlistTreeCall({
+      invalid({
         chain: "mainnet",
         entries: [{ address: "0x2", count: 1 }],
         entriesPerAddress: 2,

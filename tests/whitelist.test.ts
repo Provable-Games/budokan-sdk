@@ -49,7 +49,11 @@ describe("getGameDefaults", () => {
     )!;
     const defaults = getGameDefaults("mainnet", game.contractAddress);
     expect(defaults.defaultGameFeePercentage).toBe(5);
-    expect(defaults.defaultEntryFeeToken).toBe(game.defaultEntryFeeToken);
+    // `defaultEntryFeeToken` is optional on the game record, so assert it is
+    // actually present before comparing — otherwise `undefined === undefined`
+    // would pass while proving nothing was inherited.
+    expect(game.defaultEntryFeeToken).toBeDefined();
+    expect(defaults.defaultEntryFeeToken).toBe(game.defaultEntryFeeToken!);
   });
 
   test("falls back to chain defaults for unknown game", () => {

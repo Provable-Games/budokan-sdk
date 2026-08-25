@@ -1,4 +1,6 @@
-import type { Contract } from "starknet";
+import { Contract } from "starknet";
+import type { Abi, ProviderInterface } from "starknet";
+import gameFeeAbi from "./abis/gameFee.json" with { type: "json" };
 import { RpcError } from "../errors/index.js";
 import { decodeByteArray } from "./decode.js";
 import { normalizeAddress } from "../utils/address.js";
@@ -191,6 +193,32 @@ function decodeGameFeeTerms(result: unknown): GameFeeTerms {
  * catch and default; that matches the contract, which applies a zero floor to
  * a game declaring nothing.
  */
+/**
+ * The game-fee surface's ABI, exported because `budokanGameFeeTerms` and
+ * `budokanGameFeeRecipient` take a `Contract` the caller has to construct —
+ * and without this they had no supported way to build one. A contract built
+ * from a different ABI does not fail loudly: the call decodes wrong or throws
+ * inside the helper, and `getGameFeeFloor` then reports a zero floor.
+ */
+export const GAME_FEE_ABI = gameFeeAbi as Abi;
+
+/**
+ * Build a `Contract` for a game's fee surface.
+ *
+ * `address` is the GAME address: the standard puts token, settings and
+ * objectives at one contract, and the fee surface lives there with them.
+ */
+export function gameFeeContract(
+  address: string,
+  provider: ProviderInterface,
+): Contract {
+  return new Contract({
+    abi: GAME_FEE_ABI,
+    address,
+    providerOrAccount: provider,
+  });
+}
+
 export async function budokanGameFeeTerms(
   contract: Contract,
 ): Promise<GameFeeTerms> {

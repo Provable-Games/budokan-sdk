@@ -17,7 +17,7 @@ import {
 } from "../src/utils/prizes.ts";
 import type { ExtensionPrize, Prize, TokenPrize } from "../src/types/prize.ts";
 
-const erc20Prize: Prize = {
+const erc20Prize = {
   prizeId: "1",
   tournamentId: "10",
   payoutPosition: 1,
@@ -29,12 +29,13 @@ const erc20Prize: Prize = {
   distributionWeight: null,
   distributionShares: null,
   distributionCount: null,
+  distributionParams: null,
   sponsorAddress: "0xsponsor",
   extensionAddress: null,
   extensionConfig: null,
-};
+} satisfies Prize;
 
-const erc721Prize: Prize = {
+const erc721Prize = {
   prizeId: "2",
   tournamentId: "10",
   payoutPosition: 2,
@@ -46,12 +47,13 @@ const erc721Prize: Prize = {
   distributionWeight: null,
   distributionShares: null,
   distributionCount: null,
+  distributionParams: null,
   sponsorAddress: "0xsponsor",
   extensionAddress: null,
   extensionConfig: null,
-};
+} satisfies Prize;
 
-const extensionPrize: Prize = {
+const extensionPrize = {
   prizeId: "3",
   tournamentId: "10",
   payoutPosition: 0,
@@ -63,10 +65,11 @@ const extensionPrize: Prize = {
   distributionWeight: null,
   distributionShares: null,
   distributionCount: null,
+  distributionParams: null,
   sponsorAddress: "0xsponsor",
   extensionAddress: "0xextension",
   extensionConfig: ["0x1", "0x2"],
-};
+} satisfies Prize;
 
 const hydratedExtensionPrize: Prize = {
   ...extensionPrize,
@@ -119,12 +122,14 @@ describe("Budokan prize helpers", () => {
       distributionType: "linear",
       distributionWeight: null,
       distributionCount: 3,
+      distributionParams: null,
     })).toBe(false);
     expect(isTokenPrize({
       ...erc20Prize,
       distributionType: "linear",
       distributionWeight: 10,
       distributionCount: 0,
+      distributionParams: null,
     })).toBe(false);
     expect(isTokenPrize({
       ...erc20Prize,
@@ -132,18 +137,21 @@ describe("Budokan prize helpers", () => {
       distributionWeight: 10,
       distributionShares: [10000],
       distributionCount: 3,
+      distributionParams: null,
     })).toBe(false);
     expect(isTokenPrize({
       ...erc20Prize,
       distributionType: "custom",
       distributionShares: [5000],
       distributionCount: 2,
+      distributionParams: null,
     })).toBe(false);
     expect(isTokenPrize({
       ...erc20Prize,
       distributionType: "custom",
       distributionShares: [5000, 4000],
       distributionCount: 2,
+      distributionParams: null,
     })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "abc" })).toBe(false);
     expect(isTokenPrize({ ...erc721Prize, tokenId: "0x4d" })).toBe(false);
@@ -151,6 +159,7 @@ describe("Budokan prize helpers", () => {
       ...erc721Prize,
       distributionType: "uniform",
       distributionCount: 2,
+      distributionParams: null,
     })).toBe(false);
     expect(isRawExtensionPrize({ ...extensionPrize, extensionAddress: null }))
       .toBe(false);
@@ -162,6 +171,7 @@ describe("Budokan prize helpers", () => {
       ...extensionPrize,
       distributionType: "uniform",
       distributionCount: 2,
+      distributionParams: null,
     })).toBe(false);
     expect(isRawExtensionPrize({ ...extensionPrize, tokenAddress: "0xtoken" }))
       .toBe(false);
@@ -286,17 +296,20 @@ describe("Budokan prize helpers", () => {
       distributionType: "linear",
       distributionWeight: 10,
       distributionCount: 3,
+      distributionParams: null,
     });
     const uniformPrize = asTokenPrize({
       ...erc20Prize,
       distributionType: "uniform",
       distributionCount: 3,
+      distributionParams: null,
     });
     const customPrize = asTokenPrize({
       ...erc20Prize,
       distributionType: "custom",
       distributionShares: [6000, 4000],
       distributionCount: 2,
+      distributionParams: null,
     });
 
     expect(toMetagameTokenPrize(distributedPrize)).toEqual({

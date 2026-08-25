@@ -41,6 +41,9 @@ export interface GameFeeFloor {
   declared: boolean;
 }
 
+/** Basis-point denominator; shares are integers in 0..10000. */
+const BPS_DENOMINATOR = 10_000;
+
 const UNDECLARED: GameFeeFloor = {
   feeBps: 0,
   recipient: null,
@@ -54,12 +57,14 @@ const UNDECLARED: GameFeeFloor = {
  * Lite tokens are self-bound — the game contract IS its token — so `contract`
  * is built against the game address.
  *
- * Degrades rather than throws: a token predating the game-fee surface has no
- * such entrypoint and the call reverts, which is reported as `declared:
- * false` with a zero floor. That is the honest reading — the absence of a
- * declaration is information, not a failure — and it keeps a create flow from
- * breaking on older games. Use `budokanGameFeeTerms` directly if you need
- * to distinguish a missing entrypoint from an RPC outage.
+ * Degrades ONLY for a missing surface: a token predating the game-fee surface
+ * has no such entrypoint, and that is reported as `declared: false` with a
+ * zero floor. The absence of a declaration is information, not a failure, and
+ * treating it as one would break create flows on older games.
+ *
+ * Every other failure throws. An RPC outage is not a game declining to charge,
+ * and reporting it as one produces a create call the contract rejects for a
+ * reason the error never mentions.
  */
 export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor> {
   try {
@@ -78,9 +83,31 @@ export async function getGameFeeFloor(contract: Contract): Promise<GameFeeFloor>
       license: info.license,
       declared: recipient !== null,
     };
-  } catch {
-    return UNDECLARED;
+  } catch (error: unknown) {
+    // Degrade ONLY for a token that has no game-fee surface. Everything else —
+    // an RPC outage, a bad provider, a contract built from the wrong ABI, a
+    // cancelled request — must propagate.
+    //
+    // Collapsing them was wrong in a specific and quiet way: a transient RPC
+    // failure reported a 0% floor for a game that requires 5%, the create flow
+    // offered a share below the floor, and `create_tournament` reverted with a
+    // message pointing at the wrong cause. Nothing surfaced the real fault.
+    if (isMissingEntrypoint(error)) return UNDECLARED;
+    throw error;
   }
+}
+
+/**
+ * Whether a call failed because the entrypoint does not exist, rather than
+ * because the call could not be made.
+ *
+ * Starknet reports this as ENTRYPOINT_NOT_FOUND — deliberately narrow, so an
+ * unrecognised failure propagates instead of being read as "declares nothing".
+ */
+function isMissingEntrypoint(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return /ENTRYPOINT_NOT_FOUND|Entry ?point .* not found|is not deployed/i.test(message);
 }
 
 /**
@@ -102,7 +129,13 @@ export function isGameFeeShareValid(
   floor: GameFeeFloor,
   shareBps: number,
 ): boolean {
-  if (!Number.isFinite(shareBps) || shareBps < 0) return false;
+  // Basis points are integers in 0..10000. `buildCreateTournamentCall` throws
+  // on anything else, so accepting `0.5` or `10001` here would bless a value
+  // the very call this pre-validates then rejects — which defeats the point of
+  // pre-validating.
+  if (!Number.isInteger(shareBps) || shareBps < 0 || shareBps > BPS_DENOMINATOR) {
+    return false;
+  }
   if (!floor.declared) return shareBps === 0;
   return shareBps >= floor.feeBps;
 }
