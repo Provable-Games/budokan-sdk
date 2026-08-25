@@ -441,3 +441,27 @@ describe("parseTournamentIdFromReceipt", () => {
     expect(parseTournamentIdFromReceipt({ events: [] }, BUDOKAN)).toBeUndefined();
   });
 });
+
+describe("pushRewardTypeFelts fall-through", () => {
+  // The retired kind is the live case: a descriptor persisted before the
+  // `entry_fee_game_creator` -> `entry_fee_game_fee` rename, or any JS caller,
+  // used to build calldata carrying only the tournament id and revert opaquely
+  // on chain. TypeScript cannot rule that out at the boundary, so the runtime
+  // has to.
+  test("throws on a retired or unknown reward kind", () => {
+    expect(() =>
+      buildClaimRewardCall(BUDOKAN, {
+        tournamentId: "1",
+        reward: { kind: "entry_fee_game_creator" } as never,
+      }),
+    ).toThrow(/Unsupported reward kind: entry_fee_game_creator/);
+  });
+
+  test("still builds the renamed kind", () => {
+    const call = buildClaimRewardCall(BUDOKAN, {
+      tournamentId: "1",
+      reward: { kind: "entry_fee_game_fee" },
+    });
+    expect(call.calldata.slice(1)).toEqual(["0x1", "0x0", "0x2"]);
+  });
+});

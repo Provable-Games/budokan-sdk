@@ -180,7 +180,7 @@ describe("getGameFeeFloor", () => {
   // A boxed decode must still read as "no surface" rather than falling through
   // and throwing on a legitimately old token.
   test("degrades when the surface probe returns a boxed false", async () => {
-    for (const boxed of [[false], { "0": false }]) {
+    for (const boxed of [[false], { "0": false }, [0n], ["0x0"], 0]) {
       const contract = {
         address: "0xgame",
         call: async (method: string) => {

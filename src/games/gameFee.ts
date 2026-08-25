@@ -218,7 +218,17 @@ async function lacksGameFeeSurface(contract: Contract): Promise<boolean> {
       : supported !== null && typeof supported === "object"
         ? Object.values(supported)[0]
         : supported;
-    return value === false || value === 0n;
+    // Accept every falsy felt shape, not just the two v9 happens to produce.
+    // A decoding change to `0` or `"0"` would otherwise fall through, report
+    // "surface present", and rethrow for a legitimately old token — and tests
+    // returning a real `false` would never notice.
+    return (
+      value === false ||
+      value === 0 ||
+      value === 0n ||
+      value === "0" ||
+      value === "0x0"
+    );
   } catch {
     return false;
   }

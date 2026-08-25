@@ -894,6 +894,15 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
       return;
     }
   }
+
+  // Every branch above returns, so reaching here means an unrecognised kind —
+  // which TypeScript cannot rule out for JS callers or for a descriptor
+  // persisted before a rename. Falling through silently emitted calldata with
+  // only the tournament id and left the contract to revert opaquely; the
+  // retired `entry_fee_game_creator` is exactly such a value now.
+  throw new Error(
+    `Unsupported reward kind: ${String((reward as { kind?: unknown }).kind)}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
