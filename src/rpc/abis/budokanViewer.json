@@ -250,7 +250,7 @@
         "type": "core::integer::u16"
       },
       {
-        "name": "game_creator_share",
+        "name": "game_fee_share",
         "type": "core::integer::u16"
       },
       {
@@ -704,7 +704,7 @@
         "type": "()"
       },
       {
-        "name": "GameCreator",
+        "name": "GameFee",
         "type": "()"
       },
       {

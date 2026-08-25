@@ -1,10 +1,10 @@
 [
   {
     "type": "struct",
-    "name": "game_components_interfaces::structs::token::GameCreatorInfo",
+    "name": "game_components_interfaces::structs::token::GameFeeTerms",
     "members": [
       {
-        "name": "creator",
+        "name": "recipient",
         "type": "core::starknet::contract_address::ContractAddress"
       },
       {
@@ -19,22 +19,22 @@
   },
   {
     "type": "interface",
-    "name": "game_components_interfaces::token::creator::IMinigameTokenCreator",
+    "name": "game_components_interfaces::token::game_fee::IMinigameTokenGameFee",
     "items": [
       {
         "type": "function",
-        "name": "game_creator_info",
+        "name": "game_fee_terms",
         "inputs": [],
         "outputs": [
           {
-            "type": "game_components_interfaces::structs::token::GameCreatorInfo"
+            "type": "game_components_interfaces::structs::token::GameFeeTerms"
           }
         ],
         "state_mutability": "view"
       },
       {
         "type": "function",
-        "name": "game_creator_address",
+        "name": "game_fee_recipient",
         "inputs": [],
         "outputs": [
           {

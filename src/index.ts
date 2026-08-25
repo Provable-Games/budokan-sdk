@@ -339,16 +339,16 @@ export type {
   CreateBracketConfig,
 } from "./onchain-brackets/index.js";
 
-// Game fee floor (token creator surface)
+// Game fee floor (token game-fee surface)
 export {
   getGameFeeFloor,
-  minGameCreatorShareBps,
-  isGameCreatorShareValid,
+  minGameFeeShareBps,
+  isGameFeeShareValid,
 } from "./games/gameFee.js";
 export type { GameFeeFloor } from "./games/gameFee.js";
 export {
-  budokanGameCreatorInfo,
-  budokanGameCreatorAddress,
-  IMINIGAME_TOKEN_CREATOR_ID,
+  budokanGameFeeTerms,
+  budokanGameFeeRecipient,
+  IMINIGAME_TOKEN_GAME_FEE_ID,
 } from "./rpc/budokan.js";
-export type { GameCreatorInfo } from "./rpc/budokan.js";
+export type { GameFeeTerms } from "./rpc/budokan.js";

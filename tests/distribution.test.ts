@@ -140,13 +140,13 @@ describe("entryFeeSplit", () => {
       amount: "1000",
       entryCount: 10, // total = 10_000
       tournamentCreatorShare: 1000, // 10%
-      gameCreatorShare: 500, // 5%
+      gameFeeShare: 500, // 5%
       refundShare: 500, // 5%
       protocolFeeShare: 300, // 3%
     });
     expect(split.total).toBe(10_000n);
     expect(split.tournamentCreator).toBe(1000n);
-    expect(split.gameCreator).toBe(500n);
+    expect(split.gameFee).toBe(500n);
     expect(split.refund).toBe(500n);
     expect(split.protocolFee).toBe(300n);
     // available = 10000 - 1000 - 500 - 500 - 300 = 7700 bps
@@ -155,7 +155,7 @@ describe("entryFeeSplit", () => {
     const sum =
       split.positionPool +
       split.tournamentCreator +
-      split.gameCreator +
+      split.gameFee +
       split.refund +
       split.protocolFee;
     expect(sum).toBe(10_000n);
@@ -166,7 +166,7 @@ describe("entryFeeSplit", () => {
       amount: "1000",
       entryCount: 10,
       tournamentCreatorShare: 1000,
-      gameCreatorShare: 500,
+      gameFeeShare: 500,
       refundShare: 500,
     };
     const withProtocol = entryFeeSplit({ ...base, protocolFeeShare: 300 });
@@ -180,7 +180,7 @@ describe("entryFeeSplit", () => {
       amount: "1000",
       entryCount: 1,
       tournamentCreatorShare: 6000,
-      gameCreatorShare: 5000,
+      gameFeeShare: 5000,
     });
     expect(split.availableShareBps).toBe(0);
     expect(split.positionPool).toBe(0n);
@@ -192,7 +192,7 @@ describe("entryFeePositionPayout", () => {
     amount: "1000000",
     entryCount: 10, // total = 10_000_000
     tournamentCreatorShare: 0,
-    gameCreatorShare: 0,
+    gameFeeShare: 0,
     refundShare: 0,
     distribution: { Uniform: {} },
     distributionCount: 4,
@@ -497,7 +497,7 @@ describe("Geometric / Tiered parity with the contract", () => {
       amount: 10n ** 18n, // one entry, whole pool to positions
       entryCount: 1,
       tournamentCreatorShare: 0,
-      gameCreatorShare: 0,
+      gameFeeShare: 0,
       refundShare: 0,
       protocolFeeShare: 0,
       distribution: { type: "Geometric", ratio_a: 10, ratio_b: 7 },

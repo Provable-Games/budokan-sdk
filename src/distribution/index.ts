@@ -397,7 +397,7 @@ export interface EntryFeeSplitInput {
   entryCount: number;
   /** Basis-point shares (0–10000). Omitted / null → 0. */
   tournamentCreatorShare?: number | null;
-  gameCreatorShare?: number | null;
+  gameFeeShare?: number | null;
   refundShare?: number | null;
   /** Protocol-fee bps snapshotted for the tournament (`Tournament.protocolFeeShare`). */
   protocolFeeShare?: number | null;
@@ -409,7 +409,7 @@ export interface EntryFeeSplit {
   /** Pool shared across leaderboard positions = floor(availableShare × total / 10000). */
   positionPool: bigint;
   tournamentCreator: bigint;
-  gameCreator: bigint;
+  gameFee: bigint;
   refund: bigint;
   protocolFee: bigint;
   /** Basis points left for positions after fixed shares (clamped ≥ 0). */
@@ -433,7 +433,7 @@ function bps(total: bigint, share: number | null | undefined): bigint {
 export function entryFeeSplit(input: EntryFeeSplitInput): EntryFeeSplit {
   const total = BigInt(input.amount ?? 0) * BigInt(input.entryCount ?? 0);
   const creator = Number(input.tournamentCreatorShare ?? 0);
-  const game = Number(input.gameCreatorShare ?? 0);
+  const game = Number(input.gameFeeShare ?? 0);
   const refund = Number(input.refundShare ?? 0);
   const protocol = Number(input.protocolFeeShare ?? 0);
   const availableShareBps = Math.max(0, 10000 - creator - game - refund - protocol);
@@ -441,7 +441,7 @@ export function entryFeeSplit(input: EntryFeeSplitInput): EntryFeeSplit {
     total,
     positionPool: (total * BigInt(availableShareBps)) / BASIS_POINTS,
     tournamentCreator: bps(total, creator),
-    gameCreator: bps(total, game),
+    gameFee: bps(total, game),
     refund: bps(total, refund),
     protocolFee: bps(total, protocol),
     availableShareBps,

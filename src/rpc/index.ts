@@ -17,8 +17,8 @@ export {
   budokanTournamentProtocolFeeInfo,
   budokanTournamentProtocolFeeBps,
   budokanProtocolFeeRecipient,
-  budokanGameCreatorInfo,
-  budokanGameCreatorAddress,
-  IMINIGAME_TOKEN_CREATOR_ID,
+  budokanGameFeeTerms,
+  budokanGameFeeRecipient,
+  IMINIGAME_TOKEN_GAME_FEE_ID,
 } from "./budokan.js";
-export type { ProtocolFeeInfo, GameCreatorInfo } from "./budokan.js";
+export type { ProtocolFeeInfo, GameFeeTerms } from "./budokan.js";

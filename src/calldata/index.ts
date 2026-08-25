@@ -98,7 +98,7 @@ export interface EntryFeeArgs {
   amount: string;
   /** All shares are basis points (0–10000). Sum + leaderboard pool = 10000. */
   tournamentCreatorShare: number;
-  gameCreatorShare: number;
+  gameFeeShare: number;
   refundShare: number;
   distribution: DistributionSpec;
   /** Number of top placements that share the leaderboard pool. */
@@ -262,7 +262,7 @@ export interface AddPrizeArgs {
  *     EntryFeeClaim variant 0: Token(EntryFeeRewardType)
  *       EntryFeeRewardType variant 0: Position(u32)
  *       EntryFeeRewardType variant 1: TournamentCreator
- *       EntryFeeRewardType variant 2: GameCreator
+ *       EntryFeeRewardType variant 2: GameFee
  *       EntryFeeRewardType variant 3: Refund(felt252)
  *     EntryFeeClaim variant 1: Extension(ExtensionEntryFeeClaim)
  *
@@ -296,7 +296,7 @@ export type RewardType =
     }
   | { kind: "entry_fee_position"; position: number }
   | { kind: "entry_fee_tournament_creator" }
-  | { kind: "entry_fee_game_creator" }
+  | { kind: "entry_fee_game_fee" }
   | { kind: "entry_fee_protocol_fee" }
   | { kind: "entry_fee_refund"; tokenId: string }
   | {
@@ -620,7 +620,7 @@ interface EntryFeePayload {
   token_address: string;
   amount: string;
   tournament_creator_share: number;
-  game_creator_share: number;
+  game_fee_share: number;
   refund_share: number;
   distribution: CairoCustomEnum;
   distribution_count: number;
@@ -640,7 +640,7 @@ function encodeEntryFeeOption(
   }
   const shares: Array<[string, number]> = [
     ["tournamentCreatorShare", fee.tournamentCreatorShare],
-    ["gameCreatorShare", fee.gameCreatorShare],
+    ["gameFeeShare", fee.gameFeeShare],
     ["refundShare", fee.refundShare],
   ];
   for (const [label, value] of shares) {
@@ -648,7 +648,7 @@ function encodeEntryFeeOption(
       throw new Error(`Entry-fee ${label} must be an integer 0–10000 basis points, got ${value}`);
     }
   }
-  const shareSum = fee.tournamentCreatorShare + fee.gameCreatorShare + fee.refundShare;
+  const shareSum = fee.tournamentCreatorShare + fee.gameFeeShare + fee.refundShare;
   if (shareSum > 10000) {
     throw new Error(
       `Entry-fee shares exceed 100%: ${shareSum} of 10000 bps ` +
@@ -671,7 +671,7 @@ function encodeEntryFeeOption(
     token_address: fee.tokenAddress,
     amount: fee.amount,
     tournament_creator_share: fee.tournamentCreatorShare,
-    game_creator_share: fee.gameCreatorShare,
+    game_fee_share: fee.gameFeeShare,
     refund_share: fee.refundShare,
     distribution: encodeDistribution(fee.distribution),
     distribution_count: fee.distributionCount,
@@ -837,7 +837,7 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
   // PrizeClaim::Token inner: PrizeType { Single=0, Distributed=1 }
   // EntryFee inner: EntryFeeClaim { Token=0, Extension=1 }
   // EntryFeeClaim::Token inner: EntryFeeRewardType { Position=0,
-  //   TournamentCreator=1, GameCreator=2, Refund=3, ProtocolFee=4 }
+  //   TournamentCreator=1, GameFee=2, Refund=3, ProtocolFee=4 }
   switch (reward.kind) {
     case "prize_single":
       out.push("0x0", "0x0", "0x0", num.toHex(reward.prizeId));
@@ -870,7 +870,7 @@ function pushRewardTypeFelts(out: string[], reward: RewardType): void {
     case "entry_fee_tournament_creator":
       out.push("0x1", "0x0", "0x1");
       return;
-    case "entry_fee_game_creator":
+    case "entry_fee_game_fee":
       out.push("0x1", "0x0", "0x2");
       return;
     case "entry_fee_refund":

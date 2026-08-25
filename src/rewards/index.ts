@@ -32,7 +32,7 @@ import type { PlayerPlacement } from "../types/player.js";
 export type ClaimableRewardSource =
   | "entry_fee_position"
   | "entry_fee_tournament_creator"
-  | "entry_fee_game_creator"
+  | "entry_fee_game_fee"
   | "entry_fee_protocol_fee"
   | "entry_fee_refund"
   | "sponsor_single"
@@ -137,7 +137,8 @@ export function getClaimableRewards(
             amount: ef.amount ?? "0",
             entryCount: tournament.entryCount ?? 0,
             tournamentCreatorShare: ef.tournamentCreatorShare,
-            gameCreatorShare: ef.gameCreatorShare,
+            // RHS is metagame-sdk's EntryFee, not renamed yet
+            gameFeeShare: ef.gameCreatorShare,
             refundShare: ef.refundShare,
             protocolFeeShare: tournament.protocolFeeShare,
             distribution: ef.distribution,
@@ -261,7 +262,7 @@ export interface GetDistributableRewardsInput {
  * Every not-yet-claimed, non-zero reward in a tournament's *whole pool* — the
  * admin "distribute everything" view, vs {@link getClaimableRewards}' single
  * player scope. Covers entry-fee position payouts, the tournament-creator /
- * game-creator / protocol-fee shares, per-token refunds (when `refundTokenIds`
+ * game-fee / protocol-fee shares, per-token refunds (when `refundTokenIds`
  * is supplied), and sponsored prizes (single + every distributed slot). Feed
  * the result to {@link buildClaimCalls}.
  *
@@ -278,7 +279,7 @@ export function getDistributableRewards(
 
   // ---- claimed index (whole-pool kinds, not just placement-derived) ----
   let claimedTournamentCreator = false;
-  let claimedGameCreator = false;
+  let claimedGameFee = false;
   let claimedProtocolFee = false;
   const claimedPositions = new Set<number>();
   const claimedRefunds = new Set<string>();
@@ -288,7 +289,7 @@ export function getDistributableRewards(
     if (!c.claimed) continue;
     switch (c.claimKind) {
       case "entry_fee_tournament_creator": claimedTournamentCreator = true; break;
-      case "entry_fee_game_creator": claimedGameCreator = true; break;
+      case "entry_fee_game_fee": claimedGameFee = true; break;
       case "entry_fee_protocol_fee": claimedProtocolFee = true; break;
       case "entry_fee_position": if (c.position != null) claimedPositions.add(Number(c.position)); break;
       case "entry_fee_refund": if (c.refundTokenId != null) claimedRefunds.add(idKey(c.refundTokenId)); break;
@@ -326,7 +327,7 @@ export function getDistributableRewards(
       amount: ef.amount ?? "0",
       entryCount: t.entryCount ?? 0,
       tournamentCreatorShare: ef.tournamentCreatorShare ?? 0,
-      gameCreatorShare: ef.gameCreatorShare ?? 0,
+      gameFeeShare: ef.gameCreatorShare ?? 0,
       refundShare: ef.refundShare ?? 0,
       protocolFeeShare,
     };
@@ -348,8 +349,8 @@ export function getDistributableRewards(
     // Fixed shares (one claim each).
     if (!claimedTournamentCreator && split.tournamentCreator > 0n)
       out.push(erc20Reward("entry_fee_tournament_creator", 0, ef.tokenAddress, split.tournamentCreator, { kind: "entry_fee_tournament_creator" }));
-    if (!claimedGameCreator && split.gameCreator > 0n)
-      out.push(erc20Reward("entry_fee_game_creator", 0, ef.tokenAddress, split.gameCreator, { kind: "entry_fee_game_creator" }));
+    if (!claimedGameFee && split.gameFee > 0n)
+      out.push(erc20Reward("entry_fee_game_fee", 0, ef.tokenAddress, split.gameFee, { kind: "entry_fee_game_fee" }));
     if (!claimedProtocolFee && split.protocolFee > 0n)
       out.push(erc20Reward("entry_fee_protocol_fee", 0, ef.tokenAddress, split.protocolFee, { kind: "entry_fee_protocol_fee" }));
 
