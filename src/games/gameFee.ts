@@ -55,9 +55,20 @@ const BPS_DENOMINATOR = 10_000;
  */
 function isAbortOrTimeout(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
+
+  // Check the cause as well as the error itself. `wrapRpcCall` rebuilds
+  // failures as `RpcError`, so by the time one arrives here its own `name` is
+  // always "RpcError" — the original lives on `cause`. Without following it,
+  // the name check is dead on the real call path and only the message regex
+  // does any work, which is the same string-guessing this module already
+  // replaced once for entrypoint detection.
   const name = (error as { name?: unknown }).name;
-  const message = (error as { message?: unknown }).message;
   if (name === "AbortError" || name === "TimeoutError") return true;
+
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause !== undefined && cause !== error && isAbortOrTimeout(cause)) return true;
+
+  const message = (error as { message?: unknown }).message;
   return typeof message === "string" && /abort|timed? ?out/i.test(message);
 }
 

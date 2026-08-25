@@ -14,6 +14,7 @@ function wrapRpcCall<T>(fn: () => Promise<T>, contractAddress?: string): Promise
     throw new RpcError(
       error instanceof Error ? error.message : "RPC call failed",
       contractAddress,
+      { cause: error },
     );
   });
 }

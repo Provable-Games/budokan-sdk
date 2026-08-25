@@ -7,6 +7,7 @@ import {
 } from "../src/games/gameFee.ts";
 import type { Contract } from "starknet";
 import { GAME_FEE_ABI } from "../src/rpc/budokan.ts";
+import { RpcError } from "../src/errors/index.ts";
 
 /**
  * Stand-in for the two entrypoints `getGameFeeFloor` reaches through:
@@ -281,6 +282,30 @@ describe("cancellation", () => {
     } as unknown as Contract;
 
     await expect(getGameFeeFloor(contract)).rejects.toThrow(/aborted/);
+    expect(probes).toBe(0);
+  });
+
+  // The realistic path: by the time the error reaches the classifier it has
+  // been rebuilt as `RpcError`, so its own `name` is "RpcError" and only the
+  // preserved `cause` still says AbortError. A message that does NOT contain
+  // "abort" proves the cause is what is being read, not the string.
+  test("detects an abort through the wrapper's preserved cause", async () => {
+    let probes = 0;
+    const wrapped = new RpcError("call failed", "0xgame", {
+      cause: Object.assign(new Error("cancelled"), { name: "AbortError" }),
+    });
+    const contract = {
+      address: "0xgame",
+      call: async (method: string) => {
+        if (method === "supports_interface") {
+          probes += 1;
+          return false;
+        }
+        throw wrapped;
+      },
+    } as unknown as Contract;
+
+    await expect(getGameFeeFloor(contract)).rejects.toThrow(/call failed/);
     expect(probes).toBe(0);
   });
 });
