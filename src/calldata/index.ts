@@ -189,6 +189,13 @@ export interface CreateTournamentArgs {
    * prevent entries from being sold or moved between wallets after minting.
    */
   soulbound?: boolean;
+  /**
+   * Carried to the token mint, which packs it into the token id as inert data
+   * for the GAME to interpret — Budokan never reads it back. Defaults to
+   * false, and only means anything for a game with a funded paymaster wired
+   * up. Present so a tournament can opt in without a contract change.
+   */
+  paymaster?: boolean;
   salt?: number;
   metadataValue?: number;
 }
@@ -478,16 +485,17 @@ export function buildCreateTournamentCall(
       game_end_delay: args.schedule.gameEndDelay,
       submission_duration: args.schedule.submissionDuration,
     },
-    // EXACTLY three fields. v2's GameConfig dropped paymaster, client_url and
-    // renderer; the entry mint derives the client url itself. Serialising them
-    // added three felts MID-PAYLOAD, so the contract read the paymaster bool as
-    // the `Option<EntryFeeKind>` tag and deserialised garbage from there on.
-    // Nothing here is ABI-checked — this is hand-compiled — so the layout test
-    // in tests/calldata.test.ts is the only thing that catches drift.
+    // EXACTLY four fields. v2's GameConfig dropped client_url and renderer —
+    // the entry mint derives the client url itself. Serialising them added two
+    // felts MID-PAYLOAD, so the contract read a stray tag as the
+    // `Option<EntryFeeKind>` discriminant and deserialised garbage from there
+    // on. Nothing here is ABI-checked — this is hand-compiled — so the layout
+    // test in tests/calldata.test.ts is the only thing that catches drift.
     game_config: {
       game_address: args.gameAddress,
       settings_id: args.settingsId,
       soulbound: args.soulbound ?? false,
+      paymaster: args.paymaster ?? false,
     },
     entry_fee: encodeEntryFeeOption(args.entryFee),
     entry_requirement: encodeEntryRequirementOption(args.entryRequirement),

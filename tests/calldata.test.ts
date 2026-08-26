@@ -194,14 +194,19 @@ describe("buildCreateTournamentCall", () => {
     expect(call.calldata.length).toBeGreaterThan(0);
   });
 
-  // v2's GameConfig has ONE boolean. `paymaster` went with the registry, so
-  // the pair of flags this used to assert no longer exists.
-  test("defaults soulbound to false (entries are transferable)", () => {
+  test("defaults soulbound and paymaster to false, in different fields", () => {
     const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
     const sb = buildCreateTournamentCall(BUDOKAN, { ...base, soulbound: true }).calldata;
+    const pm = buildCreateTournamentCall(BUDOKAN, { ...base, paymaster: true }).calldata;
     const soulboundIdx = def.findIndex((v, i) => v !== sb[i]);
+    const paymasterIdx = def.findIndex((v, i) => v !== pm[i]);
     expect(soulboundIdx).toBeGreaterThan(-1);
+    expect(paymasterIdx).toBeGreaterThan(-1);
+    // Distinct fields — a shared index would mean one flag is overwriting the
+    // other rather than each occupying its own felt.
+    expect(soulboundIdx).not.toBe(paymasterIdx);
     expect(BigInt(def[soulboundIdx]!)).toBe(0n);
+    expect(BigInt(def[paymasterIdx]!)).toBe(0n);
   });
 
   test("soulbound:true flips exactly one calldata field from 0 to 1", () => {
@@ -481,22 +486,23 @@ describe("buildCreateTournamentCall felt layout", () => {
       metadataValue: 0,
     });
 
-  test("game_config occupies exactly three felts", () => {
+  test("game_config occupies exactly four felts", () => {
     const cd = call().calldata as string[];
     // creator(1) + name(1) + description ByteArray(3) + schedule(5) = 10
     const GAME_CONFIG = 10;
     expect(cd[GAME_CONFIG]).toBe("2"); // game_address
     expect(cd[GAME_CONFIG + 1]).toBe("0"); // settings_id
     expect(cd[GAME_CONFIG + 2]).toBe("0"); // soulbound
-    // The next felt MUST be the entry-fee Option tag (1 = None), not a
-    // paymaster bool. If this reads "0" the struct has grown again and every
-    // field after it is shifted.
-    expect(cd[GAME_CONFIG + 3]).toBe("1");
+    expect(cd[GAME_CONFIG + 3]).toBe("0"); // paymaster
+    // The next felt MUST be the entry-fee Option tag (1 = None). If this reads
+    // "0" the struct has grown again — client_url and renderer used to sit
+    // here — and every field after it is shifted.
+    expect(cd[GAME_CONFIG + 4]).toBe("1");
   });
 
   test("the whole payload is the length v2 expects", () => {
-    // 10 (above) + game_config 3 + entry_fee None 1 + entry_requirement None 1
+    // 10 (above) + game_config 4 + entry_fee None 1 + entry_requirement None 1
     // + leaderboard 2 + salt 1 + metadata_value 1
-    expect((call().calldata as string[]).length).toBe(19);
+    expect((call().calldata as string[]).length).toBe(20);
   });
 });
