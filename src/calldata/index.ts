@@ -189,13 +189,6 @@ export interface CreateTournamentArgs {
    * prevent entries from being sold or moved between wallets after minting.
    */
   soulbound?: boolean;
-  /**
-   * Route entry transactions through the game's paymaster when true. Defaults to
-   * false. Highly irrelevant at present — no game has a funded paymaster wired
-   * up — but plumbed through for a future update. Only enable for games that
-   * have a funded paymaster configured.
-   */
-  paymaster?: boolean;
   salt?: number;
   metadataValue?: number;
 }
@@ -411,7 +404,7 @@ export function buildEnterTournamentCall(
     calldata.push("0x1");
   }
   calldata.push(num.toHex(args.salt ?? 0)); // salt u16
-  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u16
+  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u128
   return {
     contractAddress: budokanAddress,
     entrypoint: "enter_tournament",
@@ -485,14 +478,16 @@ export function buildCreateTournamentCall(
       game_end_delay: args.schedule.gameEndDelay,
       submission_duration: args.schedule.submissionDuration,
     },
+    // EXACTLY three fields. v2's GameConfig dropped paymaster, client_url and
+    // renderer; the entry mint derives the client url itself. Serialising them
+    // added three felts MID-PAYLOAD, so the contract read the paymaster bool as
+    // the `Option<EntryFeeKind>` tag and deserialised garbage from there on.
+    // Nothing here is ABI-checked — this is hand-compiled — so the layout test
+    // in tests/calldata.test.ts is the only thing that catches drift.
     game_config: {
       game_address: args.gameAddress,
       settings_id: args.settingsId,
       soulbound: args.soulbound ?? false,
-      paymaster: args.paymaster ?? false,
-      // Options must be CairoOption — see file header for why.
-      client_url: new CairoOption<string>(CairoOptionVariant.None),
-      renderer: new CairoOption<string>(CairoOptionVariant.None),
     },
     entry_fee: encodeEntryFeeOption(args.entryFee),
     entry_requirement: encodeEntryRequirementOption(args.entryRequirement),

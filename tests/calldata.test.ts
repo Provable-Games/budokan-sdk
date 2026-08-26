@@ -194,20 +194,14 @@ describe("buildCreateTournamentCall", () => {
     expect(call.calldata.length).toBeGreaterThan(0);
   });
 
-  test("defaults soulbound + paymaster to false (transferable, no paymaster)", () => {
-    // The two game_config booleans should both encode as 0 by default. Together
-    // with the flip tests below, this pins that the flags are wired and default off.
+  // v2's GameConfig has ONE boolean. `paymaster` went with the registry, so
+  // the pair of flags this used to assert no longer exists.
+  test("defaults soulbound to false (entries are transferable)", () => {
     const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
     const sb = buildCreateTournamentCall(BUDOKAN, { ...base, soulbound: true }).calldata;
-    const pm = buildCreateTournamentCall(BUDOKAN, { ...base, paymaster: true }).calldata;
-    // Each flag flips exactly one field, and they flip different fields.
     const soulboundIdx = def.findIndex((v, i) => v !== sb[i]);
-    const paymasterIdx = def.findIndex((v, i) => v !== pm[i]);
     expect(soulboundIdx).toBeGreaterThan(-1);
-    expect(paymasterIdx).toBeGreaterThan(-1);
-    expect(soulboundIdx).not.toBe(paymasterIdx);
     expect(BigInt(def[soulboundIdx]!)).toBe(0n);
-    expect(BigInt(def[paymasterIdx]!)).toBe(0n);
   });
 
   test("soulbound:true flips exactly one calldata field from 0 to 1", () => {
@@ -217,15 +211,6 @@ describe("buildCreateTournamentCall", () => {
     const diffs = def.map((v, i) => (v === sb[i] ? -1 : i)).filter((i) => i !== -1);
     expect(diffs).toHaveLength(1);
     expect(BigInt(sb[diffs[0]!]!)).toBe(1n);
-  });
-
-  test("paymaster:true flips exactly one calldata field from 0 to 1", () => {
-    const def = buildCreateTournamentCall(BUDOKAN, base).calldata;
-    const pm = buildCreateTournamentCall(BUDOKAN, { ...base, paymaster: true }).calldata;
-    expect(pm.length).toBe(def.length);
-    const diffs = def.map((v, i) => (v === pm[i] ? -1 : i)).filter((i) => i !== -1);
-    expect(diffs).toHaveLength(1);
-    expect(BigInt(pm[diffs[0]!]!)).toBe(1n);
   });
 
   test("compiles a custom per-position distribution (Span<u16> basis points)", () => {
@@ -463,5 +448,55 @@ describe("pushRewardTypeFelts fall-through", () => {
       reward: { kind: "entry_fee_game_fee" },
     });
     expect(call.calldata.slice(1)).toEqual(["0x1", "0x0", "0x2"]);
+  });
+});
+
+// The layout test that did not exist, and whose absence shipped broken
+// create_tournament calldata in 0.2.0.
+//
+// `buildCreateTournamentCall` hand-compiles its payload — nothing checks it
+// against the contract ABI — so a struct that drifts produces felts in the
+// wrong POSITIONS, which no type system sees. v2 trimmed GameConfig from six
+// fields to three; the builder kept serialising paymaster + two Option::None
+// tags, so the contract read the paymaster bool as the Option<EntryFeeKind>
+// tag and deserialised garbage from there onward.
+describe("buildCreateTournamentCall felt layout", () => {
+  const call = () =>
+    buildCreateTournamentCall(BUDOKAN, {
+      creatorRewardsAddress: "0x1",
+      name: "T",
+      description: "d",
+      schedule: {
+        registrationStartDelay: 0,
+        registrationEndDelay: 3600,
+        gameStartDelay: 0,
+        gameEndDelay: 3600,
+        submissionDuration: 3600,
+      },
+      gameAddress: "0x2",
+      settingsId: 0,
+      soulbound: false,
+      leaderboard: { ascending: false, gameMustBeOver: false },
+      salt: 1,
+      metadataValue: 0,
+    });
+
+  test("game_config occupies exactly three felts", () => {
+    const cd = call().calldata as string[];
+    // creator(1) + name(1) + description ByteArray(3) + schedule(5) = 10
+    const GAME_CONFIG = 10;
+    expect(cd[GAME_CONFIG]).toBe("2"); // game_address
+    expect(cd[GAME_CONFIG + 1]).toBe("0"); // settings_id
+    expect(cd[GAME_CONFIG + 2]).toBe("0"); // soulbound
+    // The next felt MUST be the entry-fee Option tag (1 = None), not a
+    // paymaster bool. If this reads "0" the struct has grown again and every
+    // field after it is shifted.
+    expect(cd[GAME_CONFIG + 3]).toBe("1");
+  });
+
+  test("the whole payload is the length v2 expects", () => {
+    // 10 (above) + game_config 3 + entry_fee None 1 + entry_requirement None 1
+    // + leaderboard 2 + salt 1 + metadata_value 1
+    expect((call().calldata as string[]).length).toBe(19);
   });
 });
