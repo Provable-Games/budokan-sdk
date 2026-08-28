@@ -357,6 +357,9 @@ export function registerWriteTools(server: McpServer) {
               .max(10000)
               .optional()
               .describe("Your cut in basis points (default 0)"),
+            // Input name kept as-is deliberately — it is the MCP tool's public
+            // schema, and renaming it breaks callers. Only the SDK field it
+            // maps to was renamed (gameCreatorShare -> gameFeeShare).
             gameCreatorShareBps: z
               .number()
               .int()
@@ -410,7 +413,7 @@ export function registerWriteTools(server: McpServer) {
             tokenAddress: token.address,
             amount: toRawAmount(input.entryFee.amount, token.decimals),
             tournamentCreatorShare: input.entryFee.tournamentCreatorShareBps ?? 0,
-            gameCreatorShare:
+            gameFeeShare:
               input.entryFee.gameCreatorShareBps ?? defaults.defaultGameFeePercentage * 100,
             refundShare: input.entryFee.refundShareBps ?? 0,
             distribution: buildDistribution(

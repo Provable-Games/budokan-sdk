@@ -1736,7 +1736,7 @@ function buildEntryFeeArgs(state: State): EntryFeeArgs | undefined {
     tokenAddress: state.entryFeeToken.address,
     amount: state.entryFeeAmount,
     tournamentCreatorShare: state.entryFeeCreatorBps ?? 0,
-    gameCreatorShare: state.entryFeeGameBps ?? 0,
+    gameFeeShare: state.entryFeeGameBps ?? 0,
     refundShare: state.entryFeeRefundBps ?? 0,
     distribution,
     distributionCount: state.entryFeeDistCount ?? 10,
