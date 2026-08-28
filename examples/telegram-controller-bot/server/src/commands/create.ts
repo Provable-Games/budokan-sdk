@@ -1121,7 +1121,7 @@ async function handleEntryFeeAmount(api: TelegramApi, config: Config, state: Sta
   // game_creator_share below the registry-required fee. Read it LIVE from the
   // registry (authoritative), falling back to the curated catalog value, then
   // 1%, if the on-chain read fails.
-  const meta = gameMetadataFor(state.game!.contractAddress);
+  const meta = gameMetadataFor(state.chain, state.game!.contractAddress);
   const onchainBps = await fetchGameFeeBps(state.chain, state.game!.contractAddress, config.rpcUrl);
   const minBps = onchainBps ?? Math.round((meta?.defaultGameFeePercentage ?? 1) * 100);
   state.entryFeeMinGameBps = minBps;

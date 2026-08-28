@@ -1,8 +1,18 @@
 /**
- * Whitelisted games and per-game metadata. The on-chain denshokan registry
- * is the source of truth for which games *exist*; this whitelist is the
- * subset we recommend / support, plus extra metadata that doesn't live on
- * chain (homepage URL, default fee config, controller-only flag, etc.).
+ * Whitelisted games and per-game metadata.
+ *
+ * Under Budokan v2 this list is the AUTHORITY, not an overlay: v2 removed the
+ * on-chain minigame registry, and a v2 game never registers with denshokan.
+ * Registry presence therefore does not mean a game exists in any useful sense
+ * — it means the game is v1-era, and v2's `create_tournament` rejects it.
+ * Do not intersect this list with the registry; that selects exactly the
+ * games that cannot be used and drops the ones that can.
+ *
+ * `disabled: true` marks an entry that is listed for reference but cannot
+ * host a v2 tournament yet. Every consumer that offers games for selection
+ * must filter it out. Verify with
+ * budokan/contracts/scripts/check_game_compatible.sh before clearing the
+ * flag on any entry — it mirrors the contract's acceptance checks exactly.
  *
  * Lifted out of the budokan client (formerly
  * `client/src/assets/games/index.tsx`) so other integrations — the
@@ -62,6 +72,12 @@ export interface WhitelistedGame {
 
 const STRK = "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d";
 
+// Both mainnet entries are v1-era (their token_address() points at denshokan,
+// so v2 rejects them). They stay ENABLED because the SDK's mainnet chain
+// config still points at the v1 Budokan, where they work. They must be
+// disabled or replaced with self-bound builds IN THE SAME RELEASE as the
+// mainnet budokanAddress repoint — against the v2 contract every one of them
+// reverts at create_tournament.
 const MAINNET_GAMES_RAW: readonly WhitelistedGame[] = [
   {
     contractAddress: "0x4de0351ceab4ecd50be6ee09329b0dcb3b96a9da88cc158f453823a389722fa",
@@ -89,6 +105,23 @@ const MAINNET_GAMES_RAW: readonly WhitelistedGame[] = [
 
 const SEPOLIA_GAMES_RAW: readonly WhitelistedGame[] = [
   {
+    // The first v2-compatible game: self-bound standard token, built against
+    // the game-components revision Budokan v2 is pinned to. Passes all four
+    // gate checks in check_game_compatible.sh. The 5% fee matches the 500 bps
+    // floor the token declares on-chain — Budokan enforces that as a floor,
+    // so a lower share reverts.
+    contractAddress: "0x016fa4b7263337504a37add061ee809b13c1de3477d7be2211447db3a77fea69",
+    name: "Death Mountain (v2)",
+    url: "https://deathmountain.gg/",
+    playUrl: "https://deathmountain.gg/play?id=",
+    watchLink: "https://deathmountain.gg/watch?id=",
+    replayLink: "https://deathmountain.gg/replay?id=",
+    controllerOnly: true,
+    minEntryFeeUsd: 0.25,
+    defaultEntryFeeToken: STRK,
+    defaultGameFeePercentage: 5,
+  },
+  {
     contractAddress: "0x04359aee29873cd9603207d29b4140468bac3e042aa10daab2e1a8b2dd60ef7b",
     name: "Dark Shuffle",
     imageUrl: "https://darkshuffle.dev/favicon.svg",
@@ -96,6 +129,9 @@ const SEPOLIA_GAMES_RAW: readonly WhitelistedGame[] = [
     controllerOnly: true,
     minEntryFeeUsd: 0.25,
     defaultEntryFeeToken: STRK,
+    // Not v2-compatible: token_address() points at a separate contract,
+    // so create_tournament reverts.
+    disabled: true,
   },
   {
     contractAddress: "0x07ae26eecf0274aabb31677753ff3a4e15beec7268fa1b104f73ce3c89202831",
@@ -106,6 +142,9 @@ const SEPOLIA_GAMES_RAW: readonly WhitelistedGame[] = [
     controllerOnly: true,
     minEntryFeeUsd: 0.25,
     defaultEntryFeeToken: STRK,
+    // Not v2-compatible: token_address() points at a separate contract,
+    // so create_tournament reverts.
+    disabled: true,
   },
   {
     contractAddress: "0x012ccc9a2d76c836d088203f6e9d62e22d1a9f7479d1aea8b503a1036c0f4487",
@@ -115,6 +154,9 @@ const SEPOLIA_GAMES_RAW: readonly WhitelistedGame[] = [
     controllerOnly: true,
     minEntryFeeUsd: 0.25,
     defaultEntryFeeToken: STRK,
+    // Not v2-compatible: token_address() points at a separate contract,
+    // so create_tournament reverts.
+    disabled: true,
   },
   {
     contractAddress: "0x3a2ea07f0f49c770035eed9a010eb3d1e1bc3cb92e1d47eef2ad75a25c6bdb2",
@@ -125,6 +167,9 @@ const SEPOLIA_GAMES_RAW: readonly WhitelistedGame[] = [
     minEntryFeeUsd: 0.25,
     defaultEntryFeeToken: STRK,
     objectImage: true,
+    // Not v2-compatible: token_address() points at a separate contract,
+    // so create_tournament reverts.
+    disabled: true,
   },
   {
     contractAddress: "0x5e02a1f750b3fa0e835d454705b664ecb23166cdb49459b1c96c1e3eaf9a2f4",
@@ -135,6 +180,9 @@ const SEPOLIA_GAMES_RAW: readonly WhitelistedGame[] = [
     controllerOnly: true,
     minEntryFeeUsd: 0.25,
     defaultEntryFeeToken: STRK,
+    // Not v2-compatible: token_address() points at a separate contract,
+    // so create_tournament reverts.
+    disabled: true,
   },
 ];
 

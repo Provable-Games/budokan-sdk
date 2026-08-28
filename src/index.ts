@@ -107,9 +107,10 @@ export {
 } from "./chains/constants.js";
 export type { ChainConfig } from "./chains/constants.js";
 
-// Game whitelist + per-game UX metadata. The denshokan registry is the
-// source of truth for which games exist; this whitelist is the subset
-// we recommend / support, plus extra metadata that doesn't live on chain.
+// Game whitelist + per-game UX metadata. Under Budokan v2 this list is the
+// AUTHORITY on which games can host a tournament — v2 removed the minigame
+// registry, so do not intersect it with denshokan (see whitelist.ts).
+// Consumers offering games for selection must filter `disabled` entries.
 export {
   getWhitelistedGames,
   findWhitelistedGame,

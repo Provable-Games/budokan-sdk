@@ -7,11 +7,33 @@ import {
 } from "../src/games/whitelist.ts";
 
 describe("getWhitelistedGames", () => {
-  test("returns games sorted by name", () => {
+  test("sorts by name with disabled entries last", () => {
+    // The documented order is two-key: enabled before disabled, then by
+    // name. A plain name-sort assertion held only while no entry carried
+    // `disabled` — the v2 whitelist has five.
     const games = getWhitelistedGames("sepolia");
     expect(games.length).toBeGreaterThan(0);
-    const names = games.map((g) => g.name);
-    expect([...names].sort((a, b) => a.localeCompare(b))).toEqual(names);
+    const expected = [...games].sort((a, b) => {
+      const ad = a.disabled ?? false;
+      const bd = b.disabled ?? false;
+      if (ad !== bd) return ad ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+    expect(games.map((g) => g.name)).toEqual(expected.map((g) => g.name));
+  });
+
+  test("sepolia offers exactly one v2-compatible game", () => {
+    // v2 acceptance is strict (self-bound token, matching interface ids), and
+    // Death Mountain (v2) is the only sepolia game that passes
+    // check_game_compatible.sh. Everything else must carry `disabled: true`
+    // so pickers built on this list cannot offer a game whose
+    // create_tournament reverts. A newly compatible game changes this test
+    // deliberately.
+    const enabled = getWhitelistedGames("sepolia").filter((g) => !g.disabled);
+    expect(enabled.map((g) => g.name)).toEqual(["Death Mountain (v2)"]);
+    expect(enabled[0]!.contractAddress).toBe(
+      "0x016fa4b7263337504a37add061ee809b13c1de3477d7be2211447db3a77fea69",
+    );
   });
 
   test("addresses are canonical (lowercase, 66 chars)", () => {
