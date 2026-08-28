@@ -466,7 +466,7 @@ export class TelegramBot {
   //   /claim 42 dist 7 2                 → RewardType::Prize(PrizeType::Distributed((7, 2)))
   //   /claim 42 position 1               → RewardType::EntryFee(EntryFeeRewardType::Position(1))
   //   /claim 42 tournament_creator       → RewardType::EntryFee(EntryFeeRewardType::TournamentCreator)
-  //   /claim 42 game_creator             → RewardType::EntryFee(EntryFeeRewardType::GameCreator)
+  //   /claim 42 game_fee                 → RewardType::EntryFee(EntryFeeRewardType::GameFee)
   //   /claim 42 refund 0xTOKEN           → RewardType::EntryFee(EntryFeeRewardType::Refund(token))
   private async claim(chatId: string, args: string[]): Promise<void> {
     if (args.length === 0) {
@@ -673,7 +673,7 @@ export class TelegramBot {
         "  /sponsor <id> <address|username> — pay/sponsor another player's bracket entry",
         "  /submit_score [tournamentId] — submit your scores to the leaderboard (no id → pick from your entries; then submit one or all)",
         "  /claim [tournamentId] — see the prizes up for grabs, then claim your rewards ('mine') or pay out everyone ('all'). No id → pick from your entries.",
-        "    Power-user: /claim <tournamentId> <kind> — prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_creator · refund <tokenId>",
+        "    Power-user: /claim <tournamentId> <kind> — prize <id> · dist <id> <pos> · position <n> · tournament_creator · game_fee · refund <tokenId>",
         "  /distribute <tournamentId> — pay out every unclaimed reward to all winners (permissionless; same as /claim → 'all')",
         "  /add_prize [tournamentId] — add a prize pool (opens budokan.gg)",
         "",
@@ -869,7 +869,7 @@ function claimUsage(): string {
     "  /claim 42 dist 7 2                — distributed prize 7, payout position 2",
     "  /claim 42 position 1              — entry-fee share for placement 1",
     "  /claim 42 tournament_creator",
-    "  /claim 42 game_creator",
+    "  /claim 42 game_fee",
     "  /claim 42 refund 0xTOKEN          — refund for a bought-in entry",
   ].join("\n");
 }
@@ -895,8 +895,11 @@ function parseRewardType(kind: string, rest: string[]): RewardType | null {
     }
     case "tournament_creator":
       return { kind: "entry_fee_tournament_creator" };
+    // `game_creator` stays accepted: it is a user-typed command token, and
+    // breaking muscle memory buys nothing. Only the SDK kind was renamed.
     case "game_creator":
-      return { kind: "entry_fee_game_creator" };
+    case "game_fee":
+      return { kind: "entry_fee_game_fee" };
     case "refund": {
       const [token] = rest;
       if (!token || !/^(0x[0-9a-fA-F]+|\d+)$/.test(token)) return null;

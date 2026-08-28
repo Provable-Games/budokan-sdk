@@ -343,6 +343,9 @@ export async function claimAll(
           tournamentId,
           tournamentName: tournament.name || `#${tournamentId}`,
           source: "entry_fee_refund",
+          // A refund is a flat share of the entry fee, not a curve payout —
+          // there is no distribution to approximate, so it is always exact.
+          amountIsExact: true,
           position: 0,
           tokenAddress: ef.tokenAddress,
           tokenType: "erc20",
