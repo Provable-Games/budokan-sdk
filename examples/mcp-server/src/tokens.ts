@@ -6,7 +6,7 @@
 
 import {
   findKnownToken,
-  knownTokensForChain,
+  payableTokensForChain,
   type KnownToken,
 } from "@provable-games/budokan-sdk";
 import { providerFor } from "./wallet.ts";
@@ -20,8 +20,9 @@ export interface Erc20Token {
   decimals: number;
 }
 
+/** Tokens to offer for a fee or payment — non-payable ones are omitted. */
 export function tokensForChain(chain: Chain): readonly KnownToken[] {
-  return knownTokensForChain(chain);
+  return payableTokensForChain(chain);
 }
 
 /**
@@ -32,7 +33,9 @@ export async function resolveToken(chain: Chain, ref: string): Promise<Erc20Toke
   const known = findKnownToken(chain, ref);
   if (known) return known;
   if (!ref.startsWith("0x")) {
-    const symbols = knownTokensForChain(chain)
+    // Suggest only what can actually be charged; a non-payable catalogue
+    // entry still resolves by address above, for reading existing amounts.
+    const symbols = payableTokensForChain(chain)
       .map((t) => t.symbol)
       .join(", ");
     throw new Error(`Unknown token symbol "${ref}" on ${chain}. Known: ${symbols}. Or pass a 0x token address.`);

@@ -25,6 +25,12 @@ export interface Erc20Token {
    * in-session paid entry.
    */
   spendLimit?: string;
+  /**
+   * `false` when the token must not be offered as an entry fee. It stays in
+   * the catalog so `findKnownToken` still resolves its symbol/decimals for
+   * amounts already denominated in it. Absent = payable.
+   */
+  payable?: boolean;
 };
 
 // Session spend caps are ~$10/token — enough for entry fees, which is all the
@@ -85,6 +91,10 @@ const CASH: Erc20Token = {
   name: "Cash",
   decimals: 18,
   spendLimit: "11000000000000000000", // ~11 CASH (≈$10 @ Ekubo)
+  // Never offered as an entry fee. Kept catalogued so CASH amounts on
+  // existing tournaments still render, and so prize sponsorship (which goes
+  // through `spendLimit`, not the fee picker) is unaffected.
+  payable: false,
 };
 
 const MAINNET_TOKENS: readonly Erc20Token[] = [STRK, ETH, USDC, LORDS, SURVIVOR, CASH];
@@ -95,6 +105,15 @@ const SEPOLIA_TOKENS: readonly Erc20Token[] = [STRK, ETH];
 
 export function tokensForChain(chain: Chain): readonly Erc20Token[] {
   return chain === "mainnet" ? MAINNET_TOKENS : SEPOLIA_TOKENS;
+}
+
+/**
+ * The subset that may be charged as an entry fee. Session policies, prize
+ * sponsorship and `findKnownToken` deliberately keep using the full catalog —
+ * a non-payable token can still be held, displayed and sponsored.
+ */
+export function payableTokensForChain(chain: Chain): readonly Erc20Token[] {
+  return tokensForChain(chain).filter((t) => t.payable !== false);
 }
 
 export function findKnownToken(chain: Chain, address: string): Erc20Token | undefined {

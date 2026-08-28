@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   findKnownToken,
   fromRawAmount,
+  isPayableToken,
   knownTokensForChain,
+  payableTokensForChain,
   toRawAmount,
 } from "../src/tokens/index.ts";
 
@@ -26,6 +28,40 @@ describe("findKnownToken", () => {
     expect(findKnownToken("mainnet", "DOGE")).toBeUndefined();
     expect(findKnownToken("sepolia", "USDC")).toBeUndefined();
     expect(knownTokensForChain("sepolia").map((t) => t.symbol)).toEqual(["STRK", "ETH"]);
+  });
+});
+
+describe("payable tokens", () => {
+  test("CASH is catalogued but not payable", () => {
+    expect(findKnownToken("mainnet", "CASH")?.payable).toBe(false);
+    expect(isPayableToken("mainnet", "CASH")).toBe(false);
+    expect(isPayableToken("mainnet", findKnownToken("mainnet", "CASH")!.address)).toBe(false);
+  });
+
+  test("payableTokensForChain drops it; knownTokensForChain keeps it", () => {
+    expect(knownTokensForChain("mainnet").map((t) => t.symbol)).toContain("CASH");
+    expect(payableTokensForChain("mainnet").map((t) => t.symbol)).not.toContain("CASH");
+    // Everything else survives, in catalog order.
+    expect(payableTokensForChain("mainnet").map((t) => t.symbol)).toEqual([
+      "STRK",
+      "ETH",
+      "USDC",
+      "LORDS",
+      "SURVIVOR",
+    ]);
+    expect(payableTokensForChain("sepolia").map((t) => t.symbol)).toEqual(["STRK", "ETH"]);
+  });
+
+  test("CASH stays resolvable so existing amounts keep their decimals", () => {
+    const cash = findKnownToken("mainnet", "CASH");
+    expect(cash?.decimals).toBe(18);
+    expect(fromRawAmount("1500000000000000000", cash!.decimals)).toBe("1.5");
+  });
+
+  test("tokens outside the catalog are payable — it is not an allowlist", () => {
+    expect(isPayableToken("mainnet", "STRK")).toBe(true);
+    expect(isPayableToken("mainnet", "DOGE")).toBe(true);
+    expect(isPayableToken("mainnet", "0x1234")).toBe(true);
   });
 });
 
