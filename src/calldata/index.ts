@@ -190,10 +190,10 @@ export interface CreateTournamentArgs {
    */
   soulbound?: boolean;
   /**
-   * Route entry transactions through the game's paymaster when true. Defaults to
-   * false. Highly irrelevant at present — no game has a funded paymaster wired
-   * up — but plumbed through for a future update. Only enable for games that
-   * have a funded paymaster configured.
+   * Carried to the token mint, which packs it into the token id as inert data
+   * for the GAME to interpret — Budokan never reads it back. Defaults to
+   * false, and only means anything for a game with a funded paymaster wired
+   * up. Present so a tournament can opt in without a contract change.
    */
   paymaster?: boolean;
   salt?: number;
@@ -411,7 +411,7 @@ export function buildEnterTournamentCall(
     calldata.push("0x1");
   }
   calldata.push(num.toHex(args.salt ?? 0)); // salt u16
-  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u16
+  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u128
   return {
     contractAddress: budokanAddress,
     entrypoint: "enter_tournament",
@@ -485,14 +485,17 @@ export function buildCreateTournamentCall(
       game_end_delay: args.schedule.gameEndDelay,
       submission_duration: args.schedule.submissionDuration,
     },
+    // EXACTLY four fields. v2's GameConfig dropped client_url and renderer —
+    // the entry mint derives the client url itself. Serialising them added two
+    // felts MID-PAYLOAD, so the contract read a stray tag as the
+    // `Option<EntryFeeKind>` discriminant and deserialised garbage from there
+    // on. Nothing here is ABI-checked — this is hand-compiled — so the layout
+    // test in tests/calldata.test.ts is the only thing that catches drift.
     game_config: {
       game_address: args.gameAddress,
       settings_id: args.settingsId,
       soulbound: args.soulbound ?? false,
       paymaster: args.paymaster ?? false,
-      // Options must be CairoOption — see file header for why.
-      client_url: new CairoOption<string>(CairoOptionVariant.None),
-      renderer: new CairoOption<string>(CairoOptionVariant.None),
     },
     entry_fee: encodeEntryFeeOption(args.entryFee),
     entry_requirement: encodeEntryRequirementOption(args.entryRequirement),
