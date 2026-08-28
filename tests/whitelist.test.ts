@@ -37,15 +37,27 @@ describe("getWhitelistedGames", () => {
   });
 
   test("addresses are canonical (lowercase, 66 chars)", () => {
-    for (const g of getWhitelistedGames("mainnet")) {
+    // Iterate every chain so this cannot vacuously pass against an empty
+    // list — mainnet is deliberately empty until a self-bound game ships.
+    const all = [...getWhitelistedGames("mainnet"), ...getWhitelistedGames("sepolia")];
+    expect(all.length).toBeGreaterThan(0);
+    for (const g of all) {
       expect(g.contractAddress).toMatch(/^0x[0-9a-f]{64}$/);
     }
   });
 
+  test("mainnet is empty until a game passes v2 acceptance", () => {
+    // No mainnet game is self-bound against the pinned game-components yet
+    // (see the runbook) — listing one anyway would offer a game whose
+    // create_tournament reverts. Adding the first entry here must happen in
+    // the same release that repoints CHAINS.mainnet at the v2 Budokan.
+    expect(getWhitelistedGames("mainnet")).toEqual([]);
+  });
+
   test("returns a fresh copy each call (no shared mutation)", () => {
-    const a = getWhitelistedGames("mainnet");
+    const a = getWhitelistedGames("sepolia");
     a.pop();
-    expect(getWhitelistedGames("mainnet").length).toBe(a.length + 1);
+    expect(getWhitelistedGames("sepolia").length).toBe(a.length + 1);
   });
 });
 
@@ -66,10 +78,10 @@ describe("findWhitelistedGame / isGameWhitelisted", () => {
 
 describe("getGameDefaults", () => {
   test("inherits values from a known game", () => {
-    const game = getWhitelistedGames("mainnet").find(
-      (g) => g.name === "Death Mountain",
+    const game = getWhitelistedGames("sepolia").find(
+      (g) => g.name === "Death Mountain (v2)",
     )!;
-    const defaults = getGameDefaults("mainnet", game.contractAddress);
+    const defaults = getGameDefaults("sepolia", game.contractAddress);
     expect(defaults.defaultGameFeePercentage).toBe(5);
     // `defaultEntryFeeToken` is optional on the game record, so assert it is
     // actually present before comparing — otherwise `undefined === undefined`
