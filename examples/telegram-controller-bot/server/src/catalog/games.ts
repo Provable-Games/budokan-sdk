@@ -2,15 +2,15 @@
 // (`getWhitelistedGames`) — completing the migration the previous version of
 // this file promised, and REVERSING its registry dependency on purpose.
 //
-// Budokan v2 removed the minigame registry, and a v2 game never registers
-// with denshokan. So "in the registry" stopped meaning "usable" and started
-// meaning "v1-era — create_tournament rejects it". The old
-// registry-∩-whitelist picker therefore offered exactly the games that
-// cannot host a v2 tournament and hid the ones that can.
+// Budokan v2 removed the on-chain minigame registry, so there is nothing to
+// enumerate — a game is offerable because it is whitelisted, full stop.
 //
-// The registry is still queried, but ONLY to enrich a whitelisted game with
-// indexed description/artwork when it happens to have some. It never decides
-// what is offered, and an indexer outage no longer empties the picker.
+// The denshokan indexer is still queried, but ONLY to enrich a whitelisted
+// game with indexed description/artwork. It never decides what is offered,
+// and an outage no longer empties the picker. That distinction matters
+// because the indexer must be the V2 one: a v1 indexer serves registry-era
+// games that create_tournament rejects, and the old registry-∩-whitelist
+// picker offered exactly those while hiding the games that work.
 //
 // The bot uses this for:
 //   - /create's first picker (numbered list of offerable games)

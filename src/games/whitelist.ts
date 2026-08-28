@@ -1,12 +1,15 @@
 /**
  * Whitelisted games and per-game metadata.
  *
- * Under Budokan v2 this list is the AUTHORITY, not an overlay: v2 removed the
- * on-chain minigame registry, and a v2 game never registers with denshokan.
- * Registry presence therefore does not mean a game exists in any useful sense
- * — it means the game is v1-era, and v2's `create_tournament` rejects it.
- * Do not intersect this list with the registry; that selects exactly the
- * games that cannot be used and drops the ones that can.
+ * Under Budokan v2 this list is the AUTHORITY, not an overlay. v2 removed the
+ * on-chain minigame registry, so there is nothing to enumerate: being listed
+ * here is the only way a host can select a game.
+ *
+ * A denshokan indexer may still carry a v2 game, and is worth reading for a
+ * name and artwork — but only the V2 indexer. A v1 indexer serves
+ * registry-era games that v2's `create_tournament` rejects, so intersecting
+ * this list with one selects exactly the games that cannot be used. Enrich
+ * from the indexer; never let it decide what is offered.
  *
  * Only games that can actually host a v2 tournament are listed — an entry
  * that would revert at create_tournament is removed, not flagged, so no
