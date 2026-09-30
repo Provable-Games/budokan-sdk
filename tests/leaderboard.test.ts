@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  comparePacketTokenScores,
   getSubmittableScores,
   buildSubmitScoreCalls,
 } from "../src/leaderboard/index.ts";
@@ -48,4 +49,40 @@ describe("buildSubmitScoreCalls", () => {
     expect(calls[0]!.entrypoint).toBe("submit_score");
     expect(calls[1]!.entrypoint).toBe("submit_score");
   });
+});
+
+describe("packet token ranking", () => {
+  const token = (minutes: bigint, payload = 0n, nonce = 0n) =>
+    (1n | (minutes << 64n) | (payload << 192n) | (nonce << 21n)).toString();
+  for (const ascending of [false, true]) {
+    test(`earlier mint wins even if payload reverses ID order (${ascending})`, () => {
+      const earlier = { score: 100n, tokenId: token(100n, 1n) };
+      const later = { score: 100n, tokenId: token(101n) };
+      expect(BigInt(earlier.tokenId) > BigInt(later.tokenId)).toBe(true);
+      expect(
+        [later, earlier].sort((a, b) => comparePacketTokenScores(a, b, ascending)),
+      ).toEqual([earlier, later]);
+    });
+    test(`same-minute mint uses numerical ID across hex/decimal (${ascending})`, () => {
+      const first = {
+        score: "100",
+        tokenId: "0x" + BigInt(token(100n)).toString(16),
+      };
+      const second = { score: "100", tokenId: token(100n, 0n, 1n) };
+      expect(comparePacketTokenScores(first, second, ascending)).toBe(-1);
+      expect(comparePacketTokenScores(second, first, ascending)).toBe(1);
+      expect(
+        comparePacketTokenScores(
+          first,
+          { ...first, tokenId: BigInt(first.tokenId).toString() },
+          ascending,
+        ),
+      ).toBe(0);
+    });
+    test(`score precedes mint, preserving u64 precision (${ascending})`, () => {
+      const earlier = { score: "18446744073709551614", tokenId: token(100n) };
+      const later = { score: "18446744073709551615", tokenId: token(101n) };
+      expect(comparePacketTokenScores(earlier, later, ascending)).toBe(ascending ? -1 : 1);
+    });
+  }
 });

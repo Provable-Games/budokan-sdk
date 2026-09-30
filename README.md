@@ -100,6 +100,14 @@ function TournamentFeed({ tournamentId }: { tournamentId: string }) {
 }
 ```
 
+### Packet-token leaderboard order
+
+For current GameCore tokens, sort with `comparePacketTokenScores(a, b, ascending)`
+before capping the list or passing IDs to `getSubmittableScores`. Equal scores
+prefer the earlier `minted_at_timestamp`; this field has minute precision, so
+same-minute ties use the lower numerical token ID. Use bigint or decimal-string
+scores to preserve the full on-chain u64 range.
+
 ### Whitelisted Games
 
 The SDK ships a curated per-chain list of games and per-game UX metadata
