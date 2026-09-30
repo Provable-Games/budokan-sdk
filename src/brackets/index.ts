@@ -44,7 +44,7 @@ export type MatchStatus =
 export interface BracketPlayer {
   /** Player wallet address. */
   address: string;
-  /** Optional display name (≤31 ASCII bytes for on-chain player_name). */
+  /** Optional display name for bracket presentation. */
   name?: string;
   /** 1-based seed; 1 = strongest. */
   seed: number;
@@ -863,6 +863,8 @@ export function bracketFinalPrizeCalls(state: BracketState): Call[] {
  * `proof` — the allowlist proof span from `getAllowlistProof` — so it's
  * attached as the `QualificationProof::Extension` the merkle validator expects.
  * Gated rounds >1 build their proof internally from the feeder result.
+ * Execute one player entry per transaction, or combine recipients with
+ * `buildEnterTournamentForRecipientsCall`: single mint calls restart nonce zero.
  */
 export function bracketEntryCalls(
   state: BracketState,
@@ -929,7 +931,6 @@ export function bracketEntryCalls(
     buildEnterTournamentCall(state.budokanAddress, {
       tournamentId: m.tournamentId,
       playerAddress: player.address,
-      playerName: player.name,
       ...(qualifier ? { qualifier } : {}),
       ...(qualification ? { qualification } : {}),
     }),

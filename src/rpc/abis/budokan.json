@@ -24,6 +24,24 @@
   },
   {
     "type": "impl",
+    "name": "BudokanInterfaceSyncImpl",
+    "interface_name": "budokan::budokan::Budokan::IBudokanInterfaceSync"
+  },
+  {
+    "type": "interface",
+    "name": "budokan::budokan::Budokan::IBudokanInterfaceSync",
+    "items": [
+      {
+        "type": "function",
+        "name": "sync_supported_interfaces",
+        "inputs": [],
+        "outputs": [],
+        "state_mutability": "external"
+      }
+    ]
+  },
+  {
+    "type": "impl",
     "name": "BudokanRewardsAdminImpl",
     "interface_name": "budokan::budokan::Budokan::IBudokanRewardsAdmin"
   },
@@ -206,7 +224,7 @@
   },
   {
     "type": "impl",
-    "name": "GameContextImpl",
+    "name": "MetagameContextImpl",
     "interface_name": "game_components_interfaces::metagame::context::IMetagameContext"
   },
   {
@@ -232,6 +250,10 @@
         "name": "has_context",
         "inputs": [
           {
+            "name": "game_address",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
             "name": "token_id",
             "type": "core::felt252"
           }
@@ -247,7 +269,7 @@
   },
   {
     "type": "impl",
-    "name": "GameContextDetailsImpl",
+    "name": "MetagameContextDetailsImpl",
     "interface_name": "game_components_interfaces::metagame::context::IMetagameContextDetails"
   },
   {
@@ -319,6 +341,10 @@
         "name": "context_details",
         "inputs": [
           {
+            "name": "game_address",
+            "type": "core::starknet::contract_address::ContractAddress"
+          },
+          {
             "name": "token_id",
             "type": "core::felt252"
           }
@@ -378,34 +404,6 @@
     ]
   },
   {
-    "type": "enum",
-    "name": "core::option::Option::<core::byte_array::ByteArray>",
-    "variants": [
-      {
-        "name": "Some",
-        "type": "core::byte_array::ByteArray"
-      },
-      {
-        "name": "None",
-        "type": "()"
-      }
-    ]
-  },
-  {
-    "type": "enum",
-    "name": "core::option::Option::<core::starknet::contract_address::ContractAddress>",
-    "variants": [
-      {
-        "name": "Some",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "None",
-        "type": "()"
-      }
-    ]
-  },
-  {
     "type": "struct",
     "name": "budokan_interfaces::budokan::GameConfig",
     "members": [
@@ -424,14 +422,6 @@
       {
         "name": "paymaster",
         "type": "core::bool"
-      },
-      {
-        "name": "client_url",
-        "type": "core::option::Option::<core::byte_array::ByteArray>"
-      },
-      {
-        "name": "renderer",
-        "type": "core::option::Option::<core::starknet::contract_address::ContractAddress>"
       }
     ]
   },
@@ -713,11 +703,11 @@
   },
   {
     "type": "enum",
-    "name": "core::option::Option::<core::felt252>",
+    "name": "core::option::Option::<core::starknet::contract_address::ContractAddress>",
     "variants": [
       {
         "name": "Some",
-        "type": "core::felt252"
+        "type": "core::starknet::contract_address::ContractAddress"
       },
       {
         "name": "None",
@@ -820,6 +810,20 @@
       {
         "name": "Distributed",
         "type": "(core::integer::u64, core::integer::u32)"
+      }
+    ]
+  },
+  {
+    "type": "enum",
+    "name": "core::option::Option::<core::felt252>",
+    "variants": [
+      {
+        "name": "Some",
+        "type": "core::felt252"
+      },
+      {
+        "name": "None",
+        "type": "()"
       }
     ]
   },
@@ -1038,6 +1042,26 @@
       },
       {
         "type": "function",
+        "name": "is_token_registered",
+        "inputs": [
+          {
+            "name": "tournament_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "token_id",
+            "type": "core::felt252"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "tournament",
         "inputs": [
           {
@@ -1048,6 +1072,22 @@
         "outputs": [
           {
             "type": "budokan_interfaces::budokan::Tournament"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "tournament_game_address",
+        "inputs": [
+          {
+            "name": "tournament_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
           }
         ],
         "state_mutability": "view"
@@ -1131,14 +1171,6 @@
           {
             "name": "leaderboard_config",
             "type": "budokan_interfaces::budokan::LeaderboardConfig"
-          },
-          {
-            "name": "salt",
-            "type": "core::integer::u16"
-          },
-          {
-            "name": "metadata_value",
-            "type": "core::integer::u16"
           }
         ],
         "outputs": [
@@ -1157,10 +1189,6 @@
             "type": "core::integer::u64"
           },
           {
-            "name": "player_name",
-            "type": "core::option::Option::<core::felt252>"
-          },
-          {
             "name": "player_address",
             "type": "core::option::Option::<core::starknet::contract_address::ContractAddress>"
           },
@@ -1175,14 +1203,6 @@
           {
             "name": "entry_fee_pay_params",
             "type": "core::option::Option::<core::array::Span::<core::felt252>>"
-          },
-          {
-            "name": "salt",
-            "type": "core::integer::u16"
-          },
-          {
-            "name": "metadata_value",
-            "type": "core::integer::u16"
           }
         ],
         "outputs": [
@@ -1203,18 +1223,6 @@
           {
             "name": "recipients",
             "type": "core::array::Array::<budokan_interfaces::budokan::TournamentRecipientParams>"
-          },
-          {
-            "name": "player_name",
-            "type": "core::option::Option::<core::felt252>"
-          },
-          {
-            "name": "salt",
-            "type": "core::integer::u16"
-          },
-          {
-            "name": "metadata_value",
-            "type": "core::integer::u16"
           }
         ],
         "outputs": [
@@ -1303,39 +1311,6 @@
           }
         ],
         "state_mutability": "external"
-      }
-    ]
-  },
-  {
-    "type": "impl",
-    "name": "MetagameImpl",
-    "interface_name": "game_components_interfaces::metagame::core::IMetagame"
-  },
-  {
-    "type": "interface",
-    "name": "game_components_interfaces::metagame::core::IMetagame",
-    "items": [
-      {
-        "type": "function",
-        "name": "context_address",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "core::starknet::contract_address::ContractAddress"
-          }
-        ],
-        "state_mutability": "view"
-      },
-      {
-        "type": "function",
-        "name": "default_token_address",
-        "inputs": [],
-        "outputs": [
-          {
-            "type": "core::starknet::contract_address::ContractAddress"
-          }
-        ],
-        "state_mutability": "view"
       }
     ]
   },
@@ -1463,7 +1438,7 @@
         "type": "core::integer::u128"
       },
       {
-        "name": "game_fee_share",
+        "name": "game_creator_share",
         "type": "core::option::Option::<core::integer::u16>"
       },
       {
@@ -1745,6 +1720,10 @@
         "name": "is_token_banned",
         "inputs": [
           {
+            "name": "context_id",
+            "type": "core::integer::u64"
+          },
+          {
             "name": "token_id",
             "type": "core::felt252"
           }
@@ -1992,24 +1971,8 @@
       {
         "name": "owner",
         "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "default_token_address",
-        "type": "core::starknet::contract_address::ContractAddress"
       }
     ]
-  },
-  {
-    "type": "event",
-    "name": "game_components_embeddable_game_standard::metagame::metagame_component::MetagameComponent::Event",
-    "kind": "enum",
-    "variants": []
-  },
-  {
-    "type": "event",
-    "name": "game_components_embeddable_game_standard::metagame::extensions::context::context::ContextComponent::Event",
-    "kind": "enum",
-    "variants": []
   },
   {
     "type": "event",
@@ -2161,16 +2124,6 @@
       {
         "name": "config",
         "type": "core::felt252",
-        "kind": "data"
-      },
-      {
-        "name": "client_url",
-        "type": "core::option::Option::<core::byte_array::ByteArray>",
-        "kind": "data"
-      },
-      {
-        "name": "renderer",
-        "type": "core::option::Option::<core::starknet::contract_address::ContractAddress>",
         "kind": "data"
       },
       {
@@ -2349,16 +2302,6 @@
     "name": "budokan::budokan::Budokan::Event",
     "kind": "enum",
     "variants": [
-      {
-        "name": "MetagameEvent",
-        "type": "game_components_embeddable_game_standard::metagame::metagame_component::MetagameComponent::Event",
-        "kind": "flat"
-      },
-      {
-        "name": "ContextEvent",
-        "type": "game_components_embeddable_game_standard::metagame::extensions::context::context::ContextComponent::Event",
-        "kind": "flat"
-      },
       {
         "name": "SRC5Event",
         "type": "openzeppelin_introspection::src5::SRC5Component::Event",

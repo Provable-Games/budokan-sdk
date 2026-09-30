@@ -23,6 +23,8 @@ import {
   attachMatchTournament,
   attachRoundOneTree,
   bracketEntryCalls,
+  buildEnterTournamentForRecipientsCall,
+  type TournamentRecipientArgs,
   bracketFeePrizeCalls,
   bracketRounds,
   bracketSummary,
@@ -752,10 +754,24 @@ async function deployResolved(
     // player's allowlist proof (fetched from the merkle service).
     const entryCalls: ReturnType<typeof bracketEntryCalls> = [];
     for (const m of state.matches.filter((x) => x.round === 1 && x.tournamentId)) {
+      const recipients: TournamentRecipientArgs[] = [];
       for (const player of [m.playerA, m.playerB]) {
         if (!isReal(player)) continue;
         const proof = await roundOneProof(state, m.id, player!.address, config);
-        entryCalls.push(...bracketEntryCalls(state, m.id, player!.address, proof));
+        // Reuse bracket validation, including the required allowlist proof.
+        bracketEntryCalls(state, m.id, player!.address, proof);
+        recipients.push({
+          playerAddress: player!.address,
+          ...(state.roundOneTreeIds?.[m.id] !== undefined ? {
+            qualifier: player!.address,
+            qualification: { kind: "extension" as const, data: proof! },
+          } : {}),
+        });
+      }
+      if (recipients.length > 0) {
+        entryCalls.push(buildEnterTournamentForRecipientsCall(state.budokanAddress, {
+          tournamentId: m.tournamentId!, recipients,
+        }));
       }
     }
     if (entryCalls.length > 0) {

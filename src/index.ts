@@ -131,6 +131,7 @@ export type {
 export {
   buildCreateTournamentCall,
   buildEnterTournamentCall,
+  buildEnterTournamentForRecipientsCall,
   buildSubmitScoreCall,
   buildClaimRewardCall,
   buildAddPrizeCall,
@@ -141,6 +142,8 @@ export type {
   Call,
   CreateTournamentArgs,
   EnterTournamentArgs,
+  EnterTournamentForRecipientsArgs,
+  TournamentRecipientArgs,
   AddPrizeArgs,
   PrizeSpec,
   TokenTypeSpec,

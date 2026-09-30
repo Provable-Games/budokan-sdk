@@ -15,7 +15,7 @@
 //
 // entry_requirement supports the same presets as the budokan client
 // (token-gated NFT, ERC20 balance, Merkle allowlist, Opus Troves,
-// prior tournament). salt and metadata_value default to 0.
+// prior tournament).
 
 import type { Config } from "../config.ts";
 import type { Chain } from "../chat-state.ts";
@@ -1736,7 +1736,7 @@ function buildEntryFeeArgs(state: State): EntryFeeArgs | undefined {
     tokenAddress: state.entryFeeToken.address,
     amount: state.entryFeeAmount,
     tournamentCreatorShare: state.entryFeeCreatorBps ?? 0,
-    gameCreatorShare: state.entryFeeGameBps ?? 0,
+    gameFeeShare: state.entryFeeGameBps ?? 0,
     refundShare: state.entryFeeRefundBps ?? 0,
     distribution,
     distributionCount: state.entryFeeDistCount ?? 10,

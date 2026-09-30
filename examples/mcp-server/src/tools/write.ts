@@ -410,7 +410,7 @@ export function registerWriteTools(server: McpServer) {
             tokenAddress: token.address,
             amount: toRawAmount(input.entryFee.amount, token.decimals),
             tournamentCreatorShare: input.entryFee.tournamentCreatorShareBps ?? 0,
-            gameCreatorShare:
+            gameFeeShare:
               input.entryFee.gameCreatorShareBps ?? defaults.defaultGameFeePercentage * 100,
             refundShare: input.entryFee.refundShareBps ?? 0,
             distribution: buildDistribution(

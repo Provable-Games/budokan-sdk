@@ -49,11 +49,16 @@ if (id) {
   await call("get_leaderboard", { chain: "mainnet", tournamentId: id });
   await call("get_prizes", { chain: "mainnet", tournamentId: id });
 }
-await call("list_game_settings", {
-  chain: "mainnet",
-  gameAddress: JSON.parse(await call("list_games", { chain: "mainnet" })).games[0].contractAddress,
-  limit: 3,
-});
+const mainnetGames = JSON.parse(await call("list_games", { chain: "mainnet" })).games;
+if (mainnetGames.length > 0) {
+  await call("list_game_settings", {
+    chain: "mainnet",
+    gameAddress: mainnetGames[0].contractAddress,
+    limit: 3,
+  });
+} else {
+  console.log("No eligible mainnet games; skipping game settings read.");
+}
 await call("generate_wallet", {}); // sepolia keystore in SMOKE dir
 await call("wallet_status", {}); // now configured, undeployed, zero balance
 await call("create_tournament", {

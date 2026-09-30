@@ -896,7 +896,7 @@ function parseRewardType(kind: string, rest: string[]): RewardType | null {
     case "tournament_creator":
       return { kind: "entry_fee_tournament_creator" };
     case "game_creator":
-      return { kind: "entry_fee_game_creator" };
+      return { kind: "entry_fee_game_fee" };
     case "refund": {
       const [token] = rest;
       if (!token || !/^(0x[0-9a-fA-F]+|\d+)$/.test(token)) return null;
