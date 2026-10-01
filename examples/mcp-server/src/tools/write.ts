@@ -32,7 +32,7 @@ import {
   type EntryFeeArgs,
   type EntryRequirementArgs,
 } from "@provable-games/budokan-sdk";
-import { chainConfig, resolveChain, type Chain } from "../config.ts";
+import { requireGameCoreDeployment, resolveChain, type Chain } from "../config.ts";
 import { providerFor, resolveSigner, TX_DETAILS, type ResolvedSigner } from "../wallet.ts";
 import { resolveToken, toRawAmount } from "../tokens.ts";
 import { errorResult, jsonResult } from "./read.ts";
@@ -400,7 +400,7 @@ export function registerWriteTools(server: McpServer) {
       try {
         const chain = resolveChain(input.chain);
         const signer = requireSigner(chain);
-        const { budokanAddress } = chainConfig(chain);
+        const { budokanAddress } = requireGameCoreDeployment(chain);
         const defaults = getGameDefaults(chain, input.gameAddress);
 
         let entryFee: EntryFeeArgs | undefined;
@@ -648,7 +648,7 @@ export function registerWriteTools(server: McpServer) {
       try {
         const chain = resolveChain(input.chain);
         const signer = requireSigner(chain);
-        const { budokanAddress } = chainConfig(chain);
+        const { budokanAddress } = requireGameCoreDeployment(chain);
         const token = await resolveToken(chain, input.token);
         const raw = toRawAmount(input.amount, token.decimals);
 

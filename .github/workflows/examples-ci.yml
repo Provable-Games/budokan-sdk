@@ -28,7 +28,7 @@ jobs:
         run: bun install --frozen-lockfile && bun run typecheck && bun src/policies.check.ts
       - name: Check the MCP example against this SDK
         working-directory: examples/mcp-server
-        run: bun install --frozen-lockfile && bun run typecheck
+        run: bun install --frozen-lockfile && bun run typecheck && bun src/config.check.ts
       - name: Build the bot image from the repository root
         run: docker build -f examples/telegram-controller-bot/server/Dockerfile -t budokan-bot:ci .
       - name: Verify SDK and session imports in the runtime image
@@ -45,4 +45,3 @@ jobs:
             assert(policies.contracts[call.contractAddress].methods.some(m => m.entrypoint === call.entrypoint));
             assert.equal(typeof SessionProvider, "function");
           '
-
