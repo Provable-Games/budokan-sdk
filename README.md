@@ -284,3 +284,43 @@ Requires an `NPM_TOKEN` secret configured in the repo settings.
 ## License
 
 MIT
+
+### Optional early finalization
+
+Updated Budokan contracts support opt-in completion for a fixed entry target.
+Create a tournament with `leaderboardConfig.gameMustBeOver = true`, then have
+its creator enable the target before entries arrive and no later than gameplay
+start (use a future start time if enabling in a separate transaction):
+
+```ts
+import { buildEnableEarlyFinalizationCall, buildEnableBracketEarlyFinalizationCall } from "@provable-games/budokan-sdk";
+
+const call = buildEnableEarlyFinalizationCall(budokanAddress, {
+  tournamentId, entryTarget: 2,
+});
+// The application signs/executes this call with the tournament creator's account.
+
+const bracketCall = buildEnableBracketEarlyFinalizationCall(bracketAddress, bracketId);
+// The bracket creator enables this before the first signup. Each match uses two entries.
+```
+
+The entry target is immutable and also caps entries. Only successful unique
+submissions count, and the games must report over. The final required submission
+finalizes the tournament and makes prizes claimable without waiting for the
+scheduled end. Claims remain separate transactions. If a game is missing or
+never submitted, the normal timed finalization remains available. Large
+tournaments can leave the option disabled.
+
+Every required entry must be ranked. If a new score displaces an earlier entry
+from an occupied rank, restore that entry at its correct rank before completion.
+The existing leaderboard overwrites ranks rather than shifting them; submitting
+in ranking order avoids the extra placement transaction. Restoring an entry
+does not increment the unique submission counter.
+
+For these tournaments, use the RPC viewer path (`primarySource: "rpc"`) for status:
+tournament detail and batch reads honor the viewer's authoritative `phase`.
+The pure `tournamentPhase` helper computes scheduled time only and cannot detect
+early completion. API/indexer status may still reflect scheduled phases until
+the indexer consumes the new completion event. No client creation defaults,
+contract deployment, SDK publication, or bracket round start times are changed
+by these helpers.

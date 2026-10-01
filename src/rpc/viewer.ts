@@ -457,7 +457,28 @@ function parseTournamentFullState(raw: unknown): Tournament {
   const entryCount = Number(obj.entry_count ?? 0);
   const protocolFeeShare =
     obj.protocol_fee_bps != null ? Number(obj.protocol_fee_bps) : null;
-  return parseTournament(obj.tournament, entryCount, protocolFeeShare);
+  const tournament = parseTournament(obj.tournament, entryCount, protocolFeeShare);
+  // The contract may finalize an opted-in tournament before its scheduled end.
+  // Use the viewer's authoritative phase instead of deriving it from timestamps.
+  // A missing phase retains compatibility with older viewer responses.
+  if (obj.phase != null) {
+    const rawPhase = obj.phase;
+    let phase: string | undefined;
+    if (typeof rawPhase === "string") {
+      phase = rawPhase;
+    } else if (typeof (rawPhase as { activeVariant?: unknown }).activeVariant === "function") {
+      phase = (rawPhase as { activeVariant(): string }).activeVariant();
+    } else {
+      const variants = (rawPhase as { variant?: Record<string, unknown> }).variant
+        ?? rawPhase as Record<string, unknown>;
+      phase = PHASE_VARIANTS.find((name) => variants[name] !== undefined);
+    }
+    if (!PHASE_VARIANTS.some((name) => name === phase)) {
+      throw new Error("Viewer returned an unknown tournament phase");
+    }
+    tournament.phase = (phase as string).toLowerCase() as Phase;
+  }
+  return tournament;
 }
 
 // --- Tournament listing ---
@@ -821,4 +842,3 @@ export async function viewerRewardClaims(
     };
   }, contract.address);
 }
-

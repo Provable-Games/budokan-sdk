@@ -419,6 +419,41 @@ export function buildEnterTournamentCall(
   };
 }
 
+/** Opt in before entries and gameplay begin. Target also caps the entry count. */
+export function buildEnableEarlyFinalizationCall(
+  budokanAddress: string,
+  args: { tournamentId: string; entryTarget: number },
+): Call {
+  const id = BigInt(args.tournamentId);
+  if (id <= 0n || id > 0xffffffffffffffffn) {
+    throw new RangeError("tournamentId must be a positive u64");
+  }
+  if (!Number.isInteger(args.entryTarget) || args.entryTarget < 1 || args.entryTarget > 0xffffffff) {
+    throw new RangeError("entryTarget must be a positive u32");
+  }
+  return {
+    contractAddress: budokanAddress,
+    entrypoint: "enable_early_finalization",
+    calldata: CallData.compile([args.tournamentId, args.entryTarget]),
+  };
+}
+
+/** Opt an on-chain bracket into two-entry completion before its first signup. */
+export function buildEnableBracketEarlyFinalizationCall(
+  bracketAddress: string,
+  bracketId: string,
+): Call {
+  const id = BigInt(bracketId);
+  if (id <= 0n || id > 0xffffffffffffffffn) {
+    throw new RangeError("bracketId must be a positive u64");
+  }
+  return {
+    contractAddress: bracketAddress,
+    entrypoint: "enable_early_finalization",
+    calldata: CallData.compile([bracketId]),
+  };
+}
+
 /** `submit_score(tournament_id: u64, token_id: felt252, position: u32)` */
 export function buildSubmitScoreCall(
   budokanAddress: string,
