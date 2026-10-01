@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  comparePacketTokenScores,
+  compareGameTokenScores,
   getSubmittableScores,
   buildSubmitScoreCalls,
 } from "../src/leaderboard/index.ts";
@@ -51,7 +51,7 @@ describe("buildSubmitScoreCalls", () => {
   });
 });
 
-describe("packet token ranking", () => {
+describe("game-token ranking", () => {
   const token = (block: bigint, payload = 0n, nonce = 0n, minutes = 0n) =>
     (1n | (block << 32n) | (minutes << 64n) | (payload << 192n) | (nonce << 21n)).toString();
   for (const ascending of [false, true]) {
@@ -60,7 +60,7 @@ describe("packet token ranking", () => {
       const later = { score: 100n, tokenId: token(101n, 0n, 0n, 100n) };
       expect(BigInt(earlier.tokenId) > BigInt(later.tokenId)).toBe(true);
       expect(
-        [later, earlier].sort((a, b) => comparePacketTokenScores(a, b, ascending)),
+        [later, earlier].sort((a, b) => compareGameTokenScores(a, b, ascending)),
       ).toEqual([earlier, later]);
     });
     test(`same-block mint uses numerical ID across hex/decimal (${ascending})`, () => {
@@ -69,10 +69,10 @@ describe("packet token ranking", () => {
         tokenId: "0x" + BigInt(token(100n)).toString(16),
       };
       const second = { score: "100", tokenId: token(100n, 0n, 1n) };
-      expect(comparePacketTokenScores(first, second, ascending)).toBe(-1);
-      expect(comparePacketTokenScores(second, first, ascending)).toBe(1);
+      expect(compareGameTokenScores(first, second, ascending)).toBe(-1);
+      expect(compareGameTokenScores(second, first, ascending)).toBe(1);
       expect(
-        comparePacketTokenScores(
+        compareGameTokenScores(
           first,
           { ...first, tokenId: BigInt(first.tokenId).toString() },
           ascending,
@@ -82,17 +82,25 @@ describe("packet token ranking", () => {
     test(`score precedes mint block, preserving u64 precision (${ascending})`, () => {
       const earlier = { score: "18446744073709551614", tokenId: token(100n) };
       const later = { score: "18446744073709551615", tokenId: token(101n) };
-      expect(comparePacketTokenScores(earlier, later, ascending)).toBe(ascending ? -1 : 1);
+      expect(compareGameTokenScores(earlier, later, ascending)).toBe(ascending ? -1 : 1);
     });
   }
 });
 
-test("packet mint block boundaries ignore adjacent fields", () => {
+test("game-token mint block boundaries ignore adjacent fields", () => {
   const first = { score: 1, tokenId: (1n | (1n << 64n) | (1n << 192n)).toString() };
   const last = { score: 1, tokenId: (1n | (0xffffffffn << 32n)).toString() };
-  expect(comparePacketTokenScores(first, last)).toBe(-1);
-  expect(comparePacketTokenScores(last, first)).toBe(1);
+  expect(compareGameTokenScores(first, last)).toBe(-1);
+  expect(compareGameTokenScores(last, first)).toBe(1);
   const sameBlockLowId = { score: 1, tokenId: (BigInt(last.tokenId) | (1n << 64n)).toString() };
   const sameBlockHighId = { score: 1, tokenId: (BigInt(last.tokenId) | (1n << 192n)).toString() };
-  expect(comparePacketTokenScores(sameBlockLowId, sameBlockHighId)).toBe(-1);
+  expect(compareGameTokenScores(sameBlockLowId, sameBlockHighId)).toBe(-1);
+});
+
+test("rejects scores that have already lost precision or cannot fit on chain", () => {
+  const valid = { tokenId: "1", score: 1n };
+  for (const score of [Number.MAX_SAFE_INTEGER + 1, 1.5, NaN, Infinity, -1n, 1n << 64n]) {
+    expect(() => compareGameTokenScores({ tokenId: "2", score }, valid)).toThrow(RangeError);
+    expect(() => compareGameTokenScores(valid, { tokenId: "2", score })).toThrow(RangeError);
+  }
 });

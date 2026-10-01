@@ -3,7 +3,7 @@
 
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "examples/telegram-controller-bot/server/Dockerfile"
 
 [deploy]
 # Bot recovers cleanly on restart (long-poll resumes, sessions persisted).

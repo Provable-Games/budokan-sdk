@@ -37,7 +37,7 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tsconfig.test.json",
-    "test": "bun test",
+    "test": "bun test tests",
     "clean": "rm -rf dist"
   },
   "keywords": [

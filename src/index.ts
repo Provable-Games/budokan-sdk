@@ -160,7 +160,7 @@ export type {
 export {
   getSubmittableScores,
   buildSubmitScoreCalls,
-  comparePacketTokenScores,
+  compareGameTokenScores,
 } from "./leaderboard/index.js";
 export type { SubmittableScore } from "./leaderboard/index.js";
 

@@ -677,7 +677,11 @@ function roundSchedule(t: MatchScheduleTemplate, round: number): MatchScheduleTe
   // registrationStartDelay and gameStartDelay are measured from created_at;
   // shift both by the cumulative span of the earlier rounds. The remaining
   // fields are relative durations, so they're unchanged.
-  const roundSpan = t.gameStartDelay + t.gameEndDelay + t.submissionDuration;
+  // Budokan rounds absolute game starts and game durations up to a minute.
+  // The creation timestamp is unknown here: reserve up to 59 seconds for
+  // start alignment so the next round cannot open before its feeders finish.
+  const gameDuration = Math.ceil(t.gameEndDelay / 60) * 60;
+  const roundSpan = t.gameStartDelay + 59 + gameDuration + t.submissionDuration;
   const offset = (round - 1) * roundSpan;
   return {
     ...t,

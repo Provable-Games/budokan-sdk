@@ -1,6 +1,6 @@
 # Deploying to Railway
 
-The bot is a single **server** service (Bun + Fastify) with a public HTTPS URL. It deploys from this repo via the Dockerfile in `server/`.
+The bot is a single **server** service (Node 22 + Fastify; Bun builds dependencies) with a public HTTPS URL. It deploys from this repo via the Dockerfile in `server/`.
 
 The public URL is needed only for the Cartridge auth callback: when a user runs `/connect`, Cartridge redirects their browser to `BOT_PUBLIC_URL/api/connect/:token/callback` to hand the session back. Everything else is the Telegram long-poll loop, which needs no inbound URL.
 
@@ -10,9 +10,11 @@ The public URL is needed only for the Cartridge auth callback: when a user runs 
 # Make sure the railway CLI is logged in
 railway login
 
-cd examples/telegram-controller-bot/server
+# Run from the repository root, not server/.
 railway link             # pick or create a project, name the service e.g. "telegram-bot-server"
-railway up               # uploads + builds via Dockerfile
+# In service settings: Root Directory = /, Config File =
+# /examples/telegram-controller-bot/server/railway.toml
+railway up               # uploads the root SDK and bot together
 
 # Generate a public domain
 railway domain           # copies https://...up.railway.app
@@ -63,35 +65,32 @@ Or via the dashboard.
 
 ## Cost shape
 
-Tiny — a mostly-idle Bun process plus a small volume. A low-traffic bot runs in the low single dollars per month on Railway's hobby tier.
+Tiny — a mostly-idle Node process plus a small volume. A low-traffic bot runs in the low single dollars per month on Railway's hobby tier.
 
 ## Local development against an unpublished SDK (no npm publish)
 
-The bot depends on the published `@provable-games/budokan-sdk`, but while
-iterating on SDK + bot together you don't need to publish a version each time —
-link the local SDK with `bun link`:
+The server uses `file:../../..` to load this SDK checkout. Build the root first:
 
 ```bash
-# 1. From the repo root: build + register the local SDK once.
-bun install
-bun run dev            # watch-build the SDK (rebuilds dist on change)
-
-# 2. In another shell, register + link it:
-#    (root) bun link        # registers @provable-games/budokan-sdk
-#    (server) bun link @provable-games/budokan-sdk
+bun install --frozen-lockfile
+bun run build
 cd examples/telegram-controller-bot/server
-bun link @provable-games/budokan-sdk
-
-# 3. Run the bot against the local SDK (sepolia test bot token + ngrok URL):
+bun install --frozen-lockfile
 bun run dev
 ```
 
-Now SDK source changes are picked up live (the root `bun run dev` rebuilds
-`dist/`; the bot's `--watch` reloads). `bun link` only changes `node_modules/`,
-so `package.json` and the Railway deploy are untouched — Railway keeps using the
-published version. **Publish a new SDK version only when a change is validated
-and you want to deploy it** (then bump the bot's dependency). To unlink:
-`bun unlink @provable-games/budokan-sdk` in `server/` and `bun install`.
+Rebuild the SDK and reinstall the example after changing SDK source. The Docker
+build performs these same steps and preserves the relative package path at runtime.
+To build the image locally, run from the repository root:
+
+```bash
+docker build -f examples/telegram-controller-bot/server/Dockerfile -t budokan-bot .
+```
+
+After migrating to SDK 0.4.0 and the new Budokan deployment, existing users must
+run `/connect` again to authorize `enter_tournament_for_recipients`. Session
+resolution already rejects policies that omit newly required methods; it does
+not widen an existing user's authorization automatically.
 
 ## Local HTTPS tunnel (for /connect callback)
 

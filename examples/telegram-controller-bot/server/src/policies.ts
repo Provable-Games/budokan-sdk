@@ -49,6 +49,7 @@ export function buildSessionPolicies(
       methods: [
         { entrypoint: "create_tournament", description: "Create a Budokan tournament" },
         { entrypoint: "enter_tournament", description: "Enter a tournament" },
+        { entrypoint: "enter_tournament_for_recipients", description: "Enter tournament participants" },
         { entrypoint: "claim_reward", description: "Claim a tournament reward" },
         { entrypoint: "submit_score", description: "Submit a tournament score" },
       ],

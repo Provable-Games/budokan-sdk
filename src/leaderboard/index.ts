@@ -81,18 +81,18 @@ export function buildSubmitScoreCalls(
 }
 
 /**
- * Sort schema-1 game-token packets using Budokan's leaderboard ordering.
+ * Sort schema-1 game-token IDs using Budokan's leaderboard ordering.
  * Score sorts in the configured direction; ties prefer the earlier mint block,
- * then the lower numerical token ID. Pass IDs from one packet-token tournament.
+ * then the lower numerical token ID. Pass IDs from one game-token tournament.
  * Use before capping the list or calling getSubmittableScores.
  */
-export function comparePacketTokenScores(
+export function compareGameTokenScores(
   a: { tokenId: string; score: bigint | number | string },
   b: { tokenId: string; score: bigint | number | string },
   ascending = false,
 ): number {
-  const scoreA = BigInt(a.score);
-  const scoreB = BigInt(b.score);
+  const scoreA = exactScore(a.score);
+  const scoreB = exactScore(b.score);
   if (scoreA !== scoreB) {
     const order = scoreA < scoreB ? -1 : 1;
     return ascending ? order : -order;
@@ -103,4 +103,15 @@ export function comparePacketTokenScores(
   const mintB = (idB >> 32n) & ((1n << 32n) - 1n);
   if (mintA !== mintB) return mintA < mintB ? -1 : 1;
   return idA < idB ? -1 : idA > idB ? 1 : 0;
+}
+
+function exactScore(score: bigint | number | string): bigint {
+  if (typeof score === "number" && !Number.isSafeInteger(score)) {
+    throw new RangeError("Unsafe numeric score: use bigint or an exact decimal string");
+  }
+  const value = BigInt(score);
+  if (value < 0n || value > 0xffffffffffffffffn) {
+    throw new RangeError("Score must fit an unsigned 64-bit integer");
+  }
+  return value;
 }

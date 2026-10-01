@@ -144,34 +144,6 @@
     ]
   },
   {
-    "type": "enum",
-    "name": "core::option::Option::<core::byte_array::ByteArray>",
-    "variants": [
-      {
-        "name": "Some",
-        "type": "core::byte_array::ByteArray"
-      },
-      {
-        "name": "None",
-        "type": "()"
-      }
-    ]
-  },
-  {
-    "type": "enum",
-    "name": "core::option::Option::<core::starknet::contract_address::ContractAddress>",
-    "variants": [
-      {
-        "name": "Some",
-        "type": "core::starknet::contract_address::ContractAddress"
-      },
-      {
-        "name": "None",
-        "type": "()"
-      }
-    ]
-  },
-  {
     "type": "struct",
     "name": "budokan_interfaces::budokan::GameConfig",
     "members": [
@@ -190,14 +162,6 @@
       {
         "name": "paymaster",
         "type": "core::bool"
-      },
-      {
-        "name": "client_url",
-        "type": "core::option::Option::<core::byte_array::ByteArray>"
-      },
-      {
-        "name": "renderer",
-        "type": "core::option::Option::<core::starknet::contract_address::ContractAddress>"
       }
     ]
   },
@@ -208,6 +172,24 @@
       {
         "name": "snapshot",
         "type": "@core::array::Array::<core::integer::u16>"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "game_components_interfaces::distribution::TieredConfig",
+    "members": [
+      {
+        "name": "head_ratio",
+        "type": "(core::integer::u16, core::integer::u16)"
+      },
+      {
+        "name": "head_count",
+        "type": "core::integer::u16"
+      },
+      {
+        "name": "head_share_bps",
+        "type": "core::integer::u16"
       }
     ]
   },
@@ -230,6 +212,14 @@
       {
         "name": "Custom",
         "type": "core::array::Span::<core::integer::u16>"
+      },
+      {
+        "name": "Geometric",
+        "type": "(core::integer::u16, core::integer::u16)"
+      },
+      {
+        "name": "Tiered",
+        "type": "game_components_interfaces::distribution::TieredConfig"
       }
     ]
   },

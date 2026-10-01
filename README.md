@@ -100,12 +100,15 @@ function TournamentFeed({ tournamentId }: { tournamentId: string }) {
 }
 ```
 
-### Packet-token leaderboard order
+### Game-token leaderboard order
 
-For schema-1 game-token IDs, sort with `comparePacketTokenScores(a, b, ascending)`
+For schema-1 game-token IDs, sort with `compareGameTokenScores(a, b, ascending)`
 before capping the list or passing IDs to `getSubmittableScores`. Equal scores
 prefer the earlier `minted_at_block_number`; same-block ties use the lower
 numerical token ID. Use bigint or decimal-string scores to preserve the full on-chain u64 range.
+Unsafe JavaScript number scores are rejected. Bracket schedules reserve the
+contract's minute-alignment delay so a later round does not open before its
+feeders' full submission windows close.
 
 ### Whitelisted Games
 
@@ -310,6 +313,7 @@ limit does not guarantee that a batch fits Starknet's runtime limits.
 
 The repository examples depend on this checkout. Build the root SDK with
 `bun run build` before installing or type-checking an example.
+Bot users must reconnect to authorize the batch-entry session permission.
 
 ### Automatic completion after all entries submit
 
