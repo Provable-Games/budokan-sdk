@@ -5,6 +5,7 @@ import { apiFetch, buildQueryString, extractPagination } from "./base.js";
 import type { ApiFetchOptions } from "./base.js";
 import { snakeToCamel } from "../utils/mappers.js";
 import { normalizeAddress } from "../utils/address.js";
+import { normalizeTournament } from "./tournaments.js";
 
 interface ApiContext {
   retryAttempts?: number;
@@ -39,7 +40,7 @@ export async function getGameTournaments(
   const result = await apiFetch<Record<string, unknown>>(`${baseUrl}/games/${normalized}/tournaments${qs}`, fetchOpts(ctx));
   const { total, limit: resLimit, offset: resOffset } = extractPagination(result, { limit: params?.limit, offset: params?.offset });
   return {
-    data: (result.data as Record<string, unknown>[]).map((item) => snakeToCamel<Tournament>(item)),
+    data: (result.data as Record<string, unknown>[]).map(normalizeTournament),
     total,
     limit: resLimit,
     offset: resOffset,

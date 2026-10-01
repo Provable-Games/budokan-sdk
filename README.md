@@ -284,3 +284,29 @@ Requires an `NPM_TOKEN` secret configured in the repo settings.
 ## License
 
 MIT
+
+### Automatic completion after all entries submit
+
+Updated Budokan contracts can finish the submission grace period as soon as
+all registered entries are ranked. Gameplay must have ended and the registered
+entry count must be nonzero. Completion uses the existing registration and
+leaderboard counts; creators do not configure a target or opt in.
+
+Prizes and entry-fee rewards become claimable immediately. Claims remain
+separate transactions. Empty tournaments and partial submissions retain the
+normal scheduled finalization. Gameplay durations, bracket round start times,
+and client day-long creation defaults remain unchanged.
+
+Every registered entry must be ranked. The existing leaderboard overwrites
+occupied ranks rather than shifting entries down: if a new score displaces an
+earlier entry, restore it at the correct rank. Submitting in ranking order
+avoids the extra placement transaction.
+
+Tournament reads honor the API's indexed `phase` and the RPC viewer's
+authoritative `phase`, including automatic completion during the grace period.
+The updated Budokan indexer snapshots active leaderboard length after every
+submission, including re-submissions; historical `submissionCount` is not a
+completion signal. Refetch after indexing to observe a changed phase. Older
+API/viewer responses retain the schedule-based fallback. The pure
+`tournamentPhase` helper computes scheduled time only. No contract deployment
+or SDK publication is included.

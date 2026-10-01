@@ -66,17 +66,18 @@ export interface Tournament {
   entryRequirement: EntryRequirement | null;
   leaderboardConfig: LeaderboardConfig | null;
   /**
-   * Lifecycle phase derived from the schedule + on-chain creation time.
-   * Populated by `getTournament`/`getTournaments` (computed at read time via
-   * `tournamentPhase`); `null` when the creation time is unknown. Because it's
-   * time-derived, treat it as a snapshot for the moment it was read — call
-   * `tournamentPhase(t)` to re-evaluate later.
+   * Lifecycle phase returned by the API or RPC viewer, including early
+   * completion. Older responses fall back to schedule derivation; `null` when
+   * creation time is unknown. Refetch to observe submissions and completion;
+   * `tournamentPhase(t)` alone only re-evaluates the scheduled time boundaries.
    */
   phase: Phase | null;
   // Counts
   entryCount: number;
   prizeCount: number;
   submissionCount: number;
+  /** Active leaderboard length from the indexer; unknown in older/API RPC responses. */
+  rankedEntryCount?: number | null;
   paidPlaces?: number;
   // Prize aggregation (populated when includePrizeSummary is requested)
   prizeAggregation?: Array<{

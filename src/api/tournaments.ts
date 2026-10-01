@@ -8,7 +8,7 @@ import { snakeToCamel } from "../utils/mappers.js";
 import { tournamentPhase } from "../phase/index.js";
 
 /** Normalize tournament: ensure both `id` and `tournamentId` exist */
-function normalizeTournament(raw: Record<string, unknown>): Tournament {
+export function normalizeTournament(raw: Record<string, unknown>): Tournament {
   const t = snakeToCamel<Tournament & { id?: string }>(raw);
   // API returns `id`, SDK type uses `tournamentId` — keep both in sync
   const id = t.id ?? t.tournamentId;
@@ -18,7 +18,8 @@ function normalizeTournament(raw: Record<string, unknown>): Tournament {
     t.protocolFeeShare ??
     (t.entryFee as { protocolFeeShare?: number } | null)?.protocolFeeShare ??
     null;
-  // Derive the lifecycle phase at read time (the API doesn't return it).
+  // Honor the indexed phase, which includes fully ranked early completion.
+  // Older API deployments retain the schedule-based fallback.
   const phase = t.phase ?? tournamentPhase(t);
   return { ...t, id, tournamentId: id, protocolFeeShare, phase };
 }
