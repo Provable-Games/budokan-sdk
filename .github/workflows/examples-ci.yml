@@ -28,7 +28,7 @@ jobs:
         run: bun install --frozen-lockfile && bun run typecheck && bun src/policies.check.ts && bun src/deployment.check.ts
       - name: Check the MCP example against this SDK
         working-directory: examples/mcp-server
-        run: bun install --frozen-lockfile && bun run typecheck && bun src/config.check.ts
+        run: bun install --frozen-lockfile && bun run typecheck && bun src/config.check.ts && bun src/game-fee.check.ts
       - name: Build the bot image from the repository root
         run: docker build -f examples/telegram-controller-bot/server/Dockerfile -t budokan-bot:ci .
       - name: Verify SDK and session imports in the runtime image

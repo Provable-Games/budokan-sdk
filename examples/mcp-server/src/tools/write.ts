@@ -18,6 +18,9 @@ import {
   explorerTxUrl,
   extensionAddressFor,
   getGameDefaults,
+  gameFeeContract,
+  getGameFeeFloor,
+  isGameFeeShareValid,
   parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
   scheduleFromDurations,
@@ -363,7 +366,7 @@ export function registerWriteTools(server: McpServer) {
               .min(0)
               .max(10000)
               .optional()
-              .describe("Legacy field name for the game-fee share (SDK gameFeeShare), in bps. Default: the game's whitelisted fee percentage"),
+              .describe("Legacy field name for the game-fee share (SDK gameFeeShare), in bps. Default: the game's onchain fee floor; must be zero when no fee recipient is declared"),
             refundShareBps: z.number().int().min(0).max(10000).optional().describe("Refund share for non-placers (default 0)"),
           })
           .optional()
@@ -405,13 +408,19 @@ export function registerWriteTools(server: McpServer) {
 
         let entryFee: EntryFeeArgs | undefined;
         if (input.entryFee) {
+          const floor = await getGameFeeFloor(await gameFeeContract(input.gameAddress, providerFor(chain)));
+          const gameFeeShare = input.entryFee.gameCreatorShareBps ?? floor.feeBps;
+          if (!isGameFeeShareValid(floor, gameFeeShare)) {
+            throw new Error(floor.declared
+              ? `Game fee share must be at least ${floor.feeBps} bps.`
+              : "Game fee share must be zero: this game has no fee recipient.");
+          }
           const token = await resolveToken(chain, input.entryFee.token);
           entryFee = {
             tokenAddress: token.address,
             amount: toRawAmount(input.entryFee.amount, token.decimals),
             tournamentCreatorShare: input.entryFee.tournamentCreatorShareBps ?? 0,
-            gameFeeShare:
-              input.entryFee.gameCreatorShareBps ?? defaults.defaultGameFeePercentage * 100,
+            gameFeeShare,
             refundShare: input.entryFee.refundShareBps ?? 0,
             distribution: buildDistribution(
               input.entryFee.distribution,
