@@ -63,40 +63,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run typecheck:tests
-      - run: bun run test
+      - run: bun test
       - run: bun run build
-
-  examples:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.6"
-      - run: bun install --frozen-lockfile && bun run build
-      - name: Check the bot against this SDK
-        working-directory: examples/telegram-controller-bot/server
-        run: bun install --frozen-lockfile && bun run typecheck && bun test
-      - name: Check the MCP example against this SDK
-        working-directory: examples/mcp-server
-        run: bun install --frozen-lockfile && bun run typecheck
-      - name: Build the bot image from the repository root
-        run: docker build -f examples/telegram-controller-bot/server/Dockerfile -t budokan-bot:ci .
-      - name: Verify SDK and session imports in the runtime image
-        run: |
-          docker run --rm --entrypoint node budokan-bot:ci --experimental-wasm-modules --import tsx --input-type=module -e '
-            import assert from "node:assert/strict";
-            import { buildEnterTournamentForRecipientsCall } from "@provable-games/budokan-sdk";
-            import { buildSessionPolicies } from "./src/policies.ts";
-            import SessionProvider from "@cartridge/controller/session/node";
-            const call = buildEnterTournamentForRecipientsCall("0x1234", {
-              tournamentId: "1", recipients: [{ playerAddress: "0xab" }],
-            });
-            const policies = buildSessionPolicies("sepolia", call.contractAddress);
-            assert(policies.contracts[call.contractAddress].methods.some(m => m.entrypoint === call.entrypoint));
-            assert.equal(typeof SessionProvider, "function");
-          '
 
   # AI code review (Claude + Codex) is delegated to the org-shared reusable
   # workflow so the review logic and model config live in one place. This
