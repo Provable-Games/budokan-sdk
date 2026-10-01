@@ -5,9 +5,15 @@ An [MCP](https://modelcontextprotocol.io) server that lets any MCP-capable agent
 ## Quick start
 
 ```bash
+# From the repository root: the example uses this checkout's SDK.
+bun install --frozen-lockfile
+bun run build
 cd examples/mcp-server
-bun install
+bun install --frozen-lockfile
 ```
+
+Rebuild the root SDK after source changes. SDK 0.4.0 writes require the new
+GameCore-compatible Budokan deployment described in the root migration notes.
 
 Register with Claude Code:
 

@@ -106,6 +106,9 @@ export function compareGameTokenScores(
 }
 
 function exactScore(score: bigint | number | string): bigint {
+  if (typeof score === "string" && !/^(?:0x[0-9a-fA-F]+|\d+)$/.test(score)) {
+    throw new RangeError("Score must be a non-empty integer string");
+  }
   if (typeof score === "number" && !Number.isSafeInteger(score)) {
     throw new RangeError("Unsafe numeric score: use bigint or an exact decimal string");
   }

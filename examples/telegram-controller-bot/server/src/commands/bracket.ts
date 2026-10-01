@@ -760,6 +760,8 @@ async function deployResolved(
         const proof = await roundOneProof(state, m.id, player!.address, config);
         // Reuse bracket validation, including the required allowlist proof.
         bracketEntryCalls(state, m.id, player!.address, proof);
+        // Keep these round-1 recipient fields in sync with bracketEntryCalls.
+        // Only the encoding differs: one batch per match avoids mint nonce resets.
         recipients.push({
           playerAddress: player!.address,
           ...(state.roundOneTreeIds?.[m.id] !== undefined ? {

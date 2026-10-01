@@ -99,7 +99,7 @@ test("game-token mint block boundaries ignore adjacent fields", () => {
 
 test("rejects scores that have already lost precision or cannot fit on chain", () => {
   const valid = { tokenId: "1", score: 1n };
-  for (const score of [Number.MAX_SAFE_INTEGER + 1, 1.5, NaN, Infinity, -1n, 1n << 64n]) {
+  for (const score of ["", "  ", "1.5", Number.MAX_SAFE_INTEGER + 1, 1.5, NaN, Infinity, -1n, 1n << 64n]) {
     expect(() => compareGameTokenScores({ tokenId: "2", score }, valid)).toThrow(RangeError);
     expect(() => compareGameTokenScores(valid, { tokenId: "2", score })).toThrow(RangeError);
   }

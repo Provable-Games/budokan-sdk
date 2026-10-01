@@ -363,7 +363,7 @@ export function registerWriteTools(server: McpServer) {
               .min(0)
               .max(10000)
               .optional()
-              .describe("Game creator's cut in bps. Default: the game's whitelisted fee percentage"),
+              .describe("Legacy field name for the game-fee share (SDK gameFeeShare), in bps. Default: the game's whitelisted fee percentage"),
             refundShareBps: z.number().int().min(0).max(10000).optional().describe("Refund share for non-placers (default 0)"),
           })
           .optional()
