@@ -15,6 +15,8 @@ export interface Config {
   rpcUrl?: string;
   budokanAddress: string;
   viewerAddress: string;
+  /** Matching new bracket deployment; open brackets are disabled when unset. */
+  bracketAddress?: string;
   /** Optional. Voyager API proxy used to fetch user token balances for
    *  prize-sponsorship pickers. If unset, prize sponsorship at /create
    *  time is disabled and the bot tells the user to add prizes via budokan.gg. */
@@ -85,6 +87,7 @@ export function loadConfig(): Config {
   }
 
   const dataDir = resolve(env("BOT_DATA_DIR") ?? "./data");
+  const apiUrl = required("BUDOKAN_API_URL").replace(/\/$/, "");
 
   return {
     telegramBotToken,
@@ -92,11 +95,12 @@ export function loadConfig(): Config {
     botPublicUrl,
     httpPort,
     dataDir,
-    apiUrl: required("BUDOKAN_API_URL"),
-    wsUrl: env("BUDOKAN_WS_URL"),
+    apiUrl,
+    wsUrl: env("BUDOKAN_WS_URL") ?? `${apiUrl.replace(/^http/, "ws")}/ws`,
     rpcUrl: env("BUDOKAN_RPC_URL"),
     budokanAddress: required("BUDOKAN_ADDRESS"),
     viewerAddress: required("BUDOKAN_VIEWER_ADDRESS"),
+    bracketAddress: env("BUDOKAN_BRACKET_ADDRESS"),
     // Defaults to the shared Provable Games proxy; it still requires
     // BUDOKAN_VOYAGER_PROXY_TOKEN for server-to-server callers (see voyager.ts).
     voyagerProxyUrl: env("BUDOKAN_VOYAGER_PROXY_URL") ?? "https://pg-voyager-proxy.up.railway.app",

@@ -29,10 +29,13 @@ export class ChatStateStore {
 
   async getChain(chatId: string): Promise<Chain> {
     const state = await this.read(chatId);
-    return state?.chain ?? this.defaultChain;
+    // Deployment addresses belong to one chain. Retain old preferences on disk
+    // without routing a migrated bot instance to that other network.
+    return state?.chain === this.defaultChain ? state.chain : this.defaultChain;
   }
 
   async setChain(chatId: string, chain: Chain): Promise<void> {
+    if (chain !== this.defaultChain) throw new Error(`This bot is configured for ${this.defaultChain}.`);
     await this.write(chatId, { chain });
   }
 

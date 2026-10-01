@@ -50,6 +50,11 @@ See `.env.example` for the optional vars (SDK endpoint overrides, the Voyager pr
 
 Startup fails before connecting to Telegram if any deployment setting is missing.
 These overrides apply to this bot instance; configure all three for `BUDOKAN_CHAIN`.
+Each instance serves one chain: `/chain` and deep links reject other networks,
+and session policies check the configured chain before authorizing calls.
+Use a separate instance for another network. Open/on-chain brackets additionally
+require `BUDOKAN_BRACKET_ADDRESS` for the matching new bracket deployment; they
+are unavailable when that optional setting is absent.
 
 ## Persistent storage
 

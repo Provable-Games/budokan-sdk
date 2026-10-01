@@ -81,7 +81,7 @@ export async function resolveAccount(chatId: string, chain: Chain, config: Confi
   const provider = new SessionProvider({
     rpc: rpcUrl,
     chainId: chainIdFor(chain),
-    policies: buildSessionPolicies(chain, config.budokanAddress),
+    policies: buildSessionPolicies(chain, config),
     basePath,
   });
 

@@ -936,6 +936,9 @@ async function enterPaidSlot(
   const sponsoring = !!opts.playerAddress;
   if (b.filled >= b.capacity) return "Sorry — it just filled up.";
   const chain = b.state.chain as Chain;
+  if (chain !== config.chain || BigInt(b.state.budokanAddress) !== BigInt(config.budokanAddress)) {
+    return "This bracket belongs to a different deployment. Use its original bot.";
+  }
   const session = await resolveAccount(payerChatId, chain, config);
   if (!session.ok) return "DM me first: open the bot, /connect, then try again.";
 
@@ -1334,6 +1337,7 @@ export async function advanceStoredBracket(
   // A paid bracket still gathering players isn't running yet — don't advance it.
   if (b.phase === "filling") return;
   const chain = b.state.chain as Chain;
+  if (chain !== config.chain || BigInt(b.state.budokanAddress) !== BigInt(config.budokanAddress)) return;
 
   // 1. Update bracket state from chain (resolve finished matches). No signer
   //    needed — just reads.

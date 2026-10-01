@@ -606,6 +606,10 @@ export class TelegramBot {
     if (action === "connect" || action === "create") {
       const maybeChain = parts[1];
       if (maybeChain && isChain(maybeChain)) {
+        if (maybeChain !== this.config.chain) {
+          await this.api.sendMessage(chatId, `This bot is configured for ${this.config.chain}. Use a bot configured for ${maybeChain}.`);
+          return;
+        }
         await this.chatStates.setChain(chatId, maybeChain);
       }
       if (action === "connect") return this.connect(chatId);
@@ -619,6 +623,10 @@ export class TelegramBot {
       const chain = parts[2];
       if (!id || !/^\d+$/.test(id) || !chain || !isChain(chain)) {
         return this.sendHelp(chatId);
+      }
+      if (chain !== this.config.chain) {
+        await this.api.sendMessage(chatId, `This bot is configured for ${this.config.chain}. Use a bot configured for ${chain}.`);
+        return;
       }
       await this.chatStates.setChain(chatId, chain);
 
@@ -691,11 +699,15 @@ export class TelegramBot {
     if (args.length === 0) {
       await this.api.sendMessage(
         chatId,
-        `Your current chain: ${current}\nUsage: /chain ${SUPPORTED_CHAINS.join("|")}`,
+        `This bot is configured for ${current}. Use a separate bot instance for another chain.`,
       );
       return;
     }
     const target = (args[0] ?? "").toLowerCase();
+    if (target !== this.config.chain) {
+      await this.api.sendMessage(chatId, `This bot is configured for ${this.config.chain}. Use a separate bot instance for another chain.`);
+      return;
+    }
     if (!isChain(target)) {
       await this.api.sendMessage(chatId, `Chain must be one of: ${SUPPORTED_CHAINS.join(", ")}`);
       return;

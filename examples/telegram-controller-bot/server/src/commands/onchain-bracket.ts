@@ -95,9 +95,9 @@ export async function createOnchainBracket(
     await api.sendMessage(organizerChatId, `Not connected on ${chain} — run /connect first (the organizer creates the bracket).`);
     return;
   }
-  const bracketAddress = CHAINS[chain]?.bracketAddress;
+  const bracketAddress = config.bracketAddress;
   if (!bracketAddress) {
-    await api.sendMessage(organizerChatId, `Internal error: no bracket contract for ${chain}.`);
+    await api.sendMessage(organizerChatId, `Open brackets are unavailable: configure BUDOKAN_BRACKET_ADDRESS for ${chain}.`);
     return;
   }
   // The on-chain final is a single 2-player match, so the escrowed pool can only
@@ -191,6 +191,10 @@ export async function registerForOnchainBracket(
   const store = onchainStore(config);
   const oc = await store.get(ocId);
   if (!oc) return "That bracket isn't open for registration.";
+  if (oc.chain !== config.chain || !config.bracketAddress ||
+      normalizeAddress(oc.contractAddress) !== normalizeAddress(config.bracketAddress)) {
+    return "This bracket belongs to a different deployment. Use its original bot.";
+  }
   if (Math.floor(Date.now() / 1000) >= oc.registrationDeadline) {
     return "Registration has closed for this bracket.";
   }
@@ -248,6 +252,10 @@ export async function sponsorOnchainBracket(
   const store = onchainStore(config);
   const oc = await store.get(ocId);
   if (!oc) return "That bracket isn't open for registration.";
+  if (oc.chain !== config.chain || !config.bracketAddress ||
+      normalizeAddress(oc.contractAddress) !== normalizeAddress(config.bracketAddress)) {
+    return "This bracket belongs to a different deployment. Use its original bot.";
+  }
   if (Math.floor(Date.now() / 1000) >= oc.registrationDeadline) {
     return "Registration has closed for this bracket.";
   }
@@ -462,6 +470,8 @@ export async function announceBracketProgress(api: TelegramApi, config: Config):
   }
   const nowSec = Math.floor(Date.now() / 1000);
   for (const oc of all) {
+    if (oc.chain !== config.chain || !config.bracketAddress ||
+        normalizeAddress(oc.contractAddress) !== normalizeAddress(config.bracketAddress)) continue;
     if (oc.championAnnouncedAt) continue; // fully done
     // Stop polling brackets that are well past any plausible completion window
     // (write-offs, or ones whose seating never landed). Otherwise they'd be

@@ -41,7 +41,7 @@ jobs:
             const call = buildEnterTournamentForRecipientsCall("0x1234", {
               tournamentId: "1", recipients: [{ playerAddress: "0xab" }],
             });
-            const policies = buildSessionPolicies("sepolia", call.contractAddress);
+            const policies = buildSessionPolicies("sepolia", { chain: "sepolia", budokanAddress: call.contractAddress });
             assert(policies.contracts[call.contractAddress].methods.some(m => m.entrypoint === call.entrypoint));
             assert.equal(typeof SessionProvider, "function");
           '

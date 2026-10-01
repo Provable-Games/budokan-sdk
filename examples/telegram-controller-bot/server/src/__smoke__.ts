@@ -37,6 +37,9 @@ async function main() {
     botPublicUrl: "http://localhost:0",
     httpPort: 0,
     dataDir,
+    apiUrl: "https://example.invalid",
+    budokanAddress: "0x1234",
+    viewerAddress: "0x5678",
   };
   const handshakes = new HandshakeStore();
   const sessions = new SessionStore(dataDir);
