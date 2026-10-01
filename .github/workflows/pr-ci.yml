@@ -70,7 +70,7 @@ jobs:
   # workflow so the review logic and model config live in one place. This
   # repo supplies only .github/review-agents.json + .github/prompts/*.md.
   review:
-    uses: Provable-Games/.github/.github/workflows/code-review.yml@v1
+    uses: Provable-Games/.github/.github/workflows/code-review.yml@bd41f96e283f731daf917720c1f1dd7e2bf3a6f7
     # Repo default workflow token is read-only; a reusable workflow's job
     # permissions can't exceed the caller's, so grant the write scopes the
     # review jobs need (PR comments + Claude OIDC) here.
