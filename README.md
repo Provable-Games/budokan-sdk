@@ -302,9 +302,11 @@ occupied ranks rather than shifting entries down: if a new score displaces an
 earlier entry, restore it at the correct rank. Submitting in ranking order
 avoids the extra placement transaction.
 
-Use the RPC viewer path (`primarySource: "rpc"`) for status. Tournament detail
-and batch reads honor the viewer's authoritative `phase`, including automatic
-completion during the grace period. The pure `tournamentPhase` helper computes
-scheduled time only. API/indexer status still follows dates and needs a
-follow-up to detect completion from entry/leaderboard counts. No contract
-deployment or SDK publication is included.
+Tournament reads honor the API's indexed `phase` and the RPC viewer's
+authoritative `phase`, including automatic completion during the grace period.
+The updated Budokan indexer snapshots active leaderboard length after every
+submission, including re-submissions; historical `submissionCount` is not a
+completion signal. Refetch after indexing to observe a changed phase. Older
+API/viewer responses retain the schedule-based fallback. The pure
+`tournamentPhase` helper computes scheduled time only. No contract deployment
+or SDK publication is included.

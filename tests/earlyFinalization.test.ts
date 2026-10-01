@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, spyOn, afterEach } from "bun:test";
 import { CairoCustomEnum, type Contract } from "starknet";
 import { viewerTournamentDetail, viewerTournamentsBatch } from "../src/rpc/viewer.ts";
+import { BudokanClient } from "../src/client.ts";
+import { getGameTournaments } from "../src/api/games.ts";
 
 const address = "0x1234";
 const tournament = {
@@ -28,5 +30,58 @@ describe("early completion", () => {
   });
   test("unknown phase fails explicitly instead of claiming a scheduled result", async () => {
     await expect(viewerTournamentDetail(viewer("InvalidPhase"), "1")).rejects.toThrow("unknown tournament phase");
+  });
+});
+
+describe("indexed API completion", () => {
+  let fetchSpy: ReturnType<typeof spyOn<typeof globalThis, "fetch">> | undefined;
+  afterEach(() => fetchSpy?.mockRestore());
+  const raw = {
+    id: "1", created_at_onchain: tournament.created_at.toString(),
+    schedule: { registration_start_delay: 0, registration_end_delay: 0,
+      game_start_delay: 0, game_end_delay: 3600, submission_duration: 86400 },
+    entry_count: 2, submission_count: 2, ranked_entry_count: 1,
+    phase: "submission",
+  };
+  const mockFetch = (response: () => unknown) => {
+    fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(async () => Response.json(response()), { preconnect: () => {} }),
+    );
+  };
+
+  test("default API detail refetch observes restoration of a displaced entry", async () => {
+    let response = raw;
+    mockFetch(() => ({ data: response }));
+    const client = new BudokanClient({ apiBaseUrl: "https://example.com", retryAttempts: 1 });
+    try {
+      const displaced = await client.getTournament("1");
+      expect(displaced?.submissionCount).toBe(2);
+      expect(displaced?.rankedEntryCount).toBe(1);
+      expect(displaced?.phase).toBe("submission");
+      response = { ...raw, ranked_entry_count: 2, phase: "finalized" };
+      expect((await client.getTournament("1"))?.phase).toBe("finalized");
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally { client.destroy(); }
+  });
+
+  test("default API lists and game lists honor the returned phase", async () => {
+    mockFetch(() => ({ data: [{ ...raw, ranked_entry_count: 2, phase: "finalized" }],
+      pagination: { total: 1, limit: 20, offset: 0 } }));
+    const client = new BudokanClient({ apiBaseUrl: "https://example.com", retryAttempts: 1 });
+    try {
+      expect((await client.getTournaments()).data[0]?.phase).toBe("finalized");
+      const gameList = await getGameTournaments("https://example.com", "0x1234");
+      expect(gameList.data[0]?.phase).toBe("finalized");
+      expect(gameList.data[0]?.tournamentId).toBe("1");
+    } finally { client.destroy(); }
+  });
+
+  test("older API payloads derive scheduled phase without treating historical submissions as completion", async () => {
+    const { phase: _phase, ranked_entry_count: _rankedCount, ...older } = raw;
+    mockFetch(() => ({ data: older }));
+    const client = new BudokanClient({ apiBaseUrl: "https://example.com", retryAttempts: 1 });
+    try {
+      expect((await client.getTournament("1"))?.phase).toBe("submission");
+    } finally { client.destroy(); }
   });
 });
