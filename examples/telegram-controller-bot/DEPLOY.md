@@ -22,6 +22,10 @@ railway domain           # copies https://...up.railway.app
 # Set env vars (replace placeholders)
 railway variables --set TELEGRAM_BOT_TOKEN=123:abc
 railway variables --set BUDOKAN_CHAIN=mainnet
+# Use all three values from the same new GameCore-compatible deployment.
+railway variables --set "BUDOKAN_ADDRESS=<new-contract-address>"
+railway variables --set "BUDOKAN_VIEWER_ADDRESS=<new-viewer-address>"
+railway variables --set "BUDOKAN_API_URL=<new-api-url>"
 railway variables --set BOT_PUBLIC_URL=https://<server-domain>.up.railway.app
 railway variables --set BOT_DATA_DIR=/data
 
@@ -36,10 +40,16 @@ railway variables --set BOT_DATA_DIR=/data
 | `TELEGRAM_BOT_TOKEN` | BotFather | secret |
 | `BOT_PUBLIC_URL` | server domain | `https://<service>.up.railway.app` — used for the Cartridge auth callback |
 | `BUDOKAN_CHAIN` | `mainnet` or `sepolia` | default mainnet |
+| `BUDOKAN_ADDRESS` | new deployment | Required; legacy contract addresses cannot accept SDK 0.4.0 writes |
+| `BUDOKAN_VIEWER_ADDRESS` | new deployment | Required; must match the Budokan contract |
+| `BUDOKAN_API_URL` | new deployment | Required; must index the same Budokan contract |
 | `BOT_DATA_DIR` | `/data` | mount a volume here |
 | `PORT` | injected by Railway | don't set yourself |
 
 See `.env.example` for the optional vars (SDK endpoint overrides, the Voyager proxy for the `/create` prize picker).
+
+Startup fails before connecting to Telegram if any deployment setting is missing.
+These overrides apply to this bot instance; configure all three for `BUDOKAN_CHAIN`.
 
 ## Persistent storage
 

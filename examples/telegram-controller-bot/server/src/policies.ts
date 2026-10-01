@@ -36,9 +36,9 @@ export interface PolicyBundle {
 
 export function buildSessionPolicies(
   chain: Chain,
-  budokanAddressOverride?: string,
+  budokanAddressOverride: string,
 ): PolicyBundle {
-  const budokanAddress = budokanAddressOverride ?? CHAINS[chain]?.budokanAddress;
+  const budokanAddress = budokanAddressOverride;
   if (!budokanAddress) {
     throw new Error(`No Budokan address configured for chain '${chain}'.`);
   }
@@ -135,7 +135,7 @@ type ParsedContract = Omit<PolicyContract, "methods"> & { methods: AuthorizedMet
  */
 export function parsedPoliciesFor(
   chain: Chain,
-  budokanAddressOverride?: string,
+  budokanAddressOverride: string,
 ): { verified: boolean; contracts: Record<string, ParsedContract> } {
   const bundle = buildSessionPolicies(chain, budokanAddressOverride);
   const contracts: Record<string, ParsedContract> = {};
