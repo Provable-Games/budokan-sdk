@@ -23,7 +23,12 @@ RUN bun install --frozen-lockfile && bun run build
 
 WORKDIR /app/examples/telegram-controller-bot/server
 COPY examples/telegram-controller-bot/server/package.json examples/telegram-controller-bot/server/bun.lock ./
-RUN bun install --frozen-lockfile
+# Bun's file: dependency copies ancestor directories recursively, including this
+# example's node_modules. Keep a single link to the SDK instead. Both stages
+# retain /app, and its installed dependencies resolve from there at runtime.
+RUN bun install --frozen-lockfile \
+    && rm -rf node_modules/@provable-games/budokan-sdk \
+    && ln -s /app node_modules/@provable-games/budokan-sdk
 
 # --- Runtime stage: Node, not Bun. ---
 FROM node:22-slim AS runtime
