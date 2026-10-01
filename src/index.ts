@@ -130,8 +130,6 @@ export type {
 // keep encoding gotchas in one place. See src/calldata/index.ts.
 export {
   buildCreateTournamentCall,
-  buildEnableEarlyFinalizationCall,
-  buildEnableBracketEarlyFinalizationCall,
   buildEnterTournamentCall,
   buildSubmitScoreCall,
   buildClaimRewardCall,

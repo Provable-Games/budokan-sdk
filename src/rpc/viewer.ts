@@ -458,7 +458,7 @@ function parseTournamentFullState(raw: unknown): Tournament {
   const protocolFeeShare =
     obj.protocol_fee_bps != null ? Number(obj.protocol_fee_bps) : null;
   const tournament = parseTournament(obj.tournament, entryCount, protocolFeeShare);
-  // The contract may finalize an opted-in tournament before its scheduled end.
+  // Fully ranked tournaments can finalize during the submission grace period.
   // Use the viewer's authoritative phase instead of deriving it from timestamps.
   // A missing phase retains compatibility with older viewer responses.
   if (obj.phase != null) {

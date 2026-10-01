@@ -285,42 +285,26 @@ Requires an `NPM_TOKEN` secret configured in the repo settings.
 
 MIT
 
-### Optional early finalization
+### Automatic completion after all entries submit
 
-Updated Budokan contracts support opt-in completion for a fixed entry target.
-Create a tournament with `leaderboardConfig.gameMustBeOver = true`, then have
-its creator enable the target before entries arrive and no later than gameplay
-start (use a future start time if enabling in a separate transaction):
+Updated Budokan contracts can finish the submission grace period as soon as
+all registered entries are ranked. Gameplay must have ended and the registered
+entry count must be nonzero. Completion uses the existing registration and
+leaderboard counts; creators do not configure a target or opt in.
 
-```ts
-import { buildEnableEarlyFinalizationCall, buildEnableBracketEarlyFinalizationCall } from "@provable-games/budokan-sdk";
+Prizes and entry-fee rewards become claimable immediately. Claims remain
+separate transactions. Empty tournaments and partial submissions retain the
+normal scheduled finalization. Gameplay durations, bracket round start times,
+and client day-long creation defaults remain unchanged.
 
-const call = buildEnableEarlyFinalizationCall(budokanAddress, {
-  tournamentId, entryTarget: 2,
-});
-// The application signs/executes this call with the tournament creator's account.
+Every registered entry must be ranked. The existing leaderboard overwrites
+occupied ranks rather than shifting entries down: if a new score displaces an
+earlier entry, restore it at the correct rank. Submitting in ranking order
+avoids the extra placement transaction.
 
-const bracketCall = buildEnableBracketEarlyFinalizationCall(bracketAddress, bracketId);
-// The bracket creator enables this before the first signup. Each match uses two entries.
-```
-
-The entry target is immutable and also caps entries. Only successful unique
-submissions count, and the games must report over. The final required submission
-finalizes the tournament and makes prizes claimable without waiting for the
-scheduled end. Claims remain separate transactions. If a game is missing or
-never submitted, the normal timed finalization remains available. Large
-tournaments can leave the option disabled.
-
-Every required entry must be ranked. If a new score displaces an earlier entry
-from an occupied rank, restore that entry at its correct rank before completion.
-The existing leaderboard overwrites ranks rather than shifting them; submitting
-in ranking order avoids the extra placement transaction. Restoring an entry
-does not increment the unique submission counter.
-
-For these tournaments, use the RPC viewer path (`primarySource: "rpc"`) for status:
-tournament detail and batch reads honor the viewer's authoritative `phase`.
-The pure `tournamentPhase` helper computes scheduled time only and cannot detect
-early completion. API/indexer status may still reflect scheduled phases until
-the indexer consumes the new completion event. No client creation defaults,
-contract deployment, SDK publication, or bracket round start times are changed
-by these helpers.
+Use the RPC viewer path (`primarySource: "rpc"`) for status. Tournament detail
+and batch reads honor the viewer's authoritative `phase`, including automatic
+completion during the grace period. The pure `tournamentPhase` helper computes
+scheduled time only. API/indexer status still follows dates and needs a
+follow-up to detect completion from entry/leaderboard counts. No contract
+deployment or SDK publication is included.
