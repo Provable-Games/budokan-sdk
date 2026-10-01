@@ -15,6 +15,12 @@ import { fileURLToPath } from "node:url";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const keystoreDir =
   process.env.SMOKE_KEYSTORE_DIR ?? mkdtempSync(join(tmpdir(), "budokan-mcp-smoke-"));
+// Fixture targets only: every Budokan write below uses dryRun.
+const smokeDeployment = {
+  BUDOKAN_ADDRESS_SEPOLIA: "0x1234",
+  BUDOKAN_VIEWER_ADDRESS_SEPOLIA: "0x5678",
+  BUDOKAN_API_URL_SEPOLIA: "https://example.invalid",
+};
 const client = new Client({ name: "smoke", version: "0.0.1" });
 await client.connect(
   new StdioClientTransport({
@@ -24,6 +30,7 @@ await client.connect(
       ...process.env,
       BUDOKAN_MCP_DIR: keystoreDir,
       BUDOKAN_CHAIN: "sepolia",
+      ...smokeDeployment,
     },
   }),
 );
@@ -49,11 +56,16 @@ if (id) {
   await call("get_leaderboard", { chain: "mainnet", tournamentId: id });
   await call("get_prizes", { chain: "mainnet", tournamentId: id });
 }
-await call("list_game_settings", {
-  chain: "mainnet",
-  gameAddress: JSON.parse(await call("list_games", { chain: "mainnet" })).games[0].contractAddress,
-  limit: 3,
-});
+const mainnetGames = JSON.parse(await call("list_games", { chain: "mainnet" })).games;
+if (mainnetGames.length > 0) {
+  await call("list_game_settings", {
+    chain: "mainnet",
+    gameAddress: mainnetGames[0].contractAddress,
+    limit: 3,
+  });
+} else {
+  console.log("No eligible mainnet games; skipping game settings read.");
+}
 await call("generate_wallet", {}); // sepolia keystore in SMOKE dir
 await call("wallet_status", {}); // now configured, undeployed, zero balance
 await call("create_tournament", {
@@ -223,6 +235,7 @@ await sncastClient.connect(
       ...process.env,
       BUDOKAN_MCP_DIR: join(keystoreDir, "unused"),
       BUDOKAN_CHAIN: "sepolia",
+      ...smokeDeployment,
       SNCAST_ACCOUNTS_FILE: sncastFile,
       SNCAST_ACCOUNT: "smoke-deployer",
     },
@@ -235,6 +248,7 @@ const badEnv = await sncastClient.callTool({
   name: "create_tournament",
   arguments: { name: "x", gameAddress: "0x1", playSeconds: 3600, dryRun: true },
 });
+if (badEnv.isError) throw new Error(`sncast dry run failed: ${badEnv.content?.[0]?.text}`);
 console.log("\n=== create_tournament dryRun signs as sncast account ===");
 console.log(badEnv.content?.[0]?.text?.slice(0, 200));
 await sncastClient.close();

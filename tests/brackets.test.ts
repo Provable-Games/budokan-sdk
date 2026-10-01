@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { CallData } from "starknet";
+import abi from "../src/rpc/abis/budokan.json";
 import {
   addRegistrant,
   advanceBracket,
@@ -184,6 +186,36 @@ describe("nextMatchesFor", () => {
 });
 
 describe("gated upfront deploy", () => {
+  test("later registration waits for rounded gameplay and submission at every minute offset", () => {
+    const s = createBracket({
+      ...baseOpts(players(8)), budokanAddress: "0x1", game: "0x2", creatorRewardsAddress: "0x3",
+      scheduleTemplate: { registrationStartDelay: 0, registrationEndDelay: 2,
+        gameStartDelay: 3, gameEndDelay: 61, submissionDuration: 7 },
+    });
+    const decoder = new CallData(abi);
+    const schedules: Record<string, bigint>[] = [];
+    for (const round of [1, 2, 3]) {
+      const calls = roundMatchCreateCalls(s, round);
+      const decoded = decoder.decodeParameters([
+        "core::starknet::contract_address::ContractAddress",
+        "budokan_interfaces::budokan::Metadata",
+        "budokan_interfaces::budokan::Schedule",
+      ], calls[0]!.call.calldata as string[]) as unknown[];
+      schedules.push(decoded[2] as Record<string, bigint>);
+      calls.forEach(({ matchId }, i) => attachMatchTournament(s, matchId, String(round * 10 + i)));
+    }
+    for (let timestamp = 1200; timestamp < 1260; timestamp++) {
+      for (let round = 1; round < schedules.length; round++) {
+        const previous = schedules[round - 1]!;
+        const finalizedAt = Math.ceil((timestamp + Number(previous.game_start_delay)) / 60) * 60
+          + Math.ceil(Number(previous.game_end_delay) / 60) * 60
+          + Number(previous.submission_duration);
+        const registrationAt = timestamp + Number(schedules[round]!.registration_start_delay);
+        expect(registrationAt).toBeGreaterThanOrEqual(finalizedAt);
+      }
+    }
+  });
+
   test("gated default rejects non-power-of-two rosters", () => {
     expect(() => createBracket(baseOpts(players(3)))).toThrow();
   });

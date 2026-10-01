@@ -65,7 +65,7 @@ export function buildAuthUrl(args: {
 }): string {
   const { config, chain, pubKey, callbackUrl } = args;
   const rpcUrl = keychainSafeRpcUrl(chain, config.rpcUrl);
-  const policies = parsedPoliciesFor(chain, config.budokanAddress);
+  const policies = parsedPoliciesFor(chain, config);
 
   // Match the URL shape produced by SessionProvider's connect() in
   // controller/packages/controller/src/session/provider.ts. Cartridge expects

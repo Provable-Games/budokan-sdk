@@ -115,7 +115,7 @@ export async function buildHttpServer(opts: BuildOptions): Promise<FastifyInstan
           sessionKeyGuid: decoded.sessionKeyGuid ?? handshake.signer.sessionKeyGuid,
           transactionHash: decoded.transactionHash,
         },
-        policies: parsedPoliciesFor(handshake.chain, config.budokanAddress),
+        policies: parsedPoliciesFor(handshake.chain, config),
         chain: handshake.chain,
       };
 

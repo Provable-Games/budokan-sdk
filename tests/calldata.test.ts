@@ -23,38 +23,29 @@ describe("buildErc20ApproveCall", () => {
   });
 });
 
-describe("buildEnterTournamentCall (#264/#269 8-param shape)", () => {
-  test("player_name + player_address Some when provided", () => {
+describe("buildEnterTournamentCall current game-token shape", () => {
+  test("player_address Some when provided", () => {
     const call = buildEnterTournamentCall(BUDOKAN, {
       tournamentId: "5",
       playerAddress: "0xabc",
-      playerName: "ab", // ASCII 0x6162
     });
-    // [id, name(Some 0x0,felt), addr(Some 0x0,felt), qualifier(None 0x1),
-    //  qualification(None 0x1), entry_fee_pay_params(None 0x1), salt, meta]
     expect(call.calldata).toEqual([
       "0x5", // tournament_id
-      "0x0", "0x6162", // player_name Some("ab")
       "0x0", "0xabc", // player_address Some
       "0x1", // qualifier None
       "0x1", // qualification None
       "0x1", // entry_fee_pay_params None
-      "0x0", // salt
-      "0x0", // metadata_value
     ]);
   });
 
-  test("player_name + player_address None when omitted", () => {
+  test("player_address None when omitted", () => {
     const call = buildEnterTournamentCall(BUDOKAN, { tournamentId: "5" });
     expect(call.calldata).toEqual([
       "0x5", // tournament_id
-      "0x1", // player_name None
       "0x1", // player_address None
       "0x1", // qualifier None
       "0x1", // qualification None
       "0x1", // entry_fee_pay_params None
-      "0x0", // salt
-      "0x0", // metadata_value
     ]);
   });
 
@@ -67,15 +58,12 @@ describe("buildEnterTournamentCall (#264/#269 8-param shape)", () => {
     });
     expect(call.calldata).toEqual([
       "0x9", // tournament_id
-      "0x1", // player_name None
       "0x0", "0xW", // player_address Some
       "0x1", // qualifier None
       "0x0", // qualification Some
       "0x1", // QualificationProof::Extension (variant 1)
       "0x3", "0x7", "0x123", "0x1", // Span<felt252> [len, tid, tokenId, position]
       "0x1", // entry_fee_pay_params None
-      "0x0", // salt
-      "0x0", // metadata_value
     ]);
   });
 
@@ -86,15 +74,12 @@ describe("buildEnterTournamentCall (#264/#269 8-param shape)", () => {
     });
     expect(call.calldata).toEqual([
       "0x9", // tournament_id
-      "0x1", // player_name None
       "0x1", // player_address None
       "0x1", // qualifier None
       "0x0", // qualification Some
       "0x0", // QualificationProof::NFT (variant 0)
       "0x5", "0x0", // NFTQualification { token_id: u256 } → low, high
       "0x1", // entry_fee_pay_params None
-      "0x0", // salt
-      "0x0", // metadata_value
     ]);
   });
 
@@ -104,14 +89,12 @@ describe("buildEnterTournamentCall (#264/#269 8-param shape)", () => {
       playerAddress: "0xabc",
       qualifier: "0xq",
     });
-    // name None (1 felt) → addr Some(0x0,0xabc) → qualifier Some(0x0,0xq)
+    // addr Some(0x0,0xabc) → qualifier Some(0x0,0xq)
     expect(call.calldata.slice(1)).toEqual([
-      "0x1", // player_name None
       "0x0", "0xabc", // player_address Some
       "0x0", "0xq", // qualifier Some
       "0x1", // qualification None
       "0x1", // entry_fee_pay_params None
-      "0x0", "0x0", // salt, metadata
     ]);
   });
 });
@@ -482,8 +465,6 @@ describe("buildCreateTournamentCall felt layout", () => {
       settingsId: 0,
       soulbound: false,
       leaderboard: { ascending: false, gameMustBeOver: false },
-      salt: 1,
-      metadataValue: 0,
     });
 
   test("game_config occupies exactly four felts", () => {
@@ -502,7 +483,7 @@ describe("buildCreateTournamentCall felt layout", () => {
 
   test("the whole payload is the length v2 expects", () => {
     // 10 (above) + game_config 4 + entry_fee None 1 + entry_requirement None 1
-    // + leaderboard 2 + salt 1 + metadata_value 1
-    expect((call().calldata as string[]).length).toBe(20);
+    // + leaderboard 2
+    expect((call().calldata as string[]).length).toBe(18);
   });
 });

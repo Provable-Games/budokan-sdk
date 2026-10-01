@@ -8,23 +8,39 @@
 #    Node with --experimental-wasm-modules handles it correctly; this is
 #    the same combination the upstream cartridge-gg/slot Node example uses.
 #
+# Build from the repository root, so file:../../.. resolves to the SDK:
+# docker build -f examples/telegram-controller-bot/server/Dockerfile .
 # Built and deployed by Railway. The .env file is NOT copied — Railway injects
 # variables at runtime. Filesystem session state is persisted via a Railway
 # volume mounted at /data (set BOT_DATA_DIR=/data).
 
-FROM oven/bun:1.3-slim AS deps
+FROM oven/bun:1.3.6-slim AS deps
 
 WORKDIR /app
-COPY package.json bun.lock* ./
-RUN bun install --frozen-lockfile
+COPY package.json bun.lock tsconfig.json tsup.config.ts ./
+COPY src ./src
+RUN bun install --frozen-lockfile && bun run build
+
+WORKDIR /app/examples/telegram-controller-bot/server
+COPY examples/telegram-controller-bot/server/package.json examples/telegram-controller-bot/server/bun.lock ./
+# Bun's file: dependency copies ancestor directories recursively, including this
+# example's node_modules. Keep a single link to the SDK instead. Both stages
+# retain /app, and its installed dependencies resolve from there at runtime.
+RUN bun install --frozen-lockfile \
+    && rm -rf node_modules/@provable-games/budokan-sdk \
+    && ln -s /app node_modules/@provable-games/budokan-sdk
 
 # --- Runtime stage: Node, not Bun. ---
 FROM node:22-slim AS runtime
 
 WORKDIR /app
+COPY --from=deps /app/package.json ./package.json
+COPY --from=deps /app/dist ./dist
 COPY --from=deps /app/node_modules ./node_modules
-COPY package.json tsconfig.json ./
-COPY src ./src
+WORKDIR /app/examples/telegram-controller-bot/server
+COPY --from=deps /app/examples/telegram-controller-bot/server/node_modules ./node_modules
+COPY examples/telegram-controller-bot/server/package.json examples/telegram-controller-bot/server/tsconfig.json ./
+COPY examples/telegram-controller-bot/server/src ./src
 
 # Railway injects PORT; the app reads it via process.env.PORT (config.ts).
 EXPOSE 8787

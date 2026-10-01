@@ -100,6 +100,16 @@ function TournamentFeed({ tournamentId }: { tournamentId: string }) {
 }
 ```
 
+### Game-token leaderboard order
+
+For schema-1 game-token IDs, sort with `compareGameTokenScores(a, b, ascending)`
+before capping the list or passing IDs to `getSubmittableScores`. Equal scores
+prefer the earlier `minted_at_block_number`; same-block ties use the lower
+numerical token ID. Use bigint or decimal-string scores to preserve the full on-chain u64 range.
+Unsafe JavaScript number scores are rejected. Bracket schedules reserve the
+contract's minute-alignment delay so a later round does not open before its
+feeders' full submission windows close.
+
 ### Whitelisted Games
 
 The SDK ships a curated per-chain list of games and per-game UX metadata
@@ -284,6 +294,26 @@ Requires an `NPM_TOKEN` secret configured in the repo settings.
 ## License
 
 MIT
+
+## Current game-token contract migration
+
+Version 0.4.0 is a breaking write-ABI update. The calldata builders target the new Budokan deployment in
+[Budokan #331](https://github.com/Provable-Games/budokan/pull/331).
+`CreateTournamentArgs` and `EnterTournamentArgs` remove `salt` and
+`metadataValue`; entry arguments also remove `playerName`. These builders require
+that deployment and are incompatible with older Budokan write entrypoints.
+Tournament metadata (name/description) and off-chain bracket display names remain.
+
+Use `buildEnterTournamentForRecipientsCall` for multiple entries into the same
+tournament in one transaction. Its recipients contain `playerAddress`, `qualifier`
+and `qualification`. A recipient may appear more than once. Mint nonces are local
+to a mint call: execute at most one entry mint call per tournament per transaction,
+and use separate transactions for additional batches. The 2,048-recipient encoding
+limit does not guarantee that a batch fits Starknet's runtime limits.
+
+The repository examples depend on this checkout. Build the root SDK with
+`bun run build` before installing or type-checking an example.
+Bot users must reconnect to authorize the batch-entry session permission.
 
 ### Automatic completion after all entries submit
 

@@ -9,9 +9,10 @@
 //     bot approves the exact fee and enters in one in-session multicall, no
 //     per-tx popup. The cap bounds what the session can ever spend.
 
-import { CHAINS, extensionAddressFor } from "@provable-games/budokan-sdk";
+import { extensionAddressFor } from "@provable-games/budokan-sdk";
 
 import type { Chain } from "./chat-state.ts";
+import type { Config } from "./config.ts";
 import { tokensForChain } from "./catalog/tokens.ts";
 
 export interface PolicyMethod {
@@ -36,9 +37,12 @@ export interface PolicyBundle {
 
 export function buildSessionPolicies(
   chain: Chain,
-  budokanAddressOverride?: string,
+  deployment: Pick<Config, "chain" | "budokanAddress" | "bracketAddress">,
 ): PolicyBundle {
-  const budokanAddress = budokanAddressOverride ?? CHAINS[chain]?.budokanAddress;
+  if (chain !== deployment.chain) {
+    throw new Error(`This bot is configured for ${deployment.chain}, not ${chain}.`);
+  }
+  const budokanAddress = deployment.budokanAddress;
   if (!budokanAddress) {
     throw new Error(`No Budokan address configured for chain '${chain}'.`);
   }
@@ -49,6 +53,7 @@ export function buildSessionPolicies(
       methods: [
         { entrypoint: "create_tournament", description: "Create a Budokan tournament" },
         { entrypoint: "enter_tournament", description: "Enter a tournament" },
+        { entrypoint: "enter_tournament_for_recipients", description: "Enter tournament participants" },
         { entrypoint: "claim_reward", description: "Claim a tournament reward" },
         { entrypoint: "submit_score", description: "Submit a tournament score" },
       ],
@@ -78,7 +83,7 @@ export function buildSessionPolicies(
   // escrowed entry fee — so the bracket must ALSO be an authorized `approve`
   // spender on the fee tokens below). Skipped if the chain has no bracket
   // contract configured.
-  const bracketAddress = CHAINS[chain]?.bracketAddress;
+  const bracketAddress = deployment.bracketAddress;
   if (bracketAddress) {
     contracts[bracketAddress] = {
       name: "Budokan Bracket",
@@ -134,9 +139,9 @@ type ParsedContract = Omit<PolicyContract, "methods"> & { methods: AuthorizedMet
  */
 export function parsedPoliciesFor(
   chain: Chain,
-  budokanAddressOverride?: string,
+  deployment: Pick<Config, "chain" | "budokanAddress" | "bracketAddress">,
 ): { verified: boolean; contracts: Record<string, ParsedContract> } {
-  const bundle = buildSessionPolicies(chain, budokanAddressOverride);
+  const bundle = buildSessionPolicies(chain, deployment);
   const contracts: Record<string, ParsedContract> = {};
   for (const [addr, group] of Object.entries(bundle.contracts)) {
     contracts[addr] = {

@@ -18,6 +18,9 @@ import {
   explorerTxUrl,
   extensionAddressFor,
   getGameDefaults,
+  gameFeeContract,
+  getGameFeeFloor,
+  isGameFeeShareValid,
   parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
   scheduleFromDurations,
@@ -32,7 +35,7 @@ import {
   type EntryFeeArgs,
   type EntryRequirementArgs,
 } from "@provable-games/budokan-sdk";
-import { chainConfig, resolveChain, type Chain } from "../config.ts";
+import { requireGameCoreDeployment, resolveChain, type Chain } from "../config.ts";
 import { providerFor, resolveSigner, TX_DETAILS, type ResolvedSigner } from "../wallet.ts";
 import { resolveToken, toRawAmount } from "../tokens.ts";
 import { errorResult, jsonResult } from "./read.ts";
@@ -363,7 +366,7 @@ export function registerWriteTools(server: McpServer) {
               .min(0)
               .max(10000)
               .optional()
-              .describe("Game creator's cut in bps. Default: the game's whitelisted fee percentage"),
+              .describe("Legacy field name for the game-fee share (SDK gameFeeShare), in bps. Default: the game's onchain fee floor; must be zero when no fee recipient is declared"),
             refundShareBps: z.number().int().min(0).max(10000).optional().describe("Refund share for non-placers (default 0)"),
           })
           .optional()
@@ -400,18 +403,24 @@ export function registerWriteTools(server: McpServer) {
       try {
         const chain = resolveChain(input.chain);
         const signer = requireSigner(chain);
-        const { budokanAddress } = chainConfig(chain);
+        const { budokanAddress } = requireGameCoreDeployment(chain);
         const defaults = getGameDefaults(chain, input.gameAddress);
 
         let entryFee: EntryFeeArgs | undefined;
         if (input.entryFee) {
+          const floor = await getGameFeeFloor(await gameFeeContract(input.gameAddress, providerFor(chain)));
+          const gameFeeShare = input.entryFee.gameCreatorShareBps ?? floor.feeBps;
+          if (!isGameFeeShareValid(floor, gameFeeShare)) {
+            throw new Error(floor.declared
+              ? `Game fee share must be at least ${floor.feeBps} bps.`
+              : "Game fee share must be zero: this game has no fee recipient.");
+          }
           const token = await resolveToken(chain, input.entryFee.token);
           entryFee = {
             tokenAddress: token.address,
             amount: toRawAmount(input.entryFee.amount, token.decimals),
             tournamentCreatorShare: input.entryFee.tournamentCreatorShareBps ?? 0,
-            gameCreatorShare:
-              input.entryFee.gameCreatorShareBps ?? defaults.defaultGameFeePercentage * 100,
+            gameFeeShare,
             refundShare: input.entryFee.refundShareBps ?? 0,
             distribution: buildDistribution(
               input.entryFee.distribution,
@@ -648,7 +657,7 @@ export function registerWriteTools(server: McpServer) {
       try {
         const chain = resolveChain(input.chain);
         const signer = requireSigner(chain);
-        const { budokanAddress } = chainConfig(chain);
+        const { budokanAddress } = requireGameCoreDeployment(chain);
         const token = await resolveToken(chain, input.token);
         const raw = toRawAmount(input.amount, token.decimals);
 

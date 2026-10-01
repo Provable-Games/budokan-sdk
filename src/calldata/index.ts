@@ -133,8 +133,6 @@ export interface EnterTournamentArgs {
    * `None` (the contract defaults the mint to the caller).
    */
   playerAddress?: string;
-  /** Optional felt252 short string (≤31 ASCII bytes). Omit → Option::None. */
-  playerName?: string;
   /**
    * Third-party qualifier to claim, as `Option<ContractAddress>`. Omit for
    * `None` (caller is the qualifier — the common path). Only needed for
@@ -159,8 +157,6 @@ export interface EnterTournamentArgs {
    * extension expects. Omit for the built-in fee flow (Option::None).
    */
   entryFeePayParams?: string[];
-  salt?: number;
-  metadataValue?: number;
 }
 
 export interface CreateTournamentArgs {
@@ -196,8 +192,6 @@ export interface CreateTournamentArgs {
    * up. Present so a tournament can opt in without a contract change.
    */
   paymaster?: boolean;
-  salt?: number;
-  metadataValue?: number;
 }
 
 /**
@@ -330,45 +324,17 @@ export function buildErc20ApproveCall(
 // Budokan entrypoints
 // ---------------------------------------------------------------------------
 
-/**
- * `enter_tournament(tournament_id: u64, player_name: Option<felt252>,
- *                   player_address: Option<ContractAddress>,
- *                   qualifier: Option<ContractAddress>,
- *                   qualification: Option<QualificationProof>,
- *                   entry_fee_pay_params: Option<Span<felt252>>,
- *                   salt: u16, metadata_value: u16)`
- *
- * Targets the current budokan contract (#264/#269). `qualification` and
- * `entry_fee_pay_params` are always `None` here — gated/extension-fee
- * tournaments need a real proof / pay-params payload, which depend on the
- * validator and the caller's runtime state.
- *
- * Returns `(felt252, u32)` on-chain — game_token_id and entry_number — but
- * `execute()` surfaces only the tx hash. Callers can fetch the receipt
- * and parse events if they need the values.
- *
- * Tournaments with a non-trivial entry_requirement (NFT-gated or
- * extension-validator) need a real `QualificationProof` and shouldn't go
- * through this entrypoint — route those via the budokan client UI or
- * implement a qualification-proof builder.
- */
-export function buildEnterTournamentCall(
-  budokanAddress: string,
-  args: EnterTournamentArgs,
-): Call {
-  // Hand-built calldata. enter_tournament takes a chain of Options (tags:
-  // 0 = Some, 1 = None) in this exact ABI order:
-  //   tournament_id, player_name?, player_address?, qualifier?,
-  //   qualification?, entry_fee_pay_params?, salt, metadata_value
-  const calldata: string[] = [
-    num.toHex(args.tournamentId), // tournament_id u64
-  ];
-  // player_name: Option<felt252>
-  if (args.playerName) {
-    calldata.push("0x0", felt252FromShortString(args.playerName, "Player name"));
-  } else {
-    calldata.push("0x1");
-  }
+export type TournamentRecipientArgs = Pick<
+  EnterTournamentArgs, "playerAddress" | "qualifier" | "qualification"
+>;
+
+export interface EnterTournamentForRecipientsArgs {
+  tournamentId: string;
+  recipients: TournamentRecipientArgs[];
+}
+
+function encodeTournamentRecipient(args: TournamentRecipientArgs): string[] {
+  const calldata: string[] = [];
   // player_address: Option<ContractAddress> — Some(addr) sets the mint
   // recipient; None defaults to the caller.
   if (args.playerAddress) {
@@ -399,6 +365,43 @@ export function buildEnterTournamentCall(
   } else {
     calldata.push("0x1"); // Option::None
   }
+  return calldata;
+}
+
+/**
+ * Mint all recipients in one batch, including repeated recipients.
+ * Each token uses its recipient index as the mint nonce. Calls restart at zero:
+ * execute at most one entry mint call per tournament per transaction.
+ * The batch entrypoint supports built-in fees and fee-less tournaments.
+ */
+export function buildEnterTournamentForRecipientsCall(
+  budokanAddress: string,
+  args: EnterTournamentForRecipientsArgs,
+): Call {
+  if (args.recipients.length < 1 || args.recipients.length > 2048) {
+    throw new Error("Entry batch must contain 1 to 2048 recipients");
+  }
+  return {
+    contractAddress: budokanAddress,
+    entrypoint: "enter_tournament_for_recipients",
+    calldata: [
+      num.toHex(args.tournamentId),
+      num.toHex(args.recipients.length),
+      ...args.recipients.flatMap(encodeTournamentRecipient),
+    ],
+  };
+}
+
+/**
+ * Build a single entry for the current game-token Budokan deployment.
+ * Qualification and extension fee payloads are forwarded when provided.
+ * Use the batch builder for multiple entries into one tournament in one tx.
+ */
+export function buildEnterTournamentCall(
+  budokanAddress: string,
+  args: EnterTournamentArgs,
+): Call {
+  const calldata = [num.toHex(args.tournamentId), ...encodeTournamentRecipient(args)];
   // entry_fee_pay_params: Option<Span<felt252>>. Some(span) for
   // EntryFeeKind::Extension tournaments; None for the built-in fee flow.
   if (args.entryFeePayParams && args.entryFeePayParams.length > 0) {
@@ -410,8 +413,6 @@ export function buildEnterTournamentCall(
   } else {
     calldata.push("0x1");
   }
-  calldata.push(num.toHex(args.salt ?? 0)); // salt u16
-  calldata.push(num.toHex(args.metadataValue ?? 0)); // metadata_value u128
   return {
     contractAddress: budokanAddress,
     entrypoint: "enter_tournament",
@@ -451,7 +452,7 @@ export function buildClaimRewardCall(
 /**
  * `create_tournament(creator_rewards_address, metadata, schedule,
  *                    game_config, entry_fee, entry_requirement,
- *                    leaderboard_config, salt, metadata_value)`
+ *                    leaderboard_config)`
  *
  * Schedule fields are durations (`registration_end_delay`,
  * `game_end_delay` measured from their respective starts) — *not*
@@ -503,8 +504,6 @@ export function buildCreateTournamentCall(
       ascending: args.leaderboard.ascending,
       game_must_be_over: args.leaderboard.gameMustBeOver,
     },
-    salt: args.salt ?? 0,
-    metadata_value: args.metadataValue ?? 0,
   });
   return {
     contractAddress: budokanAddress,

@@ -6,7 +6,7 @@
 // same way the official client does, instead of re-deriving (and getting wrong)
 // the leaderboard ranking.
 //
-// The model: a tournament's game tokens, sorted by score descending and capped
+// The model: a tournament's game tokens, sorted by score, mint block and token ID, and capped
 // to the leaderboard size, define the final leaderboard order. A token's
 // submit position is simply its 1-indexed rank in that sorted list. Submitting
 // the not-yet-submitted tokens in rank order fills the on-chain leaderboard.
@@ -37,7 +37,7 @@ function tokenKey(id: string): string {
  * Compute the score submissions for a tournament leaderboard, mirroring the
  * Budokan web client's `getSubmittableScores`.
  *
- * @param rankedTokenIds Tournament game-token ids **sorted by score descending**
+ * @param rankedTokenIds Tournament game-token ids **sorted by score and tie-break**
  *   and already capped to the leaderboard size (the caller decides the cap —
  *   typically the highest paid prize position). Each token's submit position is
  *   its 1-indexed position in this list.
@@ -78,4 +78,43 @@ export function buildSubmitScoreCalls(
       position: s.position,
     }),
   );
+}
+
+/**
+ * Sort schema-1 game-token IDs using Budokan's leaderboard ordering.
+ * Score sorts in the configured direction; ties prefer the earlier mint block,
+ * then the lower numerical token ID. Pass IDs from one game-token tournament.
+ * Use before capping the list or calling getSubmittableScores.
+ */
+export function compareGameTokenScores(
+  a: { tokenId: string; score: bigint | number | string },
+  b: { tokenId: string; score: bigint | number | string },
+  ascending = false,
+): number {
+  const scoreA = exactScore(a.score);
+  const scoreB = exactScore(b.score);
+  if (scoreA !== scoreB) {
+    const order = scoreA < scoreB ? -1 : 1;
+    return ascending ? order : -order;
+  }
+  const idA = BigInt(a.tokenId);
+  const idB = BigInt(b.tokenId);
+  const mintA = (idA >> 32n) & ((1n << 32n) - 1n);
+  const mintB = (idB >> 32n) & ((1n << 32n) - 1n);
+  if (mintA !== mintB) return mintA < mintB ? -1 : 1;
+  return idA < idB ? -1 : idA > idB ? 1 : 0;
+}
+
+function exactScore(score: bigint | number | string): bigint {
+  if (typeof score === "string" && !/^(?:0x[0-9a-fA-F]+|\d+)$/.test(score)) {
+    throw new RangeError("Score must be a non-empty integer string");
+  }
+  if (typeof score === "number" && !Number.isSafeInteger(score)) {
+    throw new RangeError("Unsafe numeric score: use bigint or an exact decimal string");
+  }
+  const value = BigInt(score);
+  if (value < 0n || value > 0xffffffffffffffffn) {
+    throw new RangeError("Score must fit an unsigned 64-bit integer");
+  }
+  return value;
 }

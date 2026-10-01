@@ -347,6 +347,7 @@ export async function claimAll(
           tokenAddress: ef.tokenAddress,
           tokenType: "erc20",
           amount: perToken,
+          amountIsExact: true,
           tokenId,
           reward: { kind: "entry_fee_refund", tokenId },
         });

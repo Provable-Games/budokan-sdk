@@ -5,9 +5,15 @@ An [MCP](https://modelcontextprotocol.io) server that lets any MCP-capable agent
 ## Quick start
 
 ```bash
+# From the repository root: the example uses this checkout's SDK.
+bun install --frozen-lockfile
+bun run build
 cd examples/mcp-server
-bun install
+bun install --frozen-lockfile
 ```
+
+Rebuild the root SDK after source changes. SDK 0.4.0 writes require the new
+GameCore-compatible Budokan deployment described in the root migration notes.
 
 Register with Claude Code:
 
@@ -29,7 +35,16 @@ Or in any MCP client config:
 }
 ```
 
-Reads work immediately with zero configuration. Writes need a wallet (below).
+Legacy API reads work without deployment configuration; RPC fallback is disabled
+until a new deployment is configured. Writes need a wallet and the three matching
+deployment settings below. Restart the server after changing them.
+
+For each chain used for writes, set `BUDOKAN_ADDRESS_MAINNET`,
+`BUDOKAN_VIEWER_ADDRESS_MAINNET`, and `BUDOKAN_API_URL_MAINNET` to the new
+deployment's contract, viewer, and API. Use the `_SEPOLIA` suffix for Sepolia.
+Partial settings are rejected; one chain's overrides never apply to the other.
+Run `bun src/config.check.ts` to check the configuration behavior without sending
+a transaction.
 
 ## Tools
 
@@ -80,6 +95,9 @@ Precedence: raw env key > `SNCAST_ACCOUNT` > generated keystore. Treat the dev w
 | Env var | Default | Purpose |
 | --- | --- | --- |
 | `BUDOKAN_CHAIN` | `mainnet` | Default chain (`mainnet` / `sepolia`); every tool also takes a per-call `chain` param |
+| `BUDOKAN_ADDRESS_MAINNET` / `BUDOKAN_ADDRESS_SEPOLIA` | — | New GameCore Budokan contract; required for writes |
+| `BUDOKAN_VIEWER_ADDRESS_MAINNET` / `BUDOKAN_VIEWER_ADDRESS_SEPOLIA` | — | Matching viewer; configure with the contract and API |
+| `BUDOKAN_API_URL_MAINNET` / `BUDOKAN_API_URL_SEPOLIA` | legacy API for reads only | Matching new-deployment API; configure with both addresses |
 | `SNCAST_ACCOUNT` | — | Name of a Starknet Foundry account to sign with |
 | `SNCAST_ACCOUNTS_FILE` | `~/.starknet_accounts/starknet_open_zeppelin_accounts.json` | sncast accounts file location |
 | `STARKNET_PRIVATE_KEY` / `STARKNET_ACCOUNT_ADDRESS` | — | Bring-your-own signing account (overrides `SNCAST_ACCOUNT`) |

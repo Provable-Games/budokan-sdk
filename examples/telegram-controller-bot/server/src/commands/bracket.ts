@@ -23,6 +23,8 @@ import {
   attachMatchTournament,
   attachRoundOneTree,
   bracketEntryCalls,
+  buildEnterTournamentForRecipientsCall,
+  type TournamentRecipientArgs,
   bracketFeePrizeCalls,
   bracketRounds,
   bracketSummary,
@@ -752,10 +754,26 @@ async function deployResolved(
     // player's allowlist proof (fetched from the merkle service).
     const entryCalls: ReturnType<typeof bracketEntryCalls> = [];
     for (const m of state.matches.filter((x) => x.round === 1 && x.tournamentId)) {
+      const recipients: TournamentRecipientArgs[] = [];
       for (const player of [m.playerA, m.playerB]) {
         if (!isReal(player)) continue;
         const proof = await roundOneProof(state, m.id, player!.address, config);
-        entryCalls.push(...bracketEntryCalls(state, m.id, player!.address, proof));
+        // Reuse bracket validation, including the required allowlist proof.
+        bracketEntryCalls(state, m.id, player!.address, proof);
+        // Keep these round-1 recipient fields in sync with bracketEntryCalls.
+        // Only the encoding differs: one batch per match avoids mint nonce resets.
+        recipients.push({
+          playerAddress: player!.address,
+          ...(state.roundOneTreeIds?.[m.id] !== undefined ? {
+            qualifier: player!.address,
+            qualification: { kind: "extension" as const, data: proof! },
+          } : {}),
+        });
+      }
+      if (recipients.length > 0) {
+        entryCalls.push(buildEnterTournamentForRecipientsCall(state.budokanAddress, {
+          tournamentId: m.tournamentId!, recipients,
+        }));
       }
     }
     if (entryCalls.length > 0) {
@@ -918,6 +936,9 @@ async function enterPaidSlot(
   const sponsoring = !!opts.playerAddress;
   if (b.filled >= b.capacity) return "Sorry — it just filled up.";
   const chain = b.state.chain as Chain;
+  if (chain !== config.chain || BigInt(b.state.budokanAddress) !== BigInt(config.budokanAddress)) {
+    return "This bracket belongs to a different deployment. Use its original bot.";
+  }
   const session = await resolveAccount(payerChatId, chain, config);
   if (!session.ok) return "DM me first: open the bot, /connect, then try again.";
 
@@ -1316,6 +1337,7 @@ export async function advanceStoredBracket(
   // A paid bracket still gathering players isn't running yet — don't advance it.
   if (b.phase === "filling") return;
   const chain = b.state.chain as Chain;
+  if (chain !== config.chain || BigInt(b.state.budokanAddress) !== BigInt(config.budokanAddress)) return;
 
   // 1. Update bracket state from chain (resolve finished matches). No signer
   //    needed — just reads.
