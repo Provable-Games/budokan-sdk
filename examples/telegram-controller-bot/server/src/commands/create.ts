@@ -22,6 +22,8 @@ import type { Chain } from "../chat-state.ts";
 import type { TelegramApi } from "../telegram-api.ts";
 import {
   buildCreateTournamentCall,
+  isGameFeeShareValid,
+  type GameFeeFloor,
   type Call,
   type CreateTournamentArgs,
   type DistributionSpec,
@@ -42,7 +44,7 @@ import * as bracketCmd from "./bracket.ts";
 import { readAnnounceChannel } from "../bracket-store.ts";
 import { TournamentWatchStore } from "../tournament-watch-store.ts";
 import { addWatch } from "./watch.ts";
-import { gamesForChain, gameMetadataFor, fetchGameFeeBps, type Game } from "../catalog/games.ts";
+import { gamesForChain, fetchGameFeeFloor, type Game } from "../catalog/games.ts";
 import { tokensForChain, findKnownToken, type Erc20Token } from "../catalog/tokens.ts";
 import { fetchSettings, fetchSetting, formatSettingsDetails, type GameSettingDetails } from "../catalog/settings.ts";
 import { fetchVoyagerBalances, filterPrizeEligible, type VoyagerTokenBalance } from "../voyager.ts";
@@ -174,6 +176,7 @@ interface State {
   // section's exit transition checks this and jumps back to "confirm"
   // instead of the natural next section.
   editing?: boolean;
+  confirming?: boolean; // block duplicate answers during the final fee read
   // Snapshot of the games list at /create-start time, so the numbering the
   // user sees matches the indices we resolve against. denshokan registry
   // updates between picker render and pick would otherwise shift indices.
@@ -195,8 +198,8 @@ interface State {
   entryFeeToken?: Erc20Token;
   entryFeeAmount?: string;          // raw u128 (decimal string)
   entryFeeCreatorBps?: number;      // tournament creator cut in basis points
-  entryFeeGameBps?: number;         // game creator cut (must be ≥ registry minimum)
-  entryFeeMinGameBps?: number;      // floor — registry-side minimum from whitelist
+  entryFeeGameBps?: number;         // share validated against the token fee terms
+  entryFeeGameFloor?: GameFeeFloor; // current token floor and recipient declaration
   entryFeeRefundBps?: number;       // refund share for non-placers
   entryFeeDistType?: "linear" | "exponential" | "uniform";
   entryFeeDistCount?: number;       // # placements that share the leaderboard pool
@@ -310,7 +313,7 @@ export async function handleAnswer(
   text: string,
 ): Promise<void> {
   const state = states.get(chatId);
-  if (!state) return;
+  if (!state || state.confirming) return;
   const trimmed = text.trim();
 
   switch (state.step) {
@@ -1117,31 +1120,39 @@ async function handleEntryFeeAmount(api: TelegramApi, config: Config, state: Sta
   }
   state.entryFeeAmount = raw;
 
-  // Game creator cut floor: the contract's _assert_game_fee_met rejects a
-  // game_creator_share below the registry-required fee. Read it LIVE from the
-  // registry (authoritative), falling back to the curated catalog value, then
-  // 1%, if the on-chain read fails.
-  const meta = gameMetadataFor(state.chain, state.game!.contractAddress);
-  const onchainBps = await fetchGameFeeBps(state.chain, state.game!.contractAddress, config.rpcUrl);
-  const minBps = onchainBps ?? Math.round((meta?.defaultGameFeePercentage ?? 1) * 100);
-  state.entryFeeMinGameBps = minBps;
-  const minPct = minBps / 100;
+  // Read the token's fee terms; an RPC outage must not become a guessed fee.
+  delete state.entryFeeGameFloor;
+  try {
+    state.entryFeeGameFloor = await fetchGameFeeFloor(state.chain, state.game!.contractAddress, config.rpcUrl);
+  } catch (error) {
+    await api.sendMessage(chatId, `Couldn't read the game's fee: ${formatError(error)}\nSend the entry amount again to retry, or /cancel.`);
+    return;
+  }
+  const floor = state.entryFeeGameFloor;
+  const minPct = floor.feeBps / 100;
 
   state.step = "entryFeeGameShare";
   await api.sendMessage(
     chatId,
     [
-      `Game creator cut? (% of each entry that goes to the game; minimum ${minPct}%, default ${minPct}%)`,
+      floor.declared
+        ? `Game creator cut? (% of each entry that goes to the game; minimum ${minPct}%, default ${minPct}%)`
+        : "This game has no fee recipient. The game cut must be 0%.",
       "Send a number, or 'skip' to use the minimum.",
     ].join("\n"),
   );
 }
 
 async function handleEntryFeeGameShare(api: TelegramApi, _config: Config, state: State, chatId: string, input: string): Promise<void> {
-  const minBps = state.entryFeeMinGameBps ?? 0;
+  const floor = state.entryFeeGameFloor;
+  if (!floor) {
+    state.step = "entryFeeAmount";
+    await api.sendMessage(chatId, "Send the entry amount again to load the game's fee, or /cancel.");
+    return;
+  }
   let bps: number;
   if (/^skip$/i.test(input.trim())) {
-    bps = minBps;
+    bps = floor.feeBps;
   } else {
     const pct = parsePercent(input);
     if (pct === null) {
@@ -1149,13 +1160,12 @@ async function handleEntryFeeGameShare(api: TelegramApi, _config: Config, state:
       return;
     }
     bps = Math.round(pct * 100);
-    if (bps < minBps) {
-      await api.sendMessage(
-        chatId,
-        `Below the registry minimum (${(minBps / 100).toFixed(2)}%). Send a higher number, or 'skip' for the minimum.`,
-      );
-      return;
-    }
+  }
+  if (!isGameFeeShareValid(floor, bps)) {
+    await api.sendMessage(chatId, floor.declared
+      ? `Below the game's minimum (${(floor.feeBps / 100).toFixed(2)}%). Send a higher number, or 'skip' for the minimum.`
+      : "This game has no fee recipient. Send 0, or 'skip' for a zero game cut.");
+    return;
   }
   state.entryFeeGameBps = bps;
   state.step = "entryFeeCreatorShare";
@@ -1448,8 +1458,35 @@ async function moveToConfirm(api: TelegramApi, state: State, chatId: string): Pr
 async function handleConfirm(api: TelegramApi, config: Config, state: State, chatId: string, input: string): Promise<void> {
   const trimmed = input.trim().toLowerCase();
   if (trimmed === "create") {
-    states.delete(chatId);
-    return execute(api, config, chatId, state);
+    state.confirming = true;
+    try {
+      // The user may have edited the game or its fee terms may have changed
+      // while this chat was open. Recheck before signing, preserving the flow
+      // on failure so the user can retry without rebuilding the tournament.
+      if (state.entryFeeToken && state.entryFeeAmount) {
+        try {
+          const floor = await fetchGameFeeFloor(state.chain, state.game!.contractAddress, config.rpcUrl);
+          if (states.get(chatId) !== state) return; // cancelled or replaced while reading
+          state.entryFeeGameFloor = floor;
+          if (!isGameFeeShareValid(floor, state.entryFeeGameBps ?? 0)) {
+            state.step = "entryFeeGameShare";
+            state.editing = true;
+            await api.sendMessage(chatId, floor.declared
+              ? `The game now requires at least ${floor.feeBps / 100}%. Send a new game cut, or 'skip' for the minimum.`
+              : "This game has no fee recipient. Send 0, or 'skip' for a zero game cut.");
+            return;
+          }
+        } catch (error) {
+          if (states.get(chatId) !== state) return;
+          await api.sendMessage(chatId, `Couldn't verify the game's fee: ${formatError(error)}\nNothing submitted. Reply 'create' to retry, or /cancel.`);
+          return;
+        }
+      }
+      states.delete(chatId);
+      return execute(api, config, chatId, state);
+    } finally {
+      state.confirming = false;
+    }
   }
   // edit N — jump to that section's first prompt.
   const editMatch = trimmed.match(/^edit\s+(\d+)$/);
@@ -1911,7 +1948,7 @@ const SECTIONS: readonly SectionDef[] = [
     ],
     clear: [
       "entryFeeToken", "entryFeeAmount", "entryFeeCreatorBps",
-      "entryFeeGameBps", "entryFeeMinGameBps", "entryFeeRefundBps",
+      "entryFeeGameBps", "entryFeeGameFloor", "entryFeeRefundBps",
       "entryFeeDistType", "entryFeeDistCount", "entryFeeDistWeight",
     ],
   },
@@ -1982,7 +2019,7 @@ async function editSection(api: TelegramApi, state: State, chatId: string, secti
  */
 export async function back(api: TelegramApi, chatId: string): Promise<void> {
   const state = states.get(chatId);
-  if (!state) return;
+  if (!state || state.confirming) return;
   if (state.step === "confirm") {
     const last = SECTIONS[SECTIONS.length - 1]!;
     return editSection(api, state, chatId, last);
@@ -2154,4 +2191,3 @@ function shortHex(value: string): string {
   if (!value || value.length <= 18) return value;
   return `${value.slice(0, 10)}…${value.slice(-6)}`;
 }
-
