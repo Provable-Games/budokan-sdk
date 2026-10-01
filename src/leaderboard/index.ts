@@ -6,7 +6,7 @@
 // same way the official client does, instead of re-deriving (and getting wrong)
 // the leaderboard ranking.
 //
-// The model: a tournament's game tokens, sorted by score, mint minute and token ID, and capped
+// The model: a tournament's game tokens, sorted by score, mint block and token ID, and capped
 // to the leaderboard size, define the final leaderboard order. A token's
 // submit position is simply its 1-indexed rank in that sorted list. Submitting
 // the not-yet-submitted tokens in rank order fills the on-chain leaderboard.
@@ -81,8 +81,8 @@ export function buildSubmitScoreCalls(
 }
 
 /**
- * Sort schema-1 GameCore packet tokens using Budokan's leaderboard ordering.
- * Score sorts in the configured direction; ties prefer the earlier mint minute,
+ * Sort schema-1 game-token packets using Budokan's leaderboard ordering.
+ * Score sorts in the configured direction; ties prefer the earlier mint block,
  * then the lower numerical token ID. Pass IDs from one packet-token tournament.
  * Use before capping the list or calling getSubmittableScores.
  */
@@ -99,8 +99,8 @@ export function comparePacketTokenScores(
   }
   const idA = BigInt(a.tokenId);
   const idB = BigInt(b.tokenId);
-  const mintA = (idA >> 64n) & ((1n << 27n) - 1n);
-  const mintB = (idB >> 64n) & ((1n << 27n) - 1n);
+  const mintA = (idA >> 32n) & ((1n << 32n) - 1n);
+  const mintB = (idB >> 32n) & ((1n << 32n) - 1n);
   if (mintA !== mintB) return mintA < mintB ? -1 : 1;
   return idA < idB ? -1 : idA > idB ? 1 : 0;
 }
