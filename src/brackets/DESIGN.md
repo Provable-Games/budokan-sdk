@@ -15,7 +15,8 @@ ordinary budokan tournaments — no Cairo changes.
 > **One match = one 2-player leaderboard tournament.**
 
 Each bracket match is a short budokan tournament for the chosen game, with the
-two competitors as its only registrants. The match winner is whoever ranks #1 on
+two competitors as its only players. Each player can register up to
+`attemptsPerPlayer` entries (default 1). The match winner is whoever ranks #1 on
 that tournament's leaderboard once its submission window closes (respecting the
 game's `leaderboardAscending`). The bracket coordinator advances winners into the
 next round by creating the next round's match tournaments.
@@ -74,6 +75,7 @@ interface BracketState {
   chain: WhitelistChain;
   settingsId: number;
   scheduleTemplate: MatchScheduleTemplate; // per-match durations
+  attemptsPerPlayer?: number; // per-player allowance each round; omitted means 1
   size: number;            // bracket slots (next pow2 ≥ players.length)
   players: BracketPlayer[];
   matches: BracketMatch[]; // full tree, flattened
@@ -91,8 +93,15 @@ interface BracketState {
 - **Byes:** when `players.length` isn't a power of two, the top
   `2^ceil - players.length` seeds get round-1 byes (auto-`resolved`, no
   tournament created).
+- **Attempts:** a positive `attemptsPerPlayer` quota applies in every round.
+  First-round Merkle leaf counts and tournament entry limits must agree; use
+  `bracketRoundOneAllowlistCall` to generate both player leaves. Later rounds keep
+  `topPositions: 1` and grant the winning token this many entries. Multiple-attempt
+  brackets require gating. `bracketEntryCalls(..., proof, count)` builds a single
+  batch mint when count exceeds one, and defaults to one entry per call.
 - **Winner resolution:** read the match tournament's leaderboard (`viewerLeaderboard`,
-  position 1 = winner) and map the winning `tokenId` → player via the match's
+  position 1 = winner), keeping each player's best rank and its exact token when
+  they have multiple entries, and map the winning `tokenId` → player via the match's
   registrations. Resolution only happens once the match has reached `submission`/
   finished state (reuse the viewer's tournament-state derivation).
 - **No-show / walkover:** if only one competitor submits, they advance

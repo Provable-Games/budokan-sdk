@@ -644,6 +644,7 @@ async function registerRoundOneAllowlists(
     const { call, entries } = buildRegisterAllowlistTreeCall({
       chain,
       addresses,
+      entriesPerAddress: state.attemptsPerPlayer ?? 1,
       ...(apiUrl ? { apiUrl } : {}),
     });
     const tx = await executor.execute([call]);

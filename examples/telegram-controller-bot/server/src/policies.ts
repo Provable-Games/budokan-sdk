@@ -89,6 +89,7 @@ export function buildSessionPolicies(
       name: "Budokan Bracket",
       methods: [
         { entrypoint: "create_bracket", description: "Create an on-chain bracket" },
+        { entrypoint: "create_bracket_with_attempts", description: "Create an on-chain bracket with multiple attempts" },
         { entrypoint: "register", description: "Register for a bracket (escrows your entry fee)" },
       ],
     };

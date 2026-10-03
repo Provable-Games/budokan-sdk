@@ -68,6 +68,7 @@ export interface CreateOnchainParams {
   leaderboardAscending: boolean;
   gameMustBeOver: boolean;
   settingsId: number;
+  attemptsPerPlayer?: number;
   /** 0 = uncapped, else a power of two >= 2. */
   size: number;
   /** Per-match game duration + submission window, seconds. */
@@ -120,6 +121,7 @@ export async function createOnchainBracket(
     game: p.gameAddress,
     size: p.size,
     settingsId: p.settingsId,
+    attemptsPerPlayer: p.attemptsPerPlayer,
     entryFee,
     feeToken,
     registrationDeadline,

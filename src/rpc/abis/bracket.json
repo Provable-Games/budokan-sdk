@@ -1,0 +1,680 @@
+[
+  {
+    "type": "impl",
+    "name": "UpgradeableImpl",
+    "interface_name": "openzeppelin_interfaces::upgrades::IUpgradeable"
+  },
+  {
+    "type": "interface",
+    "name": "openzeppelin_interfaces::upgrades::IUpgradeable",
+    "items": [
+      {
+        "type": "function",
+        "name": "upgrade",
+        "inputs": [
+          {
+            "name": "new_class_hash",
+            "type": "core::starknet::class_hash::ClassHash"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "BracketImpl",
+    "interface_name": "budokan_bracket::IBracket"
+  },
+  {
+    "type": "struct",
+    "name": "core::integer::u256",
+    "members": [
+      {
+        "name": "low",
+        "type": "core::integer::u128"
+      },
+      {
+        "name": "high",
+        "type": "core::integer::u128"
+      }
+    ]
+  },
+  {
+    "type": "enum",
+    "name": "core::bool",
+    "variants": [
+      {
+        "name": "False",
+        "type": "()"
+      },
+      {
+        "name": "True",
+        "type": "()"
+      }
+    ]
+  },
+  {
+    "type": "struct",
+    "name": "budokan_bracket::BracketConfig",
+    "members": [
+      {
+        "name": "creator",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "game",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "size",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "settings_id",
+        "type": "core::integer::u32"
+      },
+      {
+        "name": "entry_fee",
+        "type": "core::integer::u256"
+      },
+      {
+        "name": "fee_token",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "registration_deadline",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "game_duration",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "submission_duration",
+        "type": "core::integer::u64"
+      },
+      {
+        "name": "leaderboard_ascending",
+        "type": "core::bool"
+      },
+      {
+        "name": "game_must_be_over",
+        "type": "core::bool"
+      },
+      {
+        "name": "prize_distribution_count",
+        "type": "core::integer::u8"
+      },
+      {
+        "name": "status",
+        "type": "core::integer::u8"
+      }
+    ]
+  },
+  {
+    "type": "interface",
+    "name": "budokan_bracket::IBracket",
+    "items": [
+      {
+        "type": "function",
+        "name": "create_bracket",
+        "inputs": [
+          {
+            "name": "config",
+            "type": "budokan_bracket::BracketConfig"
+          },
+          {
+            "name": "prize_tiers",
+            "type": "core::array::Array::<core::integer::u16>"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "create_bracket_with_attempts",
+        "inputs": [
+          {
+            "name": "config",
+            "type": "budokan_bracket::BracketConfig"
+          },
+          {
+            "name": "prize_tiers",
+            "type": "core::array::Array::<core::integer::u16>"
+          },
+          {
+            "name": "attempts_per_player",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "attempts_per_player",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "register",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "recipient",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "close_registration",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "fulfill_assignment",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "build_matches",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "max",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "refund_overflow",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "get_config",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "budokan_bracket::BracketConfig"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "deployment",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "(core::starknet::contract_address::ContractAddress, core::starknet::contract_address::ContractAddress, core::starknet::contract_address::ContractAddress, core::starknet::contract_address::ContractAddress)"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "registrant_count",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "match_tournament",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "match_index",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "seat",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "seat_index",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "matches_built",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "field",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "overflow_count",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "OwnableImpl",
+    "interface_name": "openzeppelin_interfaces::access::ownable::IOwnable"
+  },
+  {
+    "type": "interface",
+    "name": "openzeppelin_interfaces::access::ownable::IOwnable",
+    "items": [
+      {
+        "type": "function",
+        "name": "owner",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "transfer_ownership",
+        "inputs": [
+          {
+            "name": "new_owner",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "renounce_ownership",
+        "inputs": [],
+        "outputs": [],
+        "state_mutability": "external"
+      }
+    ]
+  },
+  {
+    "type": "impl",
+    "name": "OwnableCamelOnlyImpl",
+    "interface_name": "openzeppelin_interfaces::access::ownable::IOwnableCamelOnly"
+  },
+  {
+    "type": "interface",
+    "name": "openzeppelin_interfaces::access::ownable::IOwnableCamelOnly",
+    "items": [
+      {
+        "type": "function",
+        "name": "transferOwnership",
+        "inputs": [
+          {
+            "name": "newOwner",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "renounceOwnership",
+        "inputs": [],
+        "outputs": [],
+        "state_mutability": "external"
+      }
+    ]
+  },
+  {
+    "type": "constructor",
+    "name": "constructor",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "budokan",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "vrf",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "tournament_validator",
+        "type": "core::starknet::contract_address::ContractAddress"
+      },
+      {
+        "name": "merkle_validator",
+        "type": "core::starknet::contract_address::ContractAddress"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::BracketCreated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "creator",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::Registered",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "player",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "index",
+        "type": "core::integer::u32",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::RegistrationClosed",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::BracketAssigned",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "size",
+        "type": "core::integer::u32",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::Refunded",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "player",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferred",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "previous_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "new_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferStarted",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "previous_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      },
+      {
+        "name": "new_owner",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "key"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_access::ownable::ownable::OwnableComponent::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "OwnershipTransferred",
+        "type": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferred",
+        "kind": "nested"
+      },
+      {
+        "name": "OwnershipTransferStarted",
+        "type": "openzeppelin_access::ownable::ownable::OwnableComponent::OwnershipTransferStarted",
+        "kind": "nested"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_upgrades::upgradeable::UpgradeableComponent::Upgraded",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "class_hash",
+        "type": "core::starknet::class_hash::ClassHash",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "openzeppelin_upgrades::upgradeable::UpgradeableComponent::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "Upgraded",
+        "type": "openzeppelin_upgrades::upgradeable::UpgradeableComponent::Upgraded",
+        "kind": "nested"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::Event",
+    "kind": "enum",
+    "variants": [
+      {
+        "name": "BracketCreated",
+        "type": "budokan_bracket::Bracket::BracketCreated",
+        "kind": "nested"
+      },
+      {
+        "name": "Registered",
+        "type": "budokan_bracket::Bracket::Registered",
+        "kind": "nested"
+      },
+      {
+        "name": "RegistrationClosed",
+        "type": "budokan_bracket::Bracket::RegistrationClosed",
+        "kind": "nested"
+      },
+      {
+        "name": "BracketAssigned",
+        "type": "budokan_bracket::Bracket::BracketAssigned",
+        "kind": "nested"
+      },
+      {
+        "name": "Refunded",
+        "type": "budokan_bracket::Bracket::Refunded",
+        "kind": "nested"
+      },
+      {
+        "name": "OwnableEvent",
+        "type": "openzeppelin_access::ownable::ownable::OwnableComponent::Event",
+        "kind": "flat"
+      },
+      {
+        "name": "UpgradeableEvent",
+        "type": "openzeppelin_upgrades::upgradeable::UpgradeableComponent::Event",
+        "kind": "flat"
+      }
+    ]
+  }
+]

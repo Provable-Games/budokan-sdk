@@ -340,3 +340,77 @@ completion signal. Refetch after indexing to observe a changed phase. Older
 API/viewer responses retain the schedule-based fallback. The pure
 `tournamentPhase` helper computes scheduled time only. No contract deployment
 or SDK publication is included.
+
+
+## Multiple attempts in SDK brackets
+
+Set `attemptsPerPlayer` on `createBracket` or `createRegisteringBracket` to give
+both competitors the same allowance in every round. It defaults to `1`, including
+when restoring an older saved bracket without the field. This is a best-score
+format: the entry at leaderboard position **1** qualifies its owner, irrespective
+of how many other entries that player has. Scores are not added together.
+
+```ts
+import {
+  createBracket, bracketRoundOneAllowlistCall, attachRoundOneTree,
+  bracketEntryCalls,
+} from "@provable-games/budokan-sdk";
+
+const state = createBracket({ ...bracketOptions, attemptsPerPlayer: 2 });
+const match = state.matches.find((m) => m.round === 1)!;
+const tree = bracketRoundOneAllowlistCall(state, match.id);
+// Sign tree.call, parse its treeId, and store tree.entries via storeAllowlistTree.
+// Each player's immutable leaf count is 2, matching the tournament entry limit.
+attachRoundOneTree(state, match.id, treeId);
+// Repeat for each first-round match, then create/attach tournaments as usual.
+
+// After the match tournament exists, fetch this player's allowlist proof.
+const calls = bracketEntryCalls(state, match.id, playerAddress, proof, 2);
+// One enter_tournament_for_recipients call mints both attempts safely.
+// Omit the last argument to mint one attempt at a time.
+```
+
+Values must be integers from 1 through `MAX_ALLOWLIST_ENTRY_COUNT` (2,147,483,647).
+A single mint batch is limited to 2,048 entries. The pure entry builder does not
+read remaining allowance; check `entries_left` before signing. Every attempt is
+a separate game entry and incurs any applicable game-entry costs.
+
+For multiple attempts, the builder requires `gated: true` and attached first-round
+allowlist trees. Use the helper above: attaching an existing tree with smaller
+leaf counts cannot increase those immutable allowances. Both upfront and
+incremental match creation retain the quota and top-one qualifier in later rounds.
+One qualifying winning token grants the configured number of next-round attempts.
+
+Both SDK creation paths support attempt quotas; the on-chain path requires the
+updated bracket deployment described below. Bots and clients must opt in and
+handle remaining attempts; an SDK update does not change existing tournaments. Late submissions
+can still change first place after finalization; this option does not lock a winner.
+
+
+### On-chain random-draw brackets with multiple attempts
+
+`buildCreateBracketCall(address, { ...config, attemptsPerPlayer: 2 })` uses
+`create_bracket_with_attempts` on the updated bracket contract. Omitting the
+option (or setting 1) retains the original `create_bracket` call. Existing
+brackets retain one attempt; quotas cannot change after creation. The stored
+`BracketConfig` ABI is unchanged; read `attempts_per_player(id)` for the quota.
+
+Register players with `buildBracketRegisterCalls`. Once full or past the
+registration deadline, submit `buildBracketSeedCalls(bracket, vrf, id)` through
+Cartridge's VRF-capable session/paymaster. The random request and consumption
+must stay in that same transaction. For status ASSIGNING, pass `false` as the
+fourth argument to omit closing registration again. Then call
+`buildBracketMatchesCall(bracket, id, 2)` repeatedly until RUNNING. The contract
+stores the draw and creates the gated tournaments; a bot or player submits
+entry transactions separately.
+
+Each first-round Merkle leaf uses the configured attempt count. Later rounds
+still qualify only the first-place game token, granting its owner the configured
+quota. Multi-attempt brackets require a winner-take-all escrow prize; placement
+prizes rank game tokens rather than distinct players. The contract supports at
+most 256 registrants. `deployment()` reports Budokan, VRF, tournament validator
+and Merkle validator in that order; verify these against the selected stack.
+
+The current bot caps automatic minting at 16 attempts per player per round and
+reads remaining allowances before batching. Budokan's existing late-score
+semantics still apply: the bracket does not freeze a leaderboard snapshot.
