@@ -8,6 +8,7 @@ import {
   attachMatchTournament,
   attachRoundOneTree,
   bracketEntryCalls,
+  bracketFeePrizeCalls,
   bracketRoundOneAllowlistCall,
   createBracket,
   createRegisteringBracket,
@@ -248,4 +249,16 @@ describe("bracket attempts per player", () => {
       "uncreated",
     );
   });
+});
+
+
+test("multi-attempt fee escrow rejects runner-up and elimination tiers before building calls", () => {
+  const state = createBracket(options(2));
+  for (const [i, match] of state.matches.entries()) attachMatchTournament(state, match.id, String(100 + i));
+  const split = { tokenAddress: "0xf", fee: "1000", tiersBps: [7000, 3000] };
+  expect(() => bracketFeePrizeCalls(state, split)).toThrow("winner-take-all");
+  expect(() => bracketFeePrizeCalls(state, { ...split, tiersBps: [9000, 0, 1000] })).toThrow("winner-take-all");
+  expect(bracketFeePrizeCalls(state, { ...split, tiersBps: [10000] })).toHaveLength(2);
+  state.attemptsPerPlayer = 1;
+  expect(bracketFeePrizeCalls(state, split).length).toBeGreaterThan(2);
 });

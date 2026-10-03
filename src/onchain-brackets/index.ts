@@ -188,8 +188,8 @@ export function buildBracketSeedCalls(
 ): Call[] {
   const id = BigInt(bracketId).toString();
   return [
-    ...(needsClose ? [{ contractAddress: bracketAddress, entrypoint: "close_registration", calldata: [id] }] : []),
     { contractAddress: vrfAddress, entrypoint: "request_random", calldata: [bracketAddress, "1", id] },
+    ...(needsClose ? [{ contractAddress: bracketAddress, entrypoint: "close_registration", calldata: [id] }] : []),
     { contractAddress: bracketAddress, entrypoint: "fulfill_assignment", calldata: [id] },
   ];
 }

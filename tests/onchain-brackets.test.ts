@@ -37,10 +37,10 @@ describe("on-chain VRF bracket builder", () => {
   });
   test("VRF request and consumption share the bracket address and salt", () => {
     const calls = buildBracketSeedCalls("0xabc", "0xdef", 42n);
-    expect(calls.map(c => c.entrypoint)).toEqual(["close_registration", "request_random", "fulfill_assignment"]);
-    expect(calls[1]!.calldata).toEqual(["0xabc", "1", "42"]);
+    expect(calls.map(c => c.entrypoint)).toEqual(["request_random", "close_registration", "fulfill_assignment"]);
+    expect(calls[0]!.calldata).toEqual(["0xabc", "1", "42"]);
     expect(calls[2]!.contractAddress).toBe("0xabc");
-    expect(buildBracketSeedCalls("0xabc", "0xdef", 42n, false)).toEqual(calls.slice(1));
+    expect(buildBracketSeedCalls("0xabc", "0xdef", 42n, false)).toEqual([calls[0], calls[2]]);
   });
   test("bounded resumable match creation", () => {
     expect(buildBracketMatchesCall("0xabc", 42, 2).calldata).toEqual(["42", "2"]);

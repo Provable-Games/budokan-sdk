@@ -850,6 +850,9 @@ export function bracketFeePrizeCalls(
   state: BracketState,
   split: BracketFeeSplit,
 ): Call[] {
+  if (validateAttempts(state) > 1 && split.tiersBps.slice(1).some(bps => bps > 0)) {
+    throw new Error("Multiple attempts require winner-take-all prizes; placements rank game tokens, not unique players");
+  }
   const rounds = bracketRounds(state);
   const fee = BigInt(split.fee);
   const prizeCalls: Call[] = [];
