@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CallData } from "starknet";
 import abi from "../src/rpc/abis/bracket.json";
-import { buildCreateBracketCall, buildBracketSeedCalls, buildBracketMatchesCall, type CreateBracketConfig } from "../src/onchain-brackets/index.ts";
+import { buildCreateBracketCall, buildBracketSeedCalls, buildBracketCloseCall, buildBracketAssignmentCall, buildBracketMatchesCall, type CreateBracketConfig } from "../src/onchain-brackets/index.ts";
 const config: CreateBracketConfig = {
   game: "0x123", size: 4, settingsId: 0, entryFee: 0n, feeToken: "0x0",
   registrationDeadline: 2000000000, gameDuration: 3600, submissionDuration: 3600,
@@ -60,4 +60,9 @@ test.each([1, 3, 2048, -1, 2.5])("rejects unsupported field %s", size => {
 });
 test.each([0, 59, 86401, NaN, 60.5])("rejects invalid setup window %s", setupWindow => {
   expect(() => buildCreateBracketCall("0xabc", { ...config, setupWindow })).toThrow("setupWindow");
+});
+
+test("separates block-hash commitment and assignment into raw-account calls", () => {
+  expect(buildBracketCloseCall("0xabc", 42n)).toEqual({ contractAddress: "0xabc", entrypoint: "close_registration", calldata: ["42"] });
+  expect(buildBracketAssignmentCall("0xabc", 42n)).toEqual({ contractAddress: "0xabc", entrypoint: "fulfill_assignment", calldata: ["42"] });
 });

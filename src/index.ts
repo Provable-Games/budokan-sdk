@@ -340,6 +340,8 @@ export {
   BRACKET_STATUS,
   buildCreateBracketCall,
   buildBracketSeedCalls,
+  buildBracketCloseCall,
+  buildBracketAssignmentCall,
   buildBracketMatchesCall,
   buildBracketRegisterCall,
   buildBracketRegisterCalls,

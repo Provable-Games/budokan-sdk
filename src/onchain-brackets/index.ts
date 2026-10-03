@@ -4,12 +4,12 @@
  * Unlike `src/brackets/` — which orchestrates a bracket *off-chain* by emitting
  * `create_tournament` calls directly — this module is a thin client for the
  * on-chain bracket contract, which owns the trustless bits: entry-fee escrow,
- * VRF-driven seeding, the gated match tree, the final prize, and overflow
+ * committed block-hash seeding, the gated match tree, the final prize, and overflow
  * refunds. Use it for **open / uncapped** brackets (register until a deadline,
  * then the largest power-of-two that filled is bracketed and the rest refunded).
  *
  * Flow: `create_bracket` (organizer) → players `register` (escrow their fee) →
- * a permissionless init bot closes registration, consumes the VRF seed, and
+ * a permissionless init bot closes registration, waits for the committed block, and
  * builds the tree to RUNNING (auto-entering round-1 players). This module covers
  * the two user-facing writes (create + register); the init bot drives the rest.
  */
@@ -192,7 +192,8 @@ export function parseBracketIdFromReceipt(
   return undefined;
 }
 
-/** Close registration (if needed), request Cartridge VRF, and consume it in
+/** @deprecated Legacy VRF deployments only. New block-hash brackets must use the separate
+ * close and assignment calls below. Close registration, request VRF, and consume it in
  * one transaction. Submit through a Cartridge session/paymaster supporting VRF;
  * a plain account cannot fulfill the randomness request by itself. */
 export function buildBracketSeedCalls(
@@ -215,4 +216,15 @@ export function buildBracketMatchesCall(
     throw new Error("maxMatches must be an integer from 1 to 255");
   }
   return { contractAddress: bracketAddress, entrypoint: "build_matches", calldata: CallData.compile([bracketId, maxMatches]) };
+}
+
+/** Freeze registrations and commit the next block as entropy. */
+export function buildBracketCloseCall(bracketAddress: string, bracketId: number | bigint): Call {
+  return { contractAddress: bracketAddress, entrypoint: "close_registration", calldata: CallData.compile([bracketId]) };
+}
+
+/** Draw from the committed block after assignment_ready returns true.
+ * This must be a later transaction than close_registration. Any account works. */
+export function buildBracketAssignmentCall(bracketAddress: string, bracketId: number | bigint): Call {
+  return { contractAddress: bracketAddress, entrypoint: "fulfill_assignment", calldata: CallData.compile([bracketId]) };
 }

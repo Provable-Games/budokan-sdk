@@ -2,7 +2,7 @@
 // contract instead of the off-chain tree (see commands/bracket.ts for the closed
 // path). Two user-facing writes: the organizer `create_bracket`s, then players
 // `register` (escrowing their fee). Everything after registration closes —
-// VRF seeding, building the gated tree, auto-entering round-1 players, and
+// Seeding, building the gated tree, auto-entering round-1 players, and
 // advancement — is driven by the budokan-bots init + advance engines, so this
 // bot's job ends at "created + collecting registrations".
 

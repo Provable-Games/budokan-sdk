@@ -295,6 +295,61 @@
       },
       {
         "type": "function",
+        "name": "commit_assignment",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "entropy_block",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "assignment_ready",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "randomness_source",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::felt252"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "fulfill_assignment",
         "inputs": [
           {
@@ -616,6 +671,28 @@
   },
   {
     "type": "event",
+    "name": "budokan_bracket::Bracket::AssignmentCommitted",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "entropy_block",
+        "type": "core::integer::u64",
+        "kind": "data"
+      },
+      {
+        "name": "ready_block",
+        "type": "core::integer::u64",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
     "name": "budokan_bracket::Bracket::BracketAssigned",
     "kind": "struct",
     "members": [
@@ -753,6 +830,11 @@
       {
         "name": "RegistrationClosed",
         "type": "budokan_bracket::Bracket::RegistrationClosed",
+        "kind": "nested"
+      },
+      {
+        "name": "AssignmentCommitted",
+        "type": "budokan_bracket::Bracket::AssignmentCommitted",
         "kind": "nested"
       },
       {
