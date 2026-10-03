@@ -301,6 +301,7 @@ export {
   advanceBracket,
   attachMatchTournament,
   attachRoundOneTree,
+  bracketRoundOneAllowlistCall,
   pendingMatchCreateCalls,
   roundMatchCreateCalls,
   bracketFeeders,

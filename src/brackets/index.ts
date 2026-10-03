@@ -2,7 +2,7 @@
  * 1v1 single-elimination brackets, orchestrated off-chain over ordinary
  * Budokan leaderboard tournaments. See ./DESIGN.md for the full rationale.
  *
- *   One match = one 2-player leaderboard tournament.
+ *   One match = one 2-player leaderboard tournament, with configurable attempts.
  *
  * The contract has no notion of brackets/rounds/elimination — this module
  * adds them by (a) seeding players into a tree, (b) emitting the calldata
@@ -15,6 +15,7 @@ import {
   buildAddPrizeCall,
   buildCreateTournamentCall,
   buildEnterTournamentCall,
+  buildEnterTournamentForRecipientsCall,
   buildErc20ApproveCall,
   type Call,
   type CreateTournamentArgs,
@@ -26,6 +27,11 @@ import {
   buildTournamentValidatorConfig,
   extensionAddressFor,
 } from "../extensions/index.js";
+import {
+  buildRegisterAllowlistTreeCall,
+  MAX_ALLOWLIST_ENTRY_COUNT,
+  type RegisterAllowlistTreeResult,
+} from "../extensions/merkle.js";
 import type { WhitelistChain } from "../games/whitelist.js";
 import { normalizeAddress } from "../utils/address.js";
 
@@ -107,6 +113,8 @@ export interface BracketState {
    * a bracket escalate difficulty as rounds progress.
    */
   roundSettingsIds?: number[];
+  /** Attempts allowed per player in each round. Missing in older saved states means 1. */
+  attemptsPerPlayer?: number;
   /**
    * Optional organizer blurb used as every match tournament's on-chain
    * description (grouping reads the gating, not the text, so this is free-form).
@@ -123,7 +131,7 @@ export interface BracketState {
   /**
    * Optional per-match round-1 merkle allowlist, keyed by match id → on-chain
    * `treeId`. When a round-1 match has a `treeId`, it's created with a merkle
-   * `entry_requirement` (allowlist gating, `entryLimit` 1) so only the
+   * `entry_requirement` (allowlist gating, `entryLimit = attemptsPerPlayer`) so only the
    * allowlisted addresses can enter that match — closing the round-1 client
    * bypass. Populate after registering the trees (see `attachRoundOneTree`).
    */
@@ -157,6 +165,8 @@ export interface CreateBracketOptions {
   namePrefix?: string;
   /** Optional per-round settings (0-indexed by round-1); falls back to settingsId. */
   roundSettingsIds?: number[];
+  /** Positive per-player attempt allowance in every round (default 1). Requires gating when >1. */
+  attemptsPerPlayer?: number;
   /** Optional organizer blurb used as each match's on-chain description. */
   description?: string;
   /** Competitors. Order = seed order unless `seeding: "random"`. */
@@ -204,6 +214,18 @@ export type MatchReader = (tournamentId: string) => Promise<MatchResult>;
 // ---------------------------------------------------------------------------
 // Seeding helpers
 // ---------------------------------------------------------------------------
+
+/** Merkle counts are positive signed-31-bit values; zero would mean an unlimited quota elsewhere. */
+function validateAttempts(options: { attemptsPerPlayer?: number; gated?: boolean }): number {
+  const attempts = options.attemptsPerPlayer ?? 1;
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > MAX_ALLOWLIST_ENTRY_COUNT) {
+    throw new Error(`attemptsPerPlayer must be an integer from 1 to ${MAX_ALLOWLIST_ENTRY_COUNT}`);
+  }
+  if (attempts > 1 && options.gated === false) {
+    throw new Error("Multiple attempts require a gated bracket to enforce the player allowance");
+  }
+  return attempts;
+}
 
 function nextPowerOfTwo(n: number): number {
   if (n <= 1) return 1;
@@ -260,6 +282,7 @@ const matchId = (bracketId: string, round: number, index: number) =>
  * resolve immediately and their winners are propagated into round 2.
  */
 export function createBracket(opts: CreateBracketOptions): BracketState {
+  const attemptsPerPlayer = validateAttempts(opts);
   if (opts.players.length < 2) {
     throw new Error("A bracket needs at least 2 players");
   }
@@ -331,6 +354,7 @@ export function createBracket(opts: CreateBracketOptions): BracketState {
     scheduleTemplate: opts.scheduleTemplate,
     leaderboard: opts.leaderboard,
     namePrefix: opts.namePrefix ?? "Match",
+    attemptsPerPlayer,
     ...(opts.roundSettingsIds ? { roundSettingsIds: opts.roundSettingsIds } : {}),
     ...(opts.description ? { description: opts.description } : {}),
     gated,
@@ -373,6 +397,7 @@ export interface CreateRegisteringBracketOptions
 export function createRegisteringBracket(
   opts: CreateRegisteringBracketOptions,
 ): BracketState {
+  const attemptsPerPlayer = validateAttempts(opts);
   if (opts.size < 2 || opts.size !== nextPowerOfTwo(opts.size)) {
     throw new Error(
       `Registration capacity must be a power of two ≥ 2 (got ${opts.size}; use 2, 4, 8, 16, …).`,
@@ -388,6 +413,7 @@ export function createRegisteringBracket(
     scheduleTemplate: opts.scheduleTemplate,
     leaderboard: opts.leaderboard,
     namePrefix: opts.namePrefix ?? "Match",
+    attemptsPerPlayer,
     ...(opts.roundSettingsIds ? { roundSettingsIds: opts.roundSettingsIds } : {}),
     ...(opts.description ? { description: opts.description } : {}),
     gated: opts.gated ?? true,
@@ -498,6 +524,7 @@ export function assignRegistrants(
     scheduleTemplate: state.scheduleTemplate,
     leaderboard: state.leaderboard,
     namePrefix: state.namePrefix,
+    attemptsPerPlayer: validateAttempts(state),
     ...(state.roundSettingsIds ? { roundSettingsIds: state.roundSettingsIds } : {}),
     ...(state.description ? { description: state.description } : {}),
     players: registrants.map((r) => ({ address: r.address, ...(r.name ? { name: r.name } : {}) })),
@@ -582,9 +609,17 @@ function roundOneMerkleRequirement(
   match: BracketMatch,
 ): EntryRequirementArgs | undefined {
   const treeId = match.round === 1 ? state.roundOneTreeIds?.[match.id] : undefined;
-  if (treeId === undefined) return undefined;
+  const attempts = validateAttempts(state);
+  if (treeId === undefined) {
+    if (match.round === 1 && attempts > 1) {
+      throw new Error(
+        `Attach a round-one allowlist with ${attempts} attempts per player before creating ${match.id}`,
+      );
+    }
+    return undefined;
+  }
   return {
-    entryLimit: 1,
+    entryLimit: attempts,
     type: {
       kind: "extension",
       address: extensionAddressFor(state.chain, "merkle"),
@@ -593,8 +628,40 @@ function roundOneMerkleRequirement(
   };
 }
 
+function matchEntryRequirement(
+  state: BracketState,
+  match: BracketMatch,
+): EntryRequirementArgs | undefined {
+  // Both creation paths enforce the same attempts allowance and top-one gate;
+  // only their schedule calculation differs.
+  let entryRequirement: EntryRequirementArgs | undefined = roundOneMerkleRequirement(state, match);
+  if (!entryRequirement && state.gated && match.round > 1) {
+    const feeders = bracketFeeders(state, match.id);
+    const feederIds = feeders.map((f) => f.tournamentId).filter((id): id is string => !!id);
+    if (feeders.length === 0 || feederIds.length !== feeders.length) {
+      throw new Error(
+        `Cannot gate ${match.id}: its feeder match tournaments aren't created yet — deploy round ${match.round - 1} first.`,
+      );
+    }
+    entryRequirement = {
+      entryLimit: validateAttempts(state),
+      type: {
+        kind: "extension",
+        address: extensionAddressFor(state.chain, "tournament"),
+        config: buildTournamentValidatorConfig({
+          requirement: "won",
+          tournamentIds: feederIds,
+          topPositions: 1,
+          qualifyingMode: 0, // AtLeastOne — the winner of either feeder qualifies.
+        }),
+      },
+    };
+  }
+  return entryRequirement;
+}
+
 function matchCreateCall(state: BracketState, match: BracketMatch): Call {
-  const entryRequirement = roundOneMerkleRequirement(state, match);
+  const entryRequirement = matchEntryRequirement(state, match);
   const args: CreateTournamentArgs = {
     creatorRewardsAddress: state.creatorRewardsAddress,
     name: `${state.namePrefix} R${match.round}-${match.indexInRound + 1}`.slice(0, 31),
@@ -630,6 +697,31 @@ export function attachMatchTournament(
   m.tournamentId = tournamentId;
   m.status = "live";
   return state;
+}
+
+
+/** Build a round-one allowlist with the bracket's attempt allowance in both player leaves.
+ * Sign the call, store its entries with storeAllowlistTree, then attachRoundOneTree.
+ */
+export function bracketRoundOneAllowlistCall(
+  state: BracketState,
+  matchId: string,
+  options: { apiUrl?: string } = {},
+): RegisterAllowlistTreeResult {
+  const match = findMatch(state, matchId);
+  if (!match) throw new Error(`Unknown match: ${matchId}`);
+  if (match.round !== 1 || match.tournamentId) {
+    throw new Error("Allowlist requires an uncreated round-one match");
+  }
+  const addresses = [match.playerA, match.playerB]
+    .filter((p): p is BracketPlayer => !!p)
+    .map(p => p.address);
+  if (addresses.length !== 2 || new Set(addresses.map(normalizeAddress)).size !== 2) {
+    throw new Error("A bracket allowlist requires two distinct assigned players");
+  }
+  return buildRegisterAllowlistTreeCall({
+    chain: state.chain, addresses, entriesPerAddress: validateAttempts(state), ...options,
+  });
 }
 
 /**
@@ -692,31 +784,7 @@ function roundSchedule(t: MatchScheduleTemplate, round: number): MatchScheduleTe
 
 /** Build a match's create_tournament Call with staggered schedule + gating. */
 function gatedMatchCreateCall(state: BracketState, match: BracketMatch): Call {
-  // Round-1 allowlist gating (shared with matchCreateCall): only the match's
-  // assigned players can enter, each once. Independent of round>1 feeder gating.
-  let entryRequirement: EntryRequirementArgs | undefined = roundOneMerkleRequirement(state, match);
-  if (!entryRequirement && state.gated && match.round > 1) {
-    const feeders = bracketFeeders(state, match.id);
-    const feederIds = feeders.map((f) => f.tournamentId).filter((id): id is string => !!id);
-    if (feeders.length === 0 || feederIds.length !== feeders.length) {
-      throw new Error(
-        `Cannot gate ${match.id}: its feeder match tournaments aren't created yet — deploy round ${match.round - 1} first.`,
-      );
-    }
-    entryRequirement = {
-      entryLimit: 1,
-      type: {
-        kind: "extension",
-        address: extensionAddressFor(state.chain, "tournament"),
-        config: buildTournamentValidatorConfig({
-          requirement: "won",
-          tournamentIds: feederIds,
-          topPositions: 1,
-          qualifyingMode: 0, // AtLeastOne — the winner of either feeder qualifies.
-        }),
-      },
-    };
-  }
+  const entryRequirement = matchEntryRequirement(state, match);
   const args: CreateTournamentArgs = {
     creatorRewardsAddress: state.creatorRewardsAddress,
     name: `${state.namePrefix} R${match.round}-${match.indexInRound + 1}`.slice(0, 31),
@@ -867,6 +935,8 @@ export function bracketFinalPrizeCalls(state: BracketState): Call[] {
  * `proof` — the allowlist proof span from `getAllowlistProof` — so it's
  * attached as the `QualificationProof::Extension` the merkle validator expects.
  * Gated rounds >1 build their proof internally from the feeder result.
+ * `attempts` defaults to 1. Larger counts use the batch mint entrypoint; this
+ * does not read remaining allowance, which callers must check before signing.
  * Execute one player entry per transaction, or combine recipients with
  * `buildEnterTournamentForRecipientsCall`: single mint calls restart nonce zero.
  */
@@ -875,7 +945,12 @@ export function bracketEntryCalls(
   matchIdToEnter: string,
   playerAddress: string,
   proof?: string[],
+  attempts = 1,
 ): Call[] {
+  const allowance = validateAttempts(state);
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > Math.min(allowance, 2048)) {
+    throw new Error("Requested attempts must be positive and fit the bracket allowance and 2048-entry batch limit");
+  }
   const m = findMatch(state, matchIdToEnter);
   if (!m) throw new Error(`Unknown match: ${matchIdToEnter}`);
   if (!m.tournamentId) {
@@ -916,7 +991,7 @@ export function bracketEntryCalls(
     qualification = { kind: "extension", data: proof };
   } else if (state.gated && m.round > 1) {
     const feeder = bracketFeeders(state, m.id).find(
-      (f) => f.winner?.address === player.address,
+      (f) => f.winner && normalizeAddress(f.winner.address) === normalizeAddress(player.address),
     );
     if (!feeder?.tournamentId || !feeder.winnerTokenId) {
       throw new Error(
@@ -931,13 +1006,18 @@ export function bracketEntryCalls(
     };
   }
 
+  const recipient = {
+    playerAddress: player.address,
+    ...(qualifier ? { qualifier } : {}),
+    ...(qualification ? { qualification } : {}),
+  };
   return [
-    buildEnterTournamentCall(state.budokanAddress, {
-      tournamentId: m.tournamentId,
-      playerAddress: player.address,
-      ...(qualifier ? { qualifier } : {}),
-      ...(qualification ? { qualification } : {}),
-    }),
+    attempts === 1
+      ? buildEnterTournamentCall(state.budokanAddress, { tournamentId: m.tournamentId, ...recipient })
+      : buildEnterTournamentForRecipientsCall(state.budokanAddress, {
+          tournamentId: m.tournamentId,
+          recipients: Array.from({ length: attempts }, () => recipient),
+        }),
   ];
 }
 
@@ -960,9 +1040,14 @@ function resolveWinner(
 ): { winner: BracketPlayer; status: "resolved" | "walkover"; winnerTokenId?: string } {
   const a = match.playerA!;
   const b = match.playerB!;
-  const byAddr = new Map(result.ranking.map((r) => [r.address, r]));
-  const rowA = byAddr.get(a.address);
-  const rowB = byAddr.get(b.address);
+  const byAddr = new Map<string, MatchResult["ranking"][number]>();
+  for (const row of result.ranking) {
+    const address = normalizeAddress(row.address);
+    const best = byAddr.get(address);
+    if (!best || row.position < best.position) byAddr.set(address, row);
+  }
+  const rowA = byAddr.get(normalizeAddress(a.address));
+  const rowB = byAddr.get(normalizeAddress(b.address));
   const posA = rowA?.position;
   const posB = rowB?.position;
 
