@@ -4,14 +4,14 @@
  * Unlike `src/brackets/` — which orchestrates a bracket *off-chain* by emitting
  * `create_tournament` calls directly — this module is a thin client for the
  * on-chain bracket contract, which owns the trustless bits: entry-fee escrow,
- * VRF-driven seeding, the gated match tree, the final prize, and overflow
+ * committed block-hash seeding, the gated match tree, the final prize, and overflow
  * refunds. Use it for **open / uncapped** brackets (register until a deadline,
  * then the largest power-of-two that filled is bracketed and the rest refunded).
  *
  * Flow: `create_bracket` (organizer) → players `register` (escrow their fee) →
- * a permissionless init bot closes registration, consumes the VRF seed, and
- * builds the tree to RUNNING (auto-entering round-1 players). This module covers
- * the two user-facing writes (create + register); the init bot drives the rest.
+ * a permissionless init bot closes registration, waits for the committed block, and
+ * draws and builds the tree to RUNNING (auto-entering round-1 players). This
+ * module exposes creation, registration, commitment, draw and build calls.
  */
 import { CallData, hash, uint256, type Call } from "starknet";
 import { MAX_ALLOWLIST_ENTRY_COUNT } from "../extensions/merkle.js";
@@ -23,6 +23,7 @@ export const BRACKET_STATUS = {
   BUILDING: 2,
   RUNNING: 3,
   COMPLETE: 4,
+  CANCELLED: 5,
 } as const;
 
 export type BracketStatus =
@@ -45,11 +46,15 @@ export interface CreateBracketConfig {
   /** Attempts per player per round; defaults to 1. Values >1 require the
    * bracket deployment with create_bracket_with_attempts support. */
   attemptsPerPlayer?: number;
+  /** Preparation time before the shared first-round start (60..86400 seconds).
+   * Requires create_bracket_with_setup. Use 3600 for large brackets. */
+  setupWindow?: number;
   /** Entry fee per player, escrowed on register (raw base units; 0 = free). */
   entryFee: bigint | string;
   /** ERC-20 the entry fee is denominated + escrowed in. */
   feeToken: string;
-  /** Registration closes at this unix time (also the round-1 start anchor). */
+  /** Registration deadline. Buffered brackets start after the later of this
+   * deadline and the first build, plus setup time; read play_start for the anchor. */
   registrationDeadline: number | bigint;
   /** Per-match game duration, seconds. */
   gameDuration: number | bigint;
@@ -76,6 +81,14 @@ export function buildCreateBracketCall(
   prizeTiers: number[] = [],
 ): Call {
   const attempts = config.attemptsPerPlayer ?? 1;
+  const setup = config.setupWindow;
+  if (setup !== undefined && (!Number.isInteger(setup) || setup < 60 || setup > 86400)) {
+    throw new Error("setupWindow must be an integer from 60 to 86400 seconds");
+  }
+  if (!Number.isInteger(config.size) || config.size < 0 || config.size > 1024 ||
+      (config.size !== 0 && (config.size < 2 || (config.size & (config.size - 1)) !== 0))) {
+    throw new Error("size must be 0 or a power of two from 2 to 1024");
+  }
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > MAX_ALLOWLIST_ENTRY_COUNT) {
     throw new Error(`attemptsPerPlayer must be an integer from 1 to ${MAX_ALLOWLIST_ENTRY_COUNT}`);
   }
@@ -102,9 +115,10 @@ export function buildCreateBracketCall(
     },
     prize_tiers: prizeTiers,
     // Keep the existing entrypoint/calldata for default single-attempt brackets.
-    ...(attempts > 1 ? { attempts_per_player: attempts } : {}),
+    ...(attempts > 1 || setup !== undefined ? { attempts_per_player: attempts } : {}),
+    ...(setup !== undefined ? { setup_window: setup } : {}),
   });
-  return { contractAddress: bracketAddress, entrypoint: attempts > 1 ? "create_bracket_with_attempts" : "create_bracket", calldata };
+  return { contractAddress: bracketAddress, entrypoint: setup !== undefined ? "create_bracket_with_setup" : attempts > 1 ? "create_bracket_with_attempts" : "create_bracket", calldata };
 }
 
 /**
@@ -179,7 +193,9 @@ export function parseBracketIdFromReceipt(
   return undefined;
 }
 
-/** Close registration (if needed), request Cartridge VRF, and consume it in
+/** @deprecated Legacy VRF deployments only. New block-hash brackets must use the separate
+ * close and assignment calls below; this multicall reverts against block-hash
+ * deployments. Close registration, request VRF, and consume it in
  * one transaction. Submit through a Cartridge session/paymaster supporting VRF;
  * a plain account cannot fulfill the randomness request by itself. */
 export function buildBracketSeedCalls(
@@ -202,4 +218,22 @@ export function buildBracketMatchesCall(
     throw new Error("maxMatches must be an integer from 1 to 255");
   }
   return { contractAddress: bracketAddress, entrypoint: "build_matches", calldata: CallData.compile([bracketId, maxMatches]) };
+}
+
+/** Freeze registrations and commit the next block as entropy. */
+export function buildBracketCloseCall(bracketAddress: string, bracketId: number | bigint): Call {
+  return { contractAddress: bracketAddress, entrypoint: "close_registration", calldata: CallData.compile([bracketId]) };
+}
+
+/** Upgrade recovery only: commit once when status is ASSIGNING and entropy_block
+ * is zero because registration closed under the old VRF class. New brackets
+ * commit in close_registration. This cannot replace an existing commitment. */
+export function buildBracketCommitCall(bracketAddress: string, bracketId: number | bigint): Call {
+  return { contractAddress: bracketAddress, entrypoint: "commit_assignment", calldata: CallData.compile([bracketId]) };
+}
+
+/** Draw from the committed block after assignment_ready returns true.
+ * This must be a later transaction than close_registration. Any account works. */
+export function buildBracketAssignmentCall(bracketAddress: string, bracketId: number | bigint): Call {
+  return { contractAddress: bracketAddress, entrypoint: "fulfill_assignment", calldata: CallData.compile([bracketId]) };
 }

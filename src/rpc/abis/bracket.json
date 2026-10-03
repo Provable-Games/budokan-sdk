@@ -163,6 +163,94 @@
       },
       {
         "type": "function",
+        "name": "create_bracket_with_setup",
+        "inputs": [
+          {
+            "name": "config",
+            "type": "budokan_bracket::BracketConfig"
+          },
+          {
+            "name": "prize_tiers",
+            "type": "core::array::Array::<core::integer::u16>"
+          },
+          {
+            "name": "attempts_per_player",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "setup_window",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "setup_window",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "play_start",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "refund_cursor",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "cancel_setup",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
         "name": "attempts_per_player",
         "inputs": [
           {
@@ -204,6 +292,61 @@
         ],
         "outputs": [],
         "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "commit_assignment",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "entropy_block",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "assignment_ready",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "randomness_source",
+        "inputs": [],
+        "outputs": [
+          {
+            "type": "core::felt252"
+          }
+        ],
+        "state_mutability": "view"
       },
       {
         "type": "function",
@@ -528,6 +671,28 @@
   },
   {
     "type": "event",
+    "name": "budokan_bracket::Bracket::AssignmentCommitted",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "entropy_block",
+        "type": "core::integer::u64",
+        "kind": "data"
+      },
+      {
+        "name": "ready_block",
+        "type": "core::integer::u64",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
     "name": "budokan_bracket::Bracket::BracketAssigned",
     "kind": "struct",
     "members": [
@@ -557,6 +722,18 @@
         "name": "player",
         "type": "core::starknet::contract_address::ContractAddress",
         "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::SetupCancelled",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
       }
     ]
   },
@@ -637,6 +814,12 @@
   },
   {
     "type": "event",
+    "name": "openzeppelin_security::reentrancyguard::ReentrancyGuardComponent::Event",
+    "kind": "enum",
+    "variants": []
+  },
+  {
+    "type": "event",
     "name": "budokan_bracket::Bracket::Event",
     "kind": "enum",
     "variants": [
@@ -656,6 +839,11 @@
         "kind": "nested"
       },
       {
+        "name": "AssignmentCommitted",
+        "type": "budokan_bracket::Bracket::AssignmentCommitted",
+        "kind": "nested"
+      },
+      {
         "name": "BracketAssigned",
         "type": "budokan_bracket::Bracket::BracketAssigned",
         "kind": "nested"
@@ -666,6 +854,11 @@
         "kind": "nested"
       },
       {
+        "name": "SetupCancelled",
+        "type": "budokan_bracket::Bracket::SetupCancelled",
+        "kind": "nested"
+      },
+      {
         "name": "OwnableEvent",
         "type": "openzeppelin_access::ownable::ownable::OwnableComponent::Event",
         "kind": "flat"
@@ -673,6 +866,11 @@
       {
         "name": "UpgradeableEvent",
         "type": "openzeppelin_upgrades::upgradeable::UpgradeableComponent::Event",
+        "kind": "flat"
+      },
+      {
+        "name": "ReentrancyGuardEvent",
+        "type": "openzeppelin_security::reentrancyguard::ReentrancyGuardComponent::Event",
         "kind": "flat"
       }
     ]
