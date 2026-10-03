@@ -23,6 +23,7 @@ export const BRACKET_STATUS = {
   BUILDING: 2,
   RUNNING: 3,
   COMPLETE: 4,
+  CANCELLED: 5,
 } as const;
 
 export type BracketStatus =
@@ -45,6 +46,9 @@ export interface CreateBracketConfig {
   /** Attempts per player per round; defaults to 1. Values >1 require the
    * bracket deployment with create_bracket_with_attempts support. */
   attemptsPerPlayer?: number;
+  /** Preparation time before the shared first-round start (60..86400 seconds).
+   * Requires create_bracket_with_setup. Use 3600 for large brackets. */
+  setupWindow?: number;
   /** Entry fee per player, escrowed on register (raw base units; 0 = free). */
   entryFee: bigint | string;
   /** ERC-20 the entry fee is denominated + escrowed in. */
@@ -76,6 +80,14 @@ export function buildCreateBracketCall(
   prizeTiers: number[] = [],
 ): Call {
   const attempts = config.attemptsPerPlayer ?? 1;
+  const setup = config.setupWindow;
+  if (setup !== undefined && (!Number.isInteger(setup) || setup < 60 || setup > 86400)) {
+    throw new Error("setupWindow must be an integer from 60 to 86400 seconds");
+  }
+  if (!Number.isInteger(config.size) || config.size < 0 || config.size > 1024 ||
+      (config.size !== 0 && (config.size < 2 || (config.size & (config.size - 1)) !== 0))) {
+    throw new Error("size must be 0 or a power of two from 2 to 1024");
+  }
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > MAX_ALLOWLIST_ENTRY_COUNT) {
     throw new Error(`attemptsPerPlayer must be an integer from 1 to ${MAX_ALLOWLIST_ENTRY_COUNT}`);
   }
@@ -102,9 +114,10 @@ export function buildCreateBracketCall(
     },
     prize_tiers: prizeTiers,
     // Keep the existing entrypoint/calldata for default single-attempt brackets.
-    ...(attempts > 1 ? { attempts_per_player: attempts } : {}),
+    ...(attempts > 1 || setup !== undefined ? { attempts_per_player: attempts } : {}),
+    ...(setup !== undefined ? { setup_window: setup } : {}),
   });
-  return { contractAddress: bracketAddress, entrypoint: attempts > 1 ? "create_bracket_with_attempts" : "create_bracket", calldata };
+  return { contractAddress: bracketAddress, entrypoint: setup !== undefined ? "create_bracket_with_setup" : attempts > 1 ? "create_bracket_with_attempts" : "create_bracket", calldata };
 }
 
 /**

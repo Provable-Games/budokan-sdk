@@ -90,6 +90,7 @@ export function buildSessionPolicies(
       methods: [
         { entrypoint: "create_bracket", description: "Create an on-chain bracket" },
         { entrypoint: "create_bracket_with_attempts", description: "Create an on-chain bracket with multiple attempts" },
+        { entrypoint: "create_bracket_with_setup", description: "Create a bracket with a preparation window" },
         { entrypoint: "register", description: "Register for a bracket (escrows your entry fee)" },
       ],
     };

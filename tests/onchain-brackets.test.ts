@@ -47,3 +47,17 @@ describe("on-chain VRF bracket builder", () => {
     expect(() => buildBracketMatchesCall("0xabc", 42, 0)).toThrow("maxMatches");
   });
 });
+
+test("1024-player setup window preserves the attempts and configuration ABI", () => {
+  const call = buildCreateBracketCall("0xabc", { ...config, size: 1024, setupWindow: 3600, attemptsPerPlayer: 2 });
+  expect(call.entrypoint).toBe("create_bracket_with_setup");
+  const [stored, tiers, attempts, setup] = decode(call);
+  expect(stored.size).toBe(1024n); expect(tiers).toEqual([]);
+  expect(attempts).toBe(2n); expect(setup).toBe(3600n);
+});
+test.each([1, 3, 2048, -1, 2.5])("rejects unsupported field %s", size => {
+  expect(() => buildCreateBracketCall("0xabc", { ...config, size })).toThrow("size");
+});
+test.each([0, 59, 86401, NaN, 60.5])("rejects invalid setup window %s", setupWindow => {
+  expect(() => buildCreateBracketCall("0xabc", { ...config, setupWindow })).toThrow("setupWindow");
+});

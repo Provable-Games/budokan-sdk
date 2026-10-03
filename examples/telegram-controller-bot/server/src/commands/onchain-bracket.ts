@@ -69,6 +69,7 @@ export interface CreateOnchainParams {
   gameMustBeOver: boolean;
   settingsId: number;
   attemptsPerPlayer?: number;
+  setupWindow?: number;
   /** 0 = uncapped, else a power of two >= 2. */
   size: number;
   /** Per-match game duration + submission window, seconds. */
@@ -122,6 +123,7 @@ export async function createOnchainBracket(
     size: p.size,
     settingsId: p.settingsId,
     attemptsPerPlayer: p.attemptsPerPlayer,
+    setupWindow: p.setupWindow,
     entryFee,
     feeToken,
     registrationDeadline,
@@ -509,7 +511,7 @@ async function announceOneBracket(
     rpc.callContract({ contractAddress: oc.contractAddress, entrypoint, calldata });
 
   const status = Number(BigInt((await read("get_config", [oc.bracketId]))[13] ?? "0"));
-  if (status < BRACKET_STATUS.RUNNING) return; // tree not built yet
+  if (status !== BRACKET_STATUS.RUNNING && status !== BRACKET_STATUS.COMPLETE) return;
   const field = Number(BigInt((await read("field", [oc.bracketId]))[0] ?? "0"));
   if (field < 2) return;
   const rounds = bracketRounds(field);
