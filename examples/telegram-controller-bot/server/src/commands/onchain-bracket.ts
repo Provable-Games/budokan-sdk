@@ -69,13 +69,15 @@ export interface CreateOnchainParams {
   gameMustBeOver: boolean;
   settingsId: number;
   attemptsPerPlayer?: number;
+  /** Optional explicit setup buffer (60..86400 seconds). The current contract
+   * automatically buffers large fields when this is omitted. */
   setupWindow?: number;
   /** 0 = uncapped, else a power of two >= 2. */
   size: number;
   /** Per-match game duration + submission window, seconds. */
   gameDuration: number;
   submissionDuration: number;
-  /** Seconds from now until registration closes (= round-1 start anchor). */
+  /** Seconds from now until registration closes; buffered play starts later. */
   startDelaySec: number;
   namePrefix?: string;
   description?: string;

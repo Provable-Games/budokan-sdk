@@ -10,8 +10,8 @@
  *
  * Flow: `create_bracket` (organizer) → players `register` (escrow their fee) →
  * a permissionless init bot closes registration, waits for the committed block, and
- * builds the tree to RUNNING (auto-entering round-1 players). This module covers
- * the two user-facing writes (create + register); the init bot drives the rest.
+ * draws and builds the tree to RUNNING (auto-entering round-1 players). This
+ * module exposes creation, registration, commitment, draw and build calls.
  */
 import { CallData, hash, uint256, type Call } from "starknet";
 import { MAX_ALLOWLIST_ENTRY_COUNT } from "../extensions/merkle.js";
@@ -53,7 +53,8 @@ export interface CreateBracketConfig {
   entryFee: bigint | string;
   /** ERC-20 the entry fee is denominated + escrowed in. */
   feeToken: string;
-  /** Registration closes at this unix time (also the round-1 start anchor). */
+  /** Registration deadline. Buffered brackets start after the later of this
+   * deadline and the first build, plus setup time; read play_start for the anchor. */
   registrationDeadline: number | bigint;
   /** Per-match game duration, seconds. */
   gameDuration: number | bigint;
@@ -193,7 +194,8 @@ export function parseBracketIdFromReceipt(
 }
 
 /** @deprecated Legacy VRF deployments only. New block-hash brackets must use the separate
- * close and assignment calls below. Close registration, request VRF, and consume it in
+ * close and assignment calls below; this multicall reverts against block-hash
+ * deployments. Close registration, request VRF, and consume it in
  * one transaction. Submit through a Cartridge session/paymaster supporting VRF;
  * a plain account cannot fulfill the randomness request by itself. */
 export function buildBracketSeedCalls(
@@ -221,6 +223,13 @@ export function buildBracketMatchesCall(
 /** Freeze registrations and commit the next block as entropy. */
 export function buildBracketCloseCall(bracketAddress: string, bracketId: number | bigint): Call {
   return { contractAddress: bracketAddress, entrypoint: "close_registration", calldata: CallData.compile([bracketId]) };
+}
+
+/** Upgrade recovery only: commit once when status is ASSIGNING and entropy_block
+ * is zero because registration closed under the old VRF class. New brackets
+ * commit in close_registration. This cannot replace an existing commitment. */
+export function buildBracketCommitCall(bracketAddress: string, bracketId: number | bigint): Call {
+  return { contractAddress: bracketAddress, entrypoint: "commit_assignment", calldata: CallData.compile([bracketId]) };
 }
 
 /** Draw from the committed block after assignment_ready returns true.

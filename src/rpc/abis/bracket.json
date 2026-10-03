@@ -814,6 +814,12 @@
   },
   {
     "type": "event",
+    "name": "openzeppelin_security::reentrancyguard::ReentrancyGuardComponent::Event",
+    "kind": "enum",
+    "variants": []
+  },
+  {
+    "type": "event",
     "name": "budokan_bracket::Bracket::Event",
     "kind": "enum",
     "variants": [
@@ -860,6 +866,11 @@
       {
         "name": "UpgradeableEvent",
         "type": "openzeppelin_upgrades::upgradeable::UpgradeableComponent::Event",
+        "kind": "flat"
+      },
+      {
+        "name": "ReentrancyGuardEvent",
+        "type": "openzeppelin_security::reentrancyguard::ReentrancyGuardComponent::Event",
         "kind": "flat"
       }
     ]

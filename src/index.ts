@@ -334,13 +334,14 @@ export type {
   EntryRequirementLike,
 } from "./brackets/index.js";
 
-// On-chain bracket contract client (escrow + VRF + gated tree). Use for
+// On-chain bracket contract client (escrow + block-hash draw + gated tree). Use for
 // open/uncapped brackets; see src/onchain-brackets/index.ts.
 export {
   BRACKET_STATUS,
   buildCreateBracketCall,
   buildBracketSeedCalls,
   buildBracketCloseCall,
+  buildBracketCommitCall,
   buildBracketAssignmentCall,
   buildBracketMatchesCall,
   buildBracketRegisterCall,
