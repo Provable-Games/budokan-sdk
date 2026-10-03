@@ -339,6 +339,8 @@ export type {
 export {
   BRACKET_STATUS,
   buildCreateBracketCall,
+  buildBracketSeedCalls,
+  buildBracketMatchesCall,
   buildBracketRegisterCall,
   buildBracketRegisterCalls,
   parseBracketIdFromReceipt,

@@ -14,6 +14,7 @@
  * the two user-facing writes (create + register); the init bot drives the rest.
  */
 import { CallData, hash, uint256, type Call } from "starknet";
+import { MAX_ALLOWLIST_ENTRY_COUNT } from "../extensions/merkle.js";
 
 /** Lifecycle status (mirrors packages/bracket `status`). */
 export const BRACKET_STATUS = {
@@ -41,6 +42,9 @@ export interface CreateBracketConfig {
   size: number;
   /** Game settings id applied to every match. */
   settingsId: number;
+  /** Attempts per player per round; defaults to 1. Values >1 require the
+   * bracket deployment with create_bracket_with_attempts support. */
+  attemptsPerPlayer?: number;
   /** Entry fee per player, escrowed on register (raw base units; 0 = free). */
   entryFee: bigint | string;
   /** ERC-20 the entry fee is denominated + escrowed in. */
@@ -71,6 +75,13 @@ export function buildCreateBracketCall(
   config: CreateBracketConfig,
   prizeTiers: number[] = [],
 ): Call {
+  const attempts = config.attemptsPerPlayer ?? 1;
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > MAX_ALLOWLIST_ENTRY_COUNT) {
+    throw new Error(`attemptsPerPlayer must be an integer from 1 to ${MAX_ALLOWLIST_ENTRY_COUNT}`);
+  }
+  if (attempts > 1 && prizeTiers.length > 1) {
+    throw new Error("Multiple attempts require winner-take-all prizes; placements rank game tokens, not unique players");
+  }
   const calldata = CallData.compile({
     config: {
       // Overwritten on-chain (caller becomes creator); serialized for Serde.
@@ -90,8 +101,10 @@ export function buildCreateBracketCall(
       status: BRACKET_STATUS.REGISTERING,
     },
     prize_tiers: prizeTiers,
+    // Keep the existing entrypoint/calldata for default single-attempt brackets.
+    ...(attempts > 1 ? { attempts_per_player: attempts } : {}),
   });
-  return { contractAddress: bracketAddress, entrypoint: "create_bracket", calldata };
+  return { contractAddress: bracketAddress, entrypoint: attempts > 1 ? "create_bracket_with_attempts" : "create_bracket", calldata };
 }
 
 /**
@@ -164,4 +177,29 @@ export function parseBracketIdFromReceipt(
     return BigInt(event.keys[1]!);
   }
   return undefined;
+}
+
+/** Close registration (if needed), request Cartridge VRF, and consume it in
+ * one transaction. Submit through a Cartridge session/paymaster supporting VRF;
+ * a plain account cannot fulfill the randomness request by itself. */
+export function buildBracketSeedCalls(
+  bracketAddress: string, vrfAddress: string, bracketId: number | bigint,
+  needsClose = true,
+): Call[] {
+  const id = BigInt(bracketId).toString();
+  return [
+    ...(needsClose ? [{ contractAddress: bracketAddress, entrypoint: "close_registration", calldata: [id] }] : []),
+    { contractAddress: vrfAddress, entrypoint: "request_random", calldata: [bracketAddress, "1", id] },
+    { contractAddress: bracketAddress, entrypoint: "fulfill_assignment", calldata: [id] },
+  ];
+}
+
+/** Resume on-chain match creation in bounded chunks after the draw. */
+export function buildBracketMatchesCall(
+  bracketAddress: string, bracketId: number | bigint, maxMatches: number,
+): Call {
+  if (!Number.isInteger(maxMatches) || maxMatches < 1 || maxMatches > 255) {
+    throw new Error("maxMatches must be an integer from 1 to 255");
+  }
+  return { contractAddress: bracketAddress, entrypoint: "build_matches", calldata: CallData.compile([bracketId, maxMatches]) };
 }
