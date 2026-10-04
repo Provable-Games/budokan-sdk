@@ -76,3 +76,15 @@ test("buffered default attempts and upgrade commitment decode against the Cairo 
   expect(commit.entrypoint).toBe("commit_assignment");
   expect(new CallData(abi).decodeParameters(["core::integer::u64"], commit.calldata as string[])).toBe(42n);
 });
+
+test.each([true, false])("serializes explicit full-field policy %s atomically", requireFull => {
+  const call = buildCreateBracketCall("0xabc", {...config, requireFull, attemptsPerPlayer: 5});
+  expect(call.entrypoint).toBe("create_bracket_with_requirements");
+  const [stored, tiers, attempts, setup, full] = decode(call);
+  expect(stored.size).toBe(4n); expect(tiers).toEqual([]);
+  expect(attempts).toBe(5n); expect(setup).toBe(3600n); expect(full).toBe(requireFull);
+});
+test("rejects a full-field requirement without a fixed field", () => {
+  expect(() => buildCreateBracketCall("0xabc", {...config, size: 0, requireFull: true})).toThrow("fixed size");
+  expect(() => buildCreateBracketCall("0xabc", {...config, requireFull: 1 as unknown as boolean})).toThrow("boolean");
+});
