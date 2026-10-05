@@ -346,6 +346,8 @@ export {
   buildBracketMatchesCall,
   buildBracketRegisterCall,
   buildBracketRegisterCalls,
+  buildBracketRecoverEntryPoolCall,
+  buildBracketRefundEntryPoolCall,
   parseBracketIdFromReceipt,
 } from "./onchain-brackets/index.js";
 export type {

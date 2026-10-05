@@ -1,3 +1,4 @@
+import { buildBracketRecoverEntryPoolCall, buildBracketRefundEntryPoolCall } from "../src/onchain-brackets/index.js";
 import { describe, expect, test } from "bun:test";
 import { CallData } from "starknet";
 import abi from "../src/rpc/abis/bracket.json";
@@ -87,4 +88,22 @@ test.each([true, false])("serializes explicit full-field policy %s atomically", 
 test("rejects a full-field requirement without a fixed field", () => {
   expect(() => buildCreateBracketCall("0xabc", {...config, size: 0, requireFull: true})).toThrow("fixed size");
   expect(() => buildCreateBracketCall("0xabc", {...config, requireFull: 1 as unknown as boolean})).toThrow("boolean");
+});
+
+describe("entry-funded final prize recovery", () => {
+  test("builds recovery for saved and legacy prize IDs", () => {
+    expect(buildBracketRecoverEntryPoolCall("0xabc", 2n).calldata).toEqual(["2", "0"]);
+    expect(buildBracketRecoverEntryPoolCall("0xabc", 2n, 99n).calldata).toEqual(["2", "99"]);
+    expect(decode(buildBracketRecoverEntryPoolCall("0xabc", 2n, 99n))).toEqual([2n, 99n]);
+    expect(() => buildBracketRecoverEntryPoolCall("0xabc", 2n, -1n)).toThrow();
+    expect(() => buildBracketRecoverEntryPoolCall("0xabc", 2n, 1n << 64n)).toThrow();
+  });
+  test("binds both refund indices and rejects out-of-range proofs", () => {
+    expect(buildBracketRefundEntryPoolCall("0xabc", 2n, 3, 1)).toEqual({contractAddress:"0xabc", entrypoint:"refund_entry_pool", calldata:["2", "3", "1"]});
+    expect(decode(buildBracketRefundEntryPoolCall("0xabc", 2n, 3, 1))).toEqual([2n, 3n, 1n]);
+    for (const index of [-1, 1024, 0.5, NaN]) {
+      expect(() => buildBracketRefundEntryPoolCall("0xabc", 2n, index, 0)).toThrow();
+      expect(() => buildBracketRefundEntryPoolCall("0xabc", 2n, 0, index)).toThrow();
+    }
+  });
 });

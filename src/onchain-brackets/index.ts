@@ -245,3 +245,24 @@ export function buildBracketCommitCall(bracketAddress: string, bracketId: number
 export function buildBracketAssignmentCall(bracketAddress: string, bracketId: number | bigint): Call {
   return { contractAddress: bracketAddress, entrypoint: "fulfill_assignment", calldata: CallData.compile([bracketId]) };
 }
+
+/** Recover unpayable placements of the bracket's own final prize. Zero uses
+ * the saved ID; pre-upgrade builds need the original PrizeAdded ID. */
+export function buildBracketRecoverEntryPoolCall(
+  bracketAddress: string, bracketId: number | bigint, prizeId: number | bigint = 0n,
+): Call {
+  const id = BigInt(prizeId);
+  if (id < 0n || id >= 1n << 64n) throw new Error("prizeId must fit u64");
+  return { contractAddress: bracketAddress, entrypoint: "recover_entry_pool", calldata: CallData.compile([bracketId, id]) };
+}
+
+/** Permissionless proof-based payout. The contract matches the registration to
+ * its shuffled seat and always pays the original payer, never the caller. */
+export function buildBracketRefundEntryPoolCall(
+  bracketAddress: string, bracketId: number | bigint, registrationIndex: number, seatIndex: number,
+): Call {
+  for (const value of [registrationIndex, seatIndex]) {
+    if (!Number.isInteger(value) || value < 0 || value >= 1024) throw new Error("refund indices must be integers from 0 to 1023");
+  }
+  return { contractAddress: bracketAddress, entrypoint: "refund_entry_pool", calldata: CallData.compile([bracketId, registrationIndex, seatIndex]) };
+}
