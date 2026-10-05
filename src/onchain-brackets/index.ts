@@ -10,7 +10,7 @@
  *
  * Flow: `create_bracket` (organizer) → players `register` (escrow their fee) →
  * a permissionless init bot closes registration, waits for the committed block, and
- * draws and builds the tree to RUNNING (auto-entering round-1 players). This
+ * draws and builds the tree to RUNNING (players enter their own games). This
  * module exposes creation, registration, commitment, draw and build calls.
  */
 import { CallData, hash, uint256, type Call } from "starknet";
@@ -70,6 +70,26 @@ export interface CreateBracketConfig {
   gameMustBeOver: boolean;
 }
 
+function serializeBracketConfig(config: CreateBracketConfig) {
+  return {
+    // Overwritten on-chain (caller becomes creator); serialized for Serde.
+    creator: 0,
+    game: config.game,
+    size: config.size,
+    settings_id: config.settingsId,
+    entry_fee: uint256.bnToUint256(config.entryFee),
+    fee_token: config.feeToken,
+    registration_deadline: config.registrationDeadline,
+    game_duration: config.gameDuration,
+    submission_duration: config.submissionDuration,
+    leaderboard_ascending: config.leaderboardAscending,
+    game_must_be_over: config.gameMustBeOver,
+    // Derived from prize_tiers on-chain; overwritten. Status starts REGISTERING.
+    prize_distribution_count: 0,
+    status: BRACKET_STATUS.REGISTERING,
+  };
+}
+
 /**
  * `create_bracket(config: BracketConfig, prize_tiers: Array<u16>) -> u64`
  *
@@ -103,23 +123,7 @@ export function buildCreateBracketCall(
     throw new Error("Multiple attempts require winner-take-all prizes; placements rank game tokens, not unique players");
   }
   const calldata = CallData.compile({
-    config: {
-      // Overwritten on-chain (caller becomes creator); serialized for Serde.
-      creator: 0,
-      game: config.game,
-      size: config.size,
-      settings_id: config.settingsId,
-      entry_fee: uint256.bnToUint256(config.entryFee),
-      fee_token: config.feeToken,
-      registration_deadline: config.registrationDeadline,
-      game_duration: config.gameDuration,
-      submission_duration: config.submissionDuration,
-      leaderboard_ascending: config.leaderboardAscending,
-      game_must_be_over: config.gameMustBeOver,
-      // Derived from prize_tiers on-chain; overwritten. Status starts REGISTERING.
-      prize_distribution_count: 0,
-      status: BRACKET_STATUS.REGISTERING,
-    },
+    config: serializeBracketConfig(config),
     prize_tiers: prizeTiers,
     // Keep the existing entrypoint/calldata for default single-attempt brackets.
     ...(attempts > 1 || setup !== undefined ? { attempts_per_player: attempts } : {}),
@@ -127,6 +131,44 @@ export function buildCreateBracketCall(
     ...(policy !== undefined ? { require_full: policy } : {}),
   });
   return { contractAddress: bracketAddress, entrypoint: policy !== undefined ? "create_bracket_with_requirements" : setup !== undefined ? "create_bracket_with_setup" : attempts > 1 ? "create_bracket_with_attempts" : "create_bracket", calldata };
+}
+
+/** Create a free, full, creator-supplied roster; import before closing/drawing. */
+export function buildCreateFreeRosterCall(bracketAddress: string, config: CreateBracketConfig): Call {
+  if (BigInt(config.entryFee) !== 0n) throw new Error("Fixed roster must be free");
+  if (config.requireFull === false) throw new Error("Fixed roster requires a full field");
+  // Share all capacity/quota/setup validation with ordinary bracket creation.
+  buildCreateBracketCall(bracketAddress, { ...config, requireFull: true });
+  return {
+    contractAddress: bracketAddress,
+    entrypoint: "create_free_roster",
+    calldata: CallData.compile({
+      config: serializeBracketConfig(config),
+      attempts_per_player: config.attemptsPerPlayer ?? 1,
+      setup_window: config.setupWindow ?? 3600,
+    }),
+  };
+}
+
+/** Ordered import; confirmed registrant_count is the next cursor. Maximum 256 players. */
+export function buildImportFreeRosterCall(
+  bracketAddress: string, bracketId: number | bigint, startIndex: number, players: readonly string[],
+): Call {
+  const id = BigInt(bracketId);
+  if (id <= 0n || id >= 1n << 64n) throw new Error("bracketId must be a positive u64");
+  if (!Number.isInteger(startIndex) || startIndex < 0 || startIndex > 1024) throw new Error("Invalid roster cursor");
+  if (players.length < 1 || players.length > 256 || startIndex + players.length > 1024) throw new Error("Invalid roster batch");
+  const addresses = players.map(player => BigInt(player));
+  if (addresses.some(player => player <= 0n || player >= 1n << 251n)) throw new Error("Invalid player address");
+  if (new Set(addresses.map(String)).size !== addresses.length) throw new Error("Duplicate roster player");
+  return { contractAddress: bracketAddress, entrypoint: "import_free_roster", calldata: CallData.compile([id, startIndex, addresses]) };
+}
+
+/** Start the existing recovery deadline without calling a failing game dependency. */
+export function buildBracketStartRecoveryCall(bracketAddress: string, bracketId: number | bigint): Call {
+  const id = BigInt(bracketId);
+  if (id <= 0n || id >= 1n << 64n) throw new Error("bracketId must be a positive u64");
+  return { contractAddress: bracketAddress, entrypoint: "build_matches", calldata: CallData.compile([id, 0]) };
 }
 
 /**

@@ -339,6 +339,9 @@ export type {
 export {
   BRACKET_STATUS,
   buildCreateBracketCall,
+  buildCreateFreeRosterCall,
+  buildImportFreeRosterCall,
+  buildBracketStartRecoveryCall,
   buildBracketSeedCalls,
   buildBracketCloseCall,
   buildBracketCommitCall,
