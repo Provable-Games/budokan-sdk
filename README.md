@@ -387,30 +387,43 @@ handle remaining attempts; an SDK update does not change existing tournaments. L
 can still change first place after finalization; this option does not lock a winner.
 
 
-### On-chain random-draw brackets with multiple attempts
+### On-chain random-draw brackets
 
-`buildCreateBracketCall(address, { ...config, attemptsPerPlayer: 2 })` uses
-`create_bracket_with_attempts` on the updated bracket contract. Omitting the
-option (or setting 1) retains the original `create_bracket` call. Existing
-brackets retain one attempt; quotas cannot change after creation. The stored
-`BracketConfig` ABI is unchanged; read `attempts_per_player(id)` for the quota.
+`buildCreateBracketCall(address, config)` retains opt-in paid or free registration.
+Use `buildBracketRegisterCalls` to approve an entry fee and register, optionally
+restricting eligibility with the contract's registration allowlist. `requireFull`
+requires a fixed field to fill; otherwise underfilled registration draws the
+largest filled power of two and refunds excluded paid entrants. Fields support
+up to 1,024 players. Set `attemptsPerPlayer` for the immutable per-round quota and
+`setupWindow` for a buffered match build. Omitting these options preserves the
+legacy creation ABI.
 
-Register players with `buildBracketRegisterCalls`. Once full or past the
-registration deadline, submit `buildBracketSeedCalls(bracket, vrf, id)` through
-Cartridge's VRF-capable session/paymaster. The random request and consumption
-must stay in that same transaction. For status ASSIGNING, pass `false` as the
-fourth argument to omit closing registration again. Then call
-`buildBracketMatchesCall(bracket, id, 2)` repeatedly until RUNNING. The contract
-stores the draw and creates the gated tournaments; a bot or player submits
-entry transactions separately.
+For a free roster supplied by the creator, use `buildCreateFreeRosterCall(address,
+config)` followed by `buildImportFreeRosterCall(address, id, confirmedCount,
+players)`. Each batch contains 1..256 unique, nonzero addresses. Read the confirmed
+`registrant_count` before the next batch; never resend an uncertain transaction.
+Paid entries and ordinary registration are rejected in this mode, and the full
+fixed roster is required before drawing. `is_free_roster(id)` identifies the mode.
 
-Each first-round Merkle leaf uses the configured attempt count. Later rounds
-still qualify only the first-place game token, granting its owner the configured
-quota. Multi-attempt brackets require a winner-take-all escrow prize; placement
-prizes rank game tokens rather than distinct players. The contract supports at
-most 256 registrants. `deployment()` reports Budokan, VRF, tournament validator
-and Merkle validator in that order; verify these against the selected stack.
+Call `buildBracketCloseCall` when registration can close. Closing freezes the
+roster and commits the next block's hash; wait until the onchain
+`assignment_ready` view is true before `buildBracketAssignmentCall`. A migrated
+ASSIGNING bracket without a commitment uses `buildBracketCommitCall` once.
+The current stack needs no Cartridge VRF service or VRF session. The deprecated
+`buildBracketSeedCalls` helper is only for historical VRF deployments.
 
-The current bot caps automatic minting at 16 attempts per player per round and
-reads remaining allowances before batching. Budokan's existing late-score
-semantics still apply: the bracket does not freeze a leaderboard snapshot.
+Use `buildBracketMatchesCall(address, id, max)` in bounded resumable batches until
+RUNNING. Players mint their own game attempts; setup never premints their games.
+The first-round Merkle leaves and later-round winner gates share the configured
+quota. Only the feeder's first-place qualifying token grants the next round's
+allowance, which is bound on first advancement. Multiple attempts require
+winner-take-all escrow prizes because placements rank game tokens.
+
+Creation checks the current game-token interface and settings before fees can be
+accepted. New paid brackets always have a setup recovery window. If dependencies
+change and the first match cannot be built, `buildBracketStartRecoveryCall` calls
+`build_matches(id, 0)` to anchor that window without invoking match creation.
+After expiry, an incomplete setup can be cancelled and all outstanding entry fees
+refunded to their original payers. Existing zero-window terms are unchanged.
+`deployment()` reports Budokan, the legacy VRF target, winner validator and Merkle
+validator; verify the selected stack before writing.

@@ -339,6 +339,9 @@ export type {
 export {
   BRACKET_STATUS,
   buildCreateBracketCall,
+  buildCreateFreeRosterCall,
+  buildImportFreeRosterCall,
+  buildBracketStartRecoveryCall,
   buildBracketSeedCalls,
   buildBracketCloseCall,
   buildBracketCommitCall,
@@ -346,6 +349,8 @@ export {
   buildBracketMatchesCall,
   buildBracketRegisterCall,
   buildBracketRegisterCalls,
+  buildBracketRecoverEntryPoolCall,
+  buildBracketRefundEntryPoolCall,
   parseBracketIdFromReceipt,
 } from "./onchain-brackets/index.js";
 export type {

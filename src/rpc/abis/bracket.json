@@ -114,6 +114,16 @@
     ]
   },
   {
+    "type": "struct",
+    "name": "core::array::Span::<core::starknet::contract_address::ContractAddress>",
+    "members": [
+      {
+        "name": "snapshot",
+        "type": "@core::array::Array::<core::starknet::contract_address::ContractAddress>"
+      }
+    ]
+  },
+  {
     "type": "interface",
     "name": "budokan_bracket::IBracket",
     "items": [
@@ -187,6 +197,142 @@
             "type": "core::integer::u64"
           }
         ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "create_bracket_with_requirements",
+        "inputs": [
+          {
+            "name": "config",
+            "type": "budokan_bracket::BracketConfig"
+          },
+          {
+            "name": "prize_tiers",
+            "type": "core::array::Array::<core::integer::u16>"
+          },
+          {
+            "name": "attempts_per_player",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "setup_window",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "require_full",
+            "type": "core::bool"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "create_free_roster",
+        "inputs": [
+          {
+            "name": "config",
+            "type": "budokan_bracket::BracketConfig"
+          },
+          {
+            "name": "attempts_per_player",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "setup_window",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "import_free_roster",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "start_index",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "players",
+            "type": "core::array::Span::<core::starknet::contract_address::ContractAddress>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "is_free_roster",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "requires_full_registration",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "required_registrants",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "enable_full_registration",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
         "state_mutability": "external"
       },
       {
@@ -280,6 +426,58 @@
         ],
         "outputs": [],
         "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "set_registration_allowlist",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "players",
+            "type": "core::array::Array::<core::starknet::contract_address::ContractAddress>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "registration_allowlist_count",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "is_registration_allowed",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "player",
+            "type": "core::starknet::contract_address::ContractAddress"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
       },
       {
         "type": "function",
@@ -390,6 +588,186 @@
       },
       {
         "type": "function",
+        "name": "recover_entry_pool",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "prize_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u128"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "refund_entry_pool",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "registration_index",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "seat_index",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "entry_pool_prize_id",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "recovered_entry_pool",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u128"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "entry_pool_refund_amount",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "seat_index",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u128"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "is_entry_pool_refunded",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "seat_index",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::bool"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "registration",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "registration_index",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "(core::starknet::contract_address::ContractAddress, core::starknet::contract_address::ContractAddress)"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "registration_batch",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "start",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "count",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::array::Array::<(core::starknet::contract_address::ContractAddress, core::starknet::contract_address::ContractAddress)>"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "seat_batch",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "start",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "count",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::array::Array::<core::starknet::contract_address::ContractAddress>"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "get_config",
         "inputs": [
           {
@@ -400,6 +778,38 @@
         "outputs": [
           {
             "type": "budokan_bracket::BracketConfig"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "protocol_fee_bps",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u16"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
+        "name": "protocol_fee_paid",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u256"
           }
         ],
         "state_mutability": "view"
@@ -637,6 +1047,143 @@
   },
   {
     "type": "event",
+    "name": "budokan_bracket::Bracket::ProtocolFeeSnapshotted",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "fee_bps",
+        "type": "core::integer::u16",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::FullRegistrationRequired",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "required",
+        "type": "core::integer::u32",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::FreeRosterCreated",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "size",
+        "type": "core::integer::u32",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::ProtocolFeePaid",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "final_tournament_id",
+        "type": "core::integer::u64",
+        "kind": "data"
+      },
+      {
+        "name": "token",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "recipient",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "gross_pool",
+        "type": "core::integer::u256",
+        "kind": "data"
+      },
+      {
+        "name": "amount",
+        "type": "core::integer::u256",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::EntryPoolRecovered",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "prize_id",
+        "type": "core::integer::u64",
+        "kind": "data"
+      },
+      {
+        "name": "amount",
+        "type": "core::integer::u128",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::EntryPoolRefunded",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "seat_index",
+        "type": "core::integer::u32",
+        "kind": "data"
+      },
+      {
+        "name": "payer",
+        "type": "core::starknet::contract_address::ContractAddress",
+        "kind": "data"
+      },
+      {
+        "name": "amount",
+        "type": "core::integer::u128",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
     "name": "budokan_bracket::Bracket::Registered",
     "kind": "struct",
     "members": [
@@ -652,6 +1199,23 @@
       },
       {
         "name": "index",
+        "type": "core::integer::u32",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::RegistrationAllowlistSet",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "count",
         "type": "core::integer::u32",
         "kind": "data"
       }
@@ -829,8 +1393,43 @@
         "kind": "nested"
       },
       {
+        "name": "ProtocolFeeSnapshotted",
+        "type": "budokan_bracket::Bracket::ProtocolFeeSnapshotted",
+        "kind": "nested"
+      },
+      {
+        "name": "FullRegistrationRequired",
+        "type": "budokan_bracket::Bracket::FullRegistrationRequired",
+        "kind": "nested"
+      },
+      {
+        "name": "FreeRosterCreated",
+        "type": "budokan_bracket::Bracket::FreeRosterCreated",
+        "kind": "nested"
+      },
+      {
+        "name": "ProtocolFeePaid",
+        "type": "budokan_bracket::Bracket::ProtocolFeePaid",
+        "kind": "nested"
+      },
+      {
+        "name": "EntryPoolRecovered",
+        "type": "budokan_bracket::Bracket::EntryPoolRecovered",
+        "kind": "nested"
+      },
+      {
+        "name": "EntryPoolRefunded",
+        "type": "budokan_bracket::Bracket::EntryPoolRefunded",
+        "kind": "nested"
+      },
+      {
         "name": "Registered",
         "type": "budokan_bracket::Bracket::Registered",
+        "kind": "nested"
+      },
+      {
+        "name": "RegistrationAllowlistSet",
+        "type": "budokan_bracket::Bracket::RegistrationAllowlistSet",
         "kind": "nested"
       },
       {

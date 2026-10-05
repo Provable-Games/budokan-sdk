@@ -1,3 +1,4 @@
+import { buildCreateFreeRosterCall, buildImportFreeRosterCall, buildBracketStartRecoveryCall, buildBracketRecoverEntryPoolCall, buildBracketRefundEntryPoolCall } from "../src/onchain-brackets/index.js";
 import { describe, expect, test } from "bun:test";
 import { CallData } from "starknet";
 import abi from "../src/rpc/abis/bracket.json";
@@ -75,4 +76,65 @@ test("buffered default attempts and upgrade commitment decode against the Cairo 
   const commit = buildBracketCommitCall("0xabc", 42n);
   expect(commit.entrypoint).toBe("commit_assignment");
   expect(new CallData(abi).decodeParameters(["core::integer::u64"], commit.calldata as string[])).toBe(42n);
+});
+
+test.each([true, false])("serializes explicit full-field policy %s atomically", requireFull => {
+  const call = buildCreateBracketCall("0xabc", {...config, requireFull, attemptsPerPlayer: 5});
+  expect(call.entrypoint).toBe("create_bracket_with_requirements");
+  const [stored, tiers, attempts, setup, full] = decode(call);
+  expect(stored.size).toBe(4n); expect(tiers).toEqual([]);
+  expect(attempts).toBe(5n); expect(setup).toBe(3600n); expect(full).toBe(requireFull);
+});
+test("rejects a full-field requirement without a fixed field", () => {
+  expect(() => buildCreateBracketCall("0xabc", {...config, size: 0, requireFull: true})).toThrow("fixed size");
+  expect(() => buildCreateBracketCall("0xabc", {...config, requireFull: 1 as unknown as boolean})).toThrow("boolean");
+});
+
+describe("entry-funded final prize recovery", () => {
+  test("builds recovery for saved and legacy prize IDs", () => {
+    expect(buildBracketRecoverEntryPoolCall("0xabc", 2n).calldata).toEqual(["2", "0"]);
+    expect(buildBracketRecoverEntryPoolCall("0xabc", 2n, 99n).calldata).toEqual(["2", "99"]);
+    expect(decode(buildBracketRecoverEntryPoolCall("0xabc", 2n, 99n))).toEqual([2n, 99n]);
+    expect(() => buildBracketRecoverEntryPoolCall("0xabc", 2n, -1n)).toThrow();
+    expect(() => buildBracketRecoverEntryPoolCall("0xabc", 2n, 1n << 64n)).toThrow();
+  });
+  test("binds both refund indices and rejects out-of-range proofs", () => {
+    expect(buildBracketRefundEntryPoolCall("0xabc", 2n, 3, 1)).toEqual({contractAddress:"0xabc", entrypoint:"refund_entry_pool", calldata:["2", "3", "1"]});
+    expect(decode(buildBracketRefundEntryPoolCall("0xabc", 2n, 3, 1))).toEqual([2n, 3n, 1n]);
+    for (const index of [-1, 1024, 0.5, NaN]) {
+      expect(() => buildBracketRefundEntryPoolCall("0xabc", 2n, index, 0)).toThrow();
+      expect(() => buildBracketRefundEntryPoolCall("0xabc", 2n, 0, index)).toThrow();
+    }
+  });
+});
+
+
+test("free fixed roster creation decodes against the compiled ABI", () => {
+  const call = buildCreateFreeRosterCall("0xabc", {...config, size: 1024, settingsId: 3, attemptsPerPlayer: 5});
+  const [stored, attempts, setup] = decode(call);
+  expect(call.entrypoint).toBe("create_free_roster");
+  expect(stored.size).toBe(1024n);
+  expect(stored.entry_fee).toBe(0n);
+  expect(stored.settings_id).toBe(3n);
+  expect(attempts).toBe(5n);
+  expect(setup).toBe(3600n);
+});
+test("fixed rosters reject paid, flexible and invalid capacity modes", () => {
+  expect(() => buildCreateFreeRosterCall("0xabc", {...config, entryFee: 1n})).toThrow("free");
+  expect(() => buildCreateFreeRosterCall("0xabc", {...config, requireFull: false})).toThrow("full");
+  expect(() => buildCreateFreeRosterCall("0xabc", {...config, size: 0})).toThrow();
+});
+test("roster import retains explicit cursor and address order", () => {
+  const call = buildImportFreeRosterCall("0xabc", 42n, 256, ["0x111", "0x222"]);
+  const [id, cursor, players] = decode(call);
+  expect([id, cursor, players]).toEqual([42n, 256n, [273n, 546n]]);
+  expect(buildBracketStartRecoveryCall("0xabc", 42n)).toEqual({contractAddress: "0xabc", entrypoint: "build_matches", calldata: ["42", "0"]});
+});
+test("roster import rejects empty/oversized/duplicate/zero batches and invalid cursor", () => {
+  expect(() => buildImportFreeRosterCall("0xabc", 1n, 0, [])).toThrow("batch");
+  expect(() => buildImportFreeRosterCall("0xabc", 1n, 0, Array(257).fill("0x1"))).toThrow("batch");
+  expect(() => buildImportFreeRosterCall("0xabc", 1n, 0, ["0x1", "0x01"])).toThrow("Duplicate");
+  expect(() => buildImportFreeRosterCall("0xabc", 1n, 0, ["0x0"])).toThrow("address");
+  expect(() => buildImportFreeRosterCall("0xabc", 1n, -1, ["0x1"])).toThrow("cursor");
+  expect(() => buildImportFreeRosterCall("0xabc", 1n, 1024, ["0x1"])).toThrow("batch");
 });
