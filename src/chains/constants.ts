@@ -13,11 +13,12 @@ export const CHAINS: Record<string, ChainConfig> = {
     rpcUrl: "https://rpc.provable.games/rpc",
     apiBaseUrl: "https://budokan-api-production.up.railway.app",
     wsUrl: "wss://budokan-api-production.up.railway.app/ws",
-    // Fresh-architecture deployment (post-#315, 2026-08-07): exact payouts,
-    // Geometric/Tiered, protocol_fee_info + license views. Fee OFF at genesis.
-    budokanAddress: "0x01f2c86ab22ded7f2de9084578ce72a1f7b590d5be6bd5f912ac8053128c20c2",
-    viewerAddress: "0x01af740a39e88a0e617b84ffcd0dc7f0f2f34b2bf4bcb5be0dce3ed9858fadb7",
-    bracketAddress: "0x03b7b2b43a449b27b7e19400baa8d1eea8f05a6ad9416dace77b781414e4d66f",
+    // Budokan v2 (lite-only tokens, budokan #313); deployed at block 14065996.
+    // budokan-api-production indexes this contract after the v2 cutover
+    // (budokan contracts/DEPLOY_MAINNET_RUNBOOK.md).
+    budokanAddress: "0x019f145601d5dbc087e2eacd9e6b36b6ff7b1a206362ecf4b59e1de7a5aad5c7",
+    viewerAddress: "0x019efd3c3b6fc02da64027a2c423837ff4518d92dd873f1ed7ae1112e9632a64",
+    bracketAddress: "0x07c0c83498814f69b8f99ce959a389407b1a7f10630c627c365dc556c9c53ce7",
   },
   sepolia: {
     rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
