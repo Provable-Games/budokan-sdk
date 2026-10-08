@@ -33,6 +33,16 @@ export interface IndexedBracket {
   matchesBuilt: number;
   /** Creator-imported roster: no registration or entry payment. */
   freeRoster: boolean;
+  /**
+   * Invitations the creator declared (scaled brackets). Absent from API servers older than
+   * budokan #349; treat absent as ready with nothing expected beyond the imported count.
+   */
+  allowlistExpected?: number;
+  /** False while the creator is still uploading invitations: registration stays closed. */
+  allowlistReady?: boolean;
+  /** Resumable draw progress; null on contract classes without `assignment_progress`. */
+  assignmentCompleted?: number | null;
+  assignmentTotal?: number | null;
   createdAtBlock: string;
   updatedAtBlock: string;
   /** Match tournament ids in match-index order (round 1 first). */

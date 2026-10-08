@@ -12,6 +12,10 @@ export interface BudokanClientConfig {
   provider?: RpcProvider;
   viewerAddress?: string;
   budokanAddress?: string;
+  /** Bracket contract for the bracket chain fallback; defaults to the chain preset's. */
+  bracketAddress?: string;
+  /** Its deploy block, where the fallback starts scanning `BracketCreated` (default 0). */
+  bracketStartBlock?: number;
   primarySource?: DataSource;
   retryAttempts?: number;
   retryDelay?: number;

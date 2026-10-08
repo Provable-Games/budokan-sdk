@@ -37,6 +37,7 @@ import {
 import type {
   BracketListParams,
   BracketRegistration,
+  IndexedBracket,
   IndexedBracketDetail,
   PlayerBracketRegistration,
 } from "./types/indexedBracket.js";
@@ -63,12 +64,19 @@ import {
 import viewerAbi from "./rpc/abis/budokanViewer.json";
 import budokanAbi from "./rpc/abis/budokan.json";
 import { budokanTournamentDistributionShares } from "./rpc/budokan.js";
+import {
+  createBracketChainSource,
+  listChainBrackets,
+  readChainBracketDetail,
+} from "./rpc/brackets.js";
 
 /** Resolved config with all defaults applied */
 interface ResolvedConfig extends BudokanClientConfig {
   rpcUrl: string;
   viewerAddress: string;
   budokanAddress: string;
+  bracketAddress: string;
+  bracketStartBlock: number;
 }
 
 /**
@@ -118,6 +126,8 @@ export class BudokanClient {
       rpcUrl: config.rpcUrl ?? chainConfig?.rpcUrl ?? "",
       viewerAddress: config.viewerAddress ?? chainConfig?.viewerAddress ?? "",
       budokanAddress: config.budokanAddress ?? chainConfig?.budokanAddress ?? "",
+      bracketAddress: config.bracketAddress ?? chainConfig?.bracketAddress ?? "",
+      bracketStartBlock: config.bracketStartBlock ?? chainConfig?.bracketStartBlock ?? 0,
     };
 
     const wsUrl = config.wsUrl ?? chainConfig?.wsUrl
@@ -216,16 +226,68 @@ export class BudokanClient {
     };
   }
 
-  // ---- Indexed bracket queries (API only; the bracket contract is the fallback) ----
+  // ---- Bracket queries: the Budokan API first, the bracket contract when it is down ----
 
-  /** Indexed on-chain brackets, newest first, each with its match tournament ids. */
-  async getBrackets(params?: BracketListParams) {
-    return apiGetBrackets(this.resolvedConfig.apiBaseUrl, params, this.apiCtx);
+  /** A chain source for one bracket contract, pinned to the latest block. */
+  private async bracketSource(contractAddress?: string) {
+    const address = contractAddress ?? this.resolvedConfig.bracketAddress;
+    if (!address) throw new RpcError("No bracketAddress configured for the bracket chain fallback.");
+    const configured =
+      this.resolvedConfig.bracketAddress !== "" &&
+      BigInt(address) === BigInt(this.resolvedConfig.bracketAddress);
+    const source = await createBracketChainSource(
+      await this.getProvider(),
+      address,
+      configured ? this.resolvedConfig.bracketStartBlock : 0,
+    );
+    return { address, source };
   }
 
-  /** One indexed bracket with its drawn seats and built matches; null when not indexed. */
+  /**
+   * On-chain brackets, newest first, each with its match tournament ids.
+   * The API answers when it is up; when it errors, the bracket contract does (same shape).
+   */
+  async getBrackets(
+    params?: BracketListParams,
+  ): Promise<{ data: IndexedBracket[]; limit: number; offset: number }> {
+    const rpcFallback = async () => {
+      const { address, source } = await this.bracketSource(params?.contractAddress);
+      return listChainBrackets(source, address, params);
+    };
+    if (this.resolvedConfig.primarySource === "rpc") return rpcFallback();
+    return withFallback(
+      () => apiGetBrackets(this.resolvedConfig.apiBaseUrl, params, this.apiCtx),
+      rpcFallback,
+      this.connectionStatus,
+    );
+  }
+
+  /**
+   * One bracket with its drawn seats and built matches; null when it does not exist.
+   * API first; the bracket contract answers when the API errors or has not indexed it yet.
+   */
   async getBracket(bracketId: string, contractAddress?: string): Promise<IndexedBracketDetail | null> {
-    return apiGetBracket(this.resolvedConfig.apiBaseUrl, bracketId, contractAddress, this.apiCtx);
+    const rpcFallback = async () => {
+      const { address, source } = await this.bracketSource(contractAddress);
+      return readChainBracketDetail(source, address, bracketId);
+    };
+    if (this.resolvedConfig.primarySource === "rpc") return rpcFallback();
+    return withFallback(
+      async () => {
+        const indexed = await apiGetBracket(
+          this.resolvedConfig.apiBaseUrl,
+          bracketId,
+          contractAddress,
+          this.apiCtx,
+        );
+        // Not indexed yet (a bracket created moments ago): ask the chain, without marking
+        // the API down.
+        if (indexed || !this.resolvedConfig.rpcUrl) return indexed;
+        return rpcFallback().catch(() => null);
+      },
+      rpcFallback,
+      this.connectionStatus,
+    );
   }
 
   /** A bracket's registrations in order, optionally for one player. */
