@@ -66,7 +66,9 @@ import budokanAbi from "./rpc/abis/budokan.json";
 import { budokanTournamentDistributionShares } from "./rpc/budokan.js";
 import {
   createBracketChainSource,
+  listChainBracketRegistrations,
   listChainBrackets,
+  listChainRegistrations,
   readChainBracketDetail,
 } from "./rpc/brackets.js";
 
@@ -116,6 +118,8 @@ export class BudokanClient {
   private cachedProvider: RpcProvider | null = null;
   private cachedViewerContract: Contract | null = null;
   private cachedBudokanContract: Contract | null = null;
+  /** Bracket reads in flight or answered within `bracketCacheMs`, by method and arguments. */
+  private readonly sharedReads = new Map<string, { at: number | null; promise: Promise<unknown> }>();
 
   constructor(config: BudokanClientConfig) {
     // Merge user config with chain defaults
@@ -228,6 +232,30 @@ export class BudokanClient {
 
   // ---- Bracket queries: the Budokan API first, the bracket contract when it is down ----
 
+  /**
+   * One request per distinct bracket read: callers asking at the same time share it, and its
+   * answer is reused for `bracketCacheMs` (default 5s). A chain fallback scans events and reads
+   * every bracket, so a page full of components must not repeat it. Failures are not kept.
+   */
+  private share<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const ttl = this.resolvedConfig.bracketCacheMs ?? 5_000;
+    const hit = this.sharedReads.get(key);
+    if (hit && (hit.at === null || Date.now() - hit.at < ttl)) return hit.promise as Promise<T>;
+    const entry: { at: number | null; promise: Promise<unknown> } = { at: null, promise: null! };
+    entry.promise = load().then(
+      (value) => {
+        entry.at = Date.now();
+        return value;
+      },
+      (error) => {
+        if (this.sharedReads.get(key) === entry) this.sharedReads.delete(key);
+        throw error;
+      },
+    );
+    this.sharedReads.set(key, entry);
+    return entry.promise as Promise<T>;
+  }
+
   /** A chain source for one bracket contract, pinned to the latest block. */
   private async bracketSource(contractAddress?: string) {
     const address = contractAddress ?? this.resolvedConfig.bracketAddress;
@@ -254,11 +282,14 @@ export class BudokanClient {
       const { address, source } = await this.bracketSource(params?.contractAddress);
       return listChainBrackets(source, address, params);
     };
-    if (this.resolvedConfig.primarySource === "rpc") return rpcFallback();
-    return withFallback(
-      () => apiGetBrackets(this.resolvedConfig.apiBaseUrl, params, this.apiCtx),
-      rpcFallback,
-      this.connectionStatus,
+    return this.share(`brackets:${JSON.stringify(params ?? {})}`, () =>
+      this.resolvedConfig.primarySource === "rpc"
+        ? rpcFallback()
+        : withFallback(
+            () => apiGetBrackets(this.resolvedConfig.apiBaseUrl, params, this.apiCtx),
+            rpcFallback,
+            this.connectionStatus,
+          ),
     );
   }
 
@@ -271,8 +302,9 @@ export class BudokanClient {
       const { address, source } = await this.bracketSource(contractAddress);
       return readChainBracketDetail(source, address, bracketId);
     };
-    if (this.resolvedConfig.primarySource === "rpc") return rpcFallback();
-    return withFallback(
+    if (this.resolvedConfig.primarySource === "rpc")
+      return this.share(`bracket:${bracketId}:${contractAddress ?? ""}`, rpcFallback);
+    return this.share(`bracket:${bracketId}:${contractAddress ?? ""}`, () => withFallback(
       async () => {
         const indexed = await apiGetBracket(
           this.resolvedConfig.apiBaseUrl,
@@ -287,27 +319,56 @@ export class BudokanClient {
       },
       rpcFallback,
       this.connectionStatus,
-    );
+    ));
   }
 
-  /** A bracket's registrations in order, optionally for one player. */
+  /** A bracket's registrations in order, optionally for one player. API first, then the chain. */
   async getBracketRegistrations(
     bracketId: string,
     params?: { player?: string; contractAddress?: string; limit?: number; offset?: number },
   ): Promise<BracketRegistration[]> {
-    return apiGetBracketRegistrations(this.resolvedConfig.apiBaseUrl, bracketId, params, this.apiCtx);
+    const rpcFallback = async () => {
+      const { source } = await this.bracketSource(params?.contractAddress);
+      return listChainBracketRegistrations(source, bracketId, params);
+    };
+    return this.share(`bracket-registrations:${bracketId}:${JSON.stringify(params ?? {})}`, () =>
+      this.resolvedConfig.primarySource === "rpc"
+        ? rpcFallback()
+        : withFallback(
+            () =>
+              apiGetBracketRegistrations(this.resolvedConfig.apiBaseUrl, bracketId, params, this.apiCtx),
+            rpcFallback,
+            this.connectionStatus,
+          ),
+    );
   }
 
-  /** Every bracket a player registered for, including before the draw. */
+  /**
+   * Every bracket a player registered for, including before the draw. API first; the chain
+   * fallback scans the contract's `Registered` events (players are not event keys).
+   */
   async getPlayerBracketRegistrations(
     player: string,
     contractAddress?: string,
   ): Promise<PlayerBracketRegistration[]> {
-    return apiGetPlayerBracketRegistrations(
-      this.resolvedConfig.apiBaseUrl,
-      player,
-      contractAddress,
-      this.apiCtx,
+    const rpcFallback = async () => {
+      const { address, source } = await this.bracketSource(contractAddress);
+      return listChainRegistrations(source, address, { player });
+    };
+    return this.share(`player-bracket-registrations:${player}:${contractAddress ?? ""}`, () =>
+      this.resolvedConfig.primarySource === "rpc"
+        ? rpcFallback()
+        : withFallback(
+            () =>
+              apiGetPlayerBracketRegistrations(
+                this.resolvedConfig.apiBaseUrl,
+                player,
+                contractAddress,
+                this.apiCtx,
+              ),
+            rpcFallback,
+            this.connectionStatus,
+          ),
     );
   }
 

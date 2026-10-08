@@ -13,21 +13,34 @@ import type { RpcProvider } from "starknet";
 
 import type {
   BracketListParams,
+  BracketRegistration,
   IndexedBracket,
   IndexedBracketDetail,
+  PlayerBracketRegistration,
 } from "../types/indexedBracket.js";
 import { decodeBracketAssignmentProgress, decodeRegistrationAllowlistProgress } from "../onchain-brackets/index.js";
 
 const BRACKET_CREATED = hash.getSelectorFromName("BracketCreated");
+const REGISTERED = hash.getSelectorFromName("Registered");
+const REFUNDED = hash.getSelectorFromName("Refunded");
 /** Concurrent view calls per request burst; public nodes drop larger bursts. */
 const CONCURRENCY = 8;
 
 export type BracketChainRead = (entrypoint: string, calldata: string[]) => Promise<string[]>;
 
+export interface BracketChainEvent {
+  keys: string[];
+  data: string[];
+  block: number;
+  txHash: string | null;
+}
+
 export interface BracketChainSource {
   read: BracketChainRead;
   /** Bracket ids from `BracketCreated`, with the block each was created at. */
   createdIds(): Promise<Array<{ id: string; block: number }>>;
+  /** The contract's events with this selector (optionally one bracket's), oldest first. */
+  events(selector: string, bracketId?: string): Promise<BracketChainEvent[]>;
   /** The block every read is pinned to. */
   block: number;
 }
@@ -224,6 +237,69 @@ export async function readChainBracketDetail(
   };
 }
 
+/**
+ * Registrations from `Registered` events, as the API's registration routes serve them. A
+ * `Refunded` event marks every registration of that player in that bracket, as the indexer does.
+ * Players are event data, not keys, so a player's registrations need the contract's full scan.
+ */
+export async function listChainRegistrations(
+  source: BracketChainSource,
+  contractAddress: string,
+  filter: { bracketId?: string; player?: string } = {},
+): Promise<PlayerBracketRegistration[]> {
+  const bracketId = filter.bracketId === undefined ? undefined : BigInt(filter.bracketId).toString();
+  const [registered, refunded] = await Promise.all([
+    source.events(REGISTERED, bracketId),
+    source.events(REFUNDED, bracketId),
+  ]);
+  const refunds = new Set(
+    refunded.map((e) => `${BigInt(e.keys[1]).toString()}:${BigInt(e.data[0] ?? 0)}`),
+  );
+  const player = filter.player === undefined ? undefined : BigInt(filter.player);
+  return registered
+    .filter((e) => e.keys[1] !== undefined && e.data[0] !== undefined && e.data[1] !== undefined)
+    .filter((e) => player === undefined || BigInt(e.data[0]) === player)
+    .map((e) => {
+      const id = BigInt(e.keys[1]).toString();
+      return {
+        contractAddress: hex(contractAddress),
+        bracketId: id,
+        registrationIndex: u32(e.data[1], "Registered.index"),
+        refunded: refunds.has(`${id}:${BigInt(e.data[0])}`),
+        blockNumber: String(e.block),
+        txHash: e.txHash,
+      };
+    });
+}
+
+/** One bracket's registrations in registration order, as `GET /brackets/:id/registrations`. */
+export async function listChainBracketRegistrations(
+  source: BracketChainSource,
+  bracketId: string,
+  params: { player?: string; limit?: number; offset?: number } = {},
+): Promise<BracketRegistration[]> {
+  const id = BigInt(bracketId).toString();
+  const [registered, refunded] = await Promise.all([
+    source.events(REGISTERED, id),
+    source.events(REFUNDED, id),
+  ]);
+  const refunds = new Set(refunded.map((e) => BigInt(e.data[0] ?? 0).toString()));
+  const player = params.player === undefined ? undefined : BigInt(params.player);
+  const rows = registered
+    .filter((e) => e.data[0] !== undefined && e.data[1] !== undefined)
+    .filter((e) => player === undefined || BigInt(e.data[0]) === player)
+    .map((e) => ({
+      registrationIndex: u32(e.data[1], "Registered.index"),
+      player: hex(e.data[0]),
+      refunded: refunds.has(BigInt(e.data[0]).toString()),
+      blockNumber: String(e.block),
+      txHash: e.txHash,
+    }))
+    .sort((a, b) => a.registrationIndex - b.registrationIndex);
+  const offset = params.offset ?? 0;
+  return rows.slice(offset, params.limit === undefined ? undefined : offset + params.limit);
+}
+
 /** A source pinned to the provider's latest block. */
 export async function createBracketChainSource(
   provider: RpcProvider,
@@ -233,28 +309,39 @@ export async function createBracketChainSource(
   const head = await provider.getBlockWithTxHashes("latest");
   if (!("block_number" in head)) throw new Error("Latest block is not available yet.");
   const block = head.block_number;
+  const events = async (selector: string, bracketId?: string) => {
+    const out: BracketChainEvent[] = [];
+    let continuation_token: string | undefined;
+    for (let page = 0; page < 1000; page++) {
+      const result = await provider.getEvents({
+        address: contractAddress,
+        keys: bracketId === undefined ? [[selector]] : [[selector], [hex(bracketId)]],
+        from_block: { block_number: fromBlock },
+        to_block: { block_number: block },
+        chunk_size: 1000,
+        continuation_token,
+      });
+      for (const e of result.events)
+        out.push({
+          keys: e.keys,
+          data: e.data,
+          block: Number(e.block_number ?? 0),
+          txHash: e.transaction_hash ?? null,
+        });
+      continuation_token = result.continuation_token;
+      if (!continuation_token) return out;
+    }
+    throw new Error("Bracket event history is too large to scan.");
+  };
   return {
     block,
     read: (entrypoint, calldata) =>
       provider.callContract({ contractAddress, entrypoint, calldata }, block),
+    events,
     async createdIds() {
       const ids = new Map<string, number>();
-      let continuation_token: string | undefined;
-      for (let page = 0; page < 1000; page++) {
-        const events = await provider.getEvents({
-          address: contractAddress,
-          keys: [[BRACKET_CREATED]],
-          from_block: { block_number: fromBlock },
-          to_block: { block_number: block },
-          chunk_size: 1000,
-          continuation_token,
-        });
-        for (const e of events.events)
-          if (e.keys[1] !== undefined)
-            ids.set(BigInt(e.keys[1]).toString(), Number(e.block_number ?? 0));
-        continuation_token = events.continuation_token;
-        if (!continuation_token) break;
-      }
+      for (const e of await events(BRACKET_CREATED))
+        if (e.keys[1] !== undefined) ids.set(BigInt(e.keys[1]).toString(), e.block);
       return [...ids].map(([id, block]) => ({ id, block }));
     },
   };

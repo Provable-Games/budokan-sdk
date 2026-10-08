@@ -3,7 +3,14 @@ import { hash } from "starknet";
 import type { RpcProvider } from "starknet";
 
 import { BudokanClient } from "../src/client.js";
-import { listChainBrackets, readChainBracketDetail, type BracketChainSource } from "../src/rpc/brackets.js";
+import {
+  listChainBracketRegistrations,
+  listChainBrackets,
+  listChainRegistrations,
+  readChainBracketDetail,
+  type BracketChainEvent,
+  type BracketChainSource,
+} from "../src/rpc/brackets.js";
 
 const BRACKET = "0x7c0c";
 const GAME = "0x123";
@@ -49,9 +56,25 @@ function read(missing: Set<string> = new Set()) {
   };
 }
 
+const sel = (name: string) => hash.getSelectorFromName(name);
+/** Bracket 2: players 0xa and 0xb register, 0xa is refunded; bracket 1: 0xa registers. */
+const EVENTS: BracketChainEvent[] = [
+  { keys: [sel("Registered"), "0x1"], data: ["0xa", "0x0"], block: 110, txHash: "0xt1" },
+  { keys: [sel("Registered"), "0x2"], data: ["0xb", "0x1"], block: 210, txHash: "0xt3" },
+  { keys: [sel("Registered"), "0x2"], data: ["0xa", "0x0"], block: 205, txHash: "0xt2" },
+  { keys: [sel("Refunded"), "0x2"], data: ["0xa"], block: 400, txHash: "0xt4" },
+];
+const events = async (selector: string, bracketId?: string) =>
+  EVENTS.filter(
+    (e) =>
+      BigInt(e.keys[0]) === BigInt(selector) &&
+      (bracketId === undefined || BigInt(e.keys[1]) === BigInt(bracketId)),
+  );
+
 const source = (missing?: Set<string>): BracketChainSource => ({
   block: 500,
   read: read(missing),
+  events,
   createdIds: async () => [
     { id: "1", block: 100 },
     { id: "2", block: 200 },
@@ -127,6 +150,26 @@ describe("bracket chain fallback", () => {
   });
 });
 
+describe("registration chain fallback", () => {
+  test("a player's registrations across brackets, with refunds", async () => {
+    const rows = await listChainRegistrations(source(), BRACKET, { player: "0x00a" });
+    expect(rows.map((r) => [r.bracketId, r.registrationIndex, r.refunded, r.txHash])).toEqual([
+      ["1", 0, false, "0xt1"],
+      ["2", 0, true, "0xt2"],
+    ]);
+  });
+
+  test("one bracket's registrations in registration order, filtered and paged", async () => {
+    const all = await listChainBracketRegistrations(source(), "2");
+    expect(all.map((r) => [r.registrationIndex, r.player, r.refunded])).toEqual([
+      [0, "0xa", true],
+      [1, "0xb", false],
+    ]);
+    expect((await listChainBracketRegistrations(source(), "2", { player: "0xb" })).length).toBe(1);
+    expect((await listChainBracketRegistrations(source(), "2", { offset: 1, limit: 5 }))[0].player).toBe("0xb");
+  });
+});
+
 describe("BudokanClient brackets", () => {
   const realFetch = globalThis.fetch;
   let client: BudokanClient | null = null;
@@ -140,16 +183,27 @@ describe("BudokanClient brackets", () => {
     getBlockWithTxHashes: async () => ({ block_number: 500, timestamp: 1 }),
     callContract: async ({ entrypoint, calldata }: { entrypoint: string; calldata: string[] }) =>
       read()(entrypoint, calldata.map(String)),
-    getEvents: async () => ({
-      events: ["1", "2", "3"].map((id, i) => ({
-        keys: [hash.getSelectorFromName("BracketCreated"), `0x${Number(id).toString(16)}`],
-        data: [],
-        block_number: 100 * (i + 1),
-      })),
-    }),
+    getEvents: async ({ keys }: { keys: string[][] }) => {
+      if (BigInt(keys[0][0]) !== BigInt(sel("BracketCreated")))
+        return {
+          events: (await events(keys[0][0], keys[1]?.[0])).map((e) => ({
+            keys: e.keys,
+            data: e.data,
+            block_number: e.block,
+            transaction_hash: e.txHash,
+          })),
+        };
+      return {
+        events: ["1", "2", "3"].map((id, i) => ({
+          keys: [sel("BracketCreated"), `0x${Number(id).toString(16)}`],
+          data: [],
+          block_number: 100 * (i + 1),
+        })),
+      };
+    },
   } as unknown as RpcProvider;
 
-  const make = () =>
+  const make = (extra: { bracketCacheMs?: number } = {}) =>
     (client = new BudokanClient({
       apiBaseUrl: "https://api",
       rpcUrl: "https://rpc",
@@ -158,6 +212,7 @@ describe("BudokanClient brackets", () => {
       retryAttempts: 1,
       retryDelay: 0,
       health: { initialCheckDelay: 60_000, checkInterval: 60_000 },
+      ...extra,
     }));
 
   test("uses the API when it answers", async () => {
@@ -185,5 +240,46 @@ describe("BudokanClient brackets", () => {
     expect(await c.getBracket("42")).toBeNull();
     // A 404 is an answer, not an outage.
     expect(c.getConnectionStatus().mode).toBe("api");
+  });
+
+  test("falls back to the chain for a player's registrations", async () => {
+    globalThis.fetch = (async () => new Response("{}", { status: 502 })) as unknown as typeof fetch;
+    const rows = await make().getPlayerBracketRegistrations("0xb");
+    expect(rows.map((r) => [r.bracketId, r.registrationIndex])).toEqual([["2", 1]]);
+  });
+
+  test("callers share one request and reuse its answer briefly", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ data: [], limit: 50, offset: 0 }));
+    }) as unknown as typeof fetch;
+    const c = make({ bracketCacheMs: 60_000 });
+    await Promise.all([c.getBrackets({ gameAddress: GAME }), c.getBrackets({ gameAddress: GAME })]);
+    await c.getBrackets({ gameAddress: GAME });
+    expect(calls).toBe(1);
+    await c.getBrackets({ gameAddress: "0x999" });
+    expect(calls).toBe(2);
+    const fresh = make({ bracketCacheMs: 0 });
+    await fresh.getBrackets({ gameAddress: GAME });
+    await fresh.getBrackets({ gameAddress: GAME });
+    expect(calls).toBe(4);
+  });
+
+  test("a failed read is not reused", async () => {
+    let calls = 0;
+    let fail = true;
+    globalThis.fetch = (async () => {
+      calls++;
+      return fail
+        ? new Response("{}", { status: 503 })
+        : new Response(JSON.stringify({ data: [], limit: 50, offset: 0 }));
+    }) as unknown as typeof fetch;
+    // API only: no RPC to fall back to, so the failure reaches the caller.
+    client = new BudokanClient({ apiBaseUrl: "https://api", retryAttempts: 1, retryDelay: 0, bracketCacheMs: 60_000 });
+    await expect(client.getBrackets()).rejects.toThrow();
+    fail = false;
+    expect((await client.getBrackets()).data).toEqual([]);
+    expect(calls).toBe(2);
   });
 });
