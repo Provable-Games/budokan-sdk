@@ -1,6 +1,15 @@
 // Client
 export { BudokanClient, createBudokanClient } from "./client.js";
 
+// Indexed on-chain brackets (Budokan API /brackets)
+export type {
+  IndexedBracket,
+  IndexedBracketDetail,
+  BracketListParams,
+  BracketRegistration,
+  PlayerBracketRegistration,
+} from "./types/indexedBracket.js";
+
 // Types
 export type {
   BudokanClientConfig,

@@ -27,6 +27,14 @@ export type { UsePrizeAggregationResult } from "./usePrizeAggregation.js";
 export { useQualifications } from "./useQualifications.js";
 export type { UseQualificationsResult } from "./useQualifications.js";
 
+// Indexed on-chain bracket hooks
+export { useBrackets, useBracket, usePlayerBracketRegistrations } from "./useBrackets.js";
+export type {
+  UseBracketsResult,
+  UseBracketResult,
+  UsePlayerBracketRegistrationsResult,
+} from "./useBrackets.js";
+
 // Activity hooks
 export { useActivityStats } from "./useActivityStats.js";
 export type { UseActivityStatsResult } from "./useActivityStats.js";

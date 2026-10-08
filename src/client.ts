@@ -28,6 +28,18 @@ import {
   getActivityStats as apiGetActivityStats,
   getPrizeStats as apiGetPrizeStats,
 } from "./api/activity.js";
+import {
+  getBrackets as apiGetBrackets,
+  getBracket as apiGetBracket,
+  getBracketRegistrations as apiGetBracketRegistrations,
+  getPlayerBracketRegistrations as apiGetPlayerBracketRegistrations,
+} from "./api/brackets.js";
+import type {
+  BracketListParams,
+  BracketRegistration,
+  IndexedBracketDetail,
+  PlayerBracketRegistration,
+} from "./types/indexedBracket.js";
 import { WSManager } from "./ws/manager.js";
 import { getChainConfig } from "./chains/constants.js";
 import { ConnectionStatus } from "./datasource/health.js";
@@ -202,6 +214,39 @@ export class BudokanClient {
       retryDelay: this.resolvedConfig.retryDelay,
       timeout: this.resolvedConfig.timeout,
     };
+  }
+
+  // ---- Indexed bracket queries (API only; the bracket contract is the fallback) ----
+
+  /** Indexed on-chain brackets, newest first, each with its match tournament ids. */
+  async getBrackets(params?: BracketListParams) {
+    return apiGetBrackets(this.resolvedConfig.apiBaseUrl, params, this.apiCtx);
+  }
+
+  /** One indexed bracket with its drawn seats and built matches; null when not indexed. */
+  async getBracket(bracketId: string, contractAddress?: string): Promise<IndexedBracketDetail | null> {
+    return apiGetBracket(this.resolvedConfig.apiBaseUrl, bracketId, contractAddress, this.apiCtx);
+  }
+
+  /** A bracket's registrations in order, optionally for one player. */
+  async getBracketRegistrations(
+    bracketId: string,
+    params?: { player?: string; contractAddress?: string; limit?: number; offset?: number },
+  ): Promise<BracketRegistration[]> {
+    return apiGetBracketRegistrations(this.resolvedConfig.apiBaseUrl, bracketId, params, this.apiCtx);
+  }
+
+  /** Every bracket a player registered for, including before the draw. */
+  async getPlayerBracketRegistrations(
+    player: string,
+    contractAddress?: string,
+  ): Promise<PlayerBracketRegistration[]> {
+    return apiGetPlayerBracketRegistrations(
+      this.resolvedConfig.apiBaseUrl,
+      player,
+      contractAddress,
+      this.apiCtx,
+    );
   }
 
   // ---- Tournament Queries ----
