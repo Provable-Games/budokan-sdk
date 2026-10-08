@@ -445,6 +445,106 @@
       },
       {
         "type": "function",
+        "name": "create_bracket_with_allowlist",
+        "inputs": [
+          {
+            "name": "config",
+            "type": "budokan_bracket::BracketConfig"
+          },
+          {
+            "name": "prize_tiers",
+            "type": "core::array::Array::<core::integer::u16>"
+          },
+          {
+            "name": "attempts_per_player",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "setup_window",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "require_full",
+            "type": "core::bool"
+          },
+          {
+            "name": "allowlist_count",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u64"
+          }
+        ],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "begin_registration_allowlist",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "count",
+            "type": "core::integer::u32"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "import_registration_allowlist",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          },
+          {
+            "name": "start_index",
+            "type": "core::integer::u32"
+          },
+          {
+            "name": "players",
+            "type": "core::array::Span::<core::starknet::contract_address::ContractAddress>"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "finalize_registration_allowlist",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [],
+        "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "registration_allowlist_progress",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "(core::integer::u32, core::integer::u32, core::bool)"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "registration_allowlist_count",
         "inputs": [
           {
@@ -557,6 +657,22 @@
         ],
         "outputs": [],
         "state_mutability": "external"
+      },
+      {
+        "type": "function",
+        "name": "assignment_progress",
+        "inputs": [
+          {
+            "name": "bracket_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "(core::integer::u32, core::integer::u32)"
+          }
+        ],
+        "state_mutability": "view"
       },
       {
         "type": "function",
@@ -1223,6 +1339,45 @@
   },
   {
     "type": "event",
+    "name": "budokan_bracket::Bracket::RegistrationAllowlistLoading",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "expected",
+        "type": "core::integer::u32",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::RegistrationAllowlistAdvanced",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "imported",
+        "type": "core::integer::u32",
+        "kind": "data"
+      },
+      {
+        "name": "expected",
+        "type": "core::integer::u32",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
     "name": "budokan_bracket::Bracket::RegistrationClosed",
     "kind": "struct",
     "members": [
@@ -1251,6 +1406,28 @@
       {
         "name": "ready_block",
         "type": "core::integer::u64",
+        "kind": "data"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "budokan_bracket::Bracket::AssignmentAdvanced",
+    "kind": "struct",
+    "members": [
+      {
+        "name": "bracket_id",
+        "type": "core::integer::u64",
+        "kind": "key"
+      },
+      {
+        "name": "completed",
+        "type": "core::integer::u32",
+        "kind": "data"
+      },
+      {
+        "name": "total",
+        "type": "core::integer::u32",
         "kind": "data"
       }
     ]
@@ -1433,6 +1610,16 @@
         "kind": "nested"
       },
       {
+        "name": "RegistrationAllowlistLoading",
+        "type": "budokan_bracket::Bracket::RegistrationAllowlistLoading",
+        "kind": "nested"
+      },
+      {
+        "name": "RegistrationAllowlistAdvanced",
+        "type": "budokan_bracket::Bracket::RegistrationAllowlistAdvanced",
+        "kind": "nested"
+      },
+      {
         "name": "RegistrationClosed",
         "type": "budokan_bracket::Bracket::RegistrationClosed",
         "kind": "nested"
@@ -1440,6 +1627,11 @@
       {
         "name": "AssignmentCommitted",
         "type": "budokan_bracket::Bracket::AssignmentCommitted",
+        "kind": "nested"
+      },
+      {
+        "name": "AssignmentAdvanced",
+        "type": "budokan_bracket::Bracket::AssignmentAdvanced",
         "kind": "nested"
       },
       {

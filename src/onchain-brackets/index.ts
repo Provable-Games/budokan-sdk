@@ -16,6 +16,11 @@
 import { CallData, hash, uint256, type Call } from "starknet";
 import { MAX_ALLOWLIST_ENTRY_COUNT } from "../extensions/merkle.js";
 
+/** Fixed fields support 8,192 players; deadline-sized open fields retain their 1,024 cap. */
+export const MAX_BRACKET_FIELD = 8192;
+export const MAX_OPEN_BRACKET_FIELD = 1024;
+export const BRACKET_IMPORT_BATCH = 256;
+
 /** Lifecycle status (mirrors packages/bracket `status`). */
 export const BRACKET_STATUS = {
   REGISTERING: 0,
@@ -112,9 +117,9 @@ export function buildCreateBracketCall(
   if (setup !== undefined && (!Number.isInteger(setup) || setup < 60 || setup > 86400)) {
     throw new Error("setupWindow must be an integer from 60 to 86400 seconds");
   }
-  if (!Number.isInteger(config.size) || config.size < 0 || config.size > 1024 ||
+  if (!Number.isInteger(config.size) || config.size < 0 || config.size > MAX_BRACKET_FIELD ||
       (config.size !== 0 && (config.size < 2 || (config.size & (config.size - 1)) !== 0))) {
-    throw new Error("size must be 0 or a power of two from 2 to 1024");
+    throw new Error("size must be 0 or a power of two from 2 to 8192");
   }
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > MAX_ALLOWLIST_ENTRY_COUNT) {
     throw new Error(`attemptsPerPlayer must be an integer from 1 to ${MAX_ALLOWLIST_ENTRY_COUNT}`);
@@ -156,12 +161,75 @@ export function buildImportFreeRosterCall(
 ): Call {
   const id = BigInt(bracketId);
   if (id <= 0n || id >= 1n << 64n) throw new Error("bracketId must be a positive u64");
-  if (!Number.isInteger(startIndex) || startIndex < 0 || startIndex > 1024) throw new Error("Invalid roster cursor");
-  if (players.length < 1 || players.length > 256 || startIndex + players.length > 1024) throw new Error("Invalid roster batch");
+  if (!Number.isInteger(startIndex) || startIndex < 0 || startIndex > MAX_BRACKET_FIELD) throw new Error("Invalid roster cursor");
+  if (players.length < 1 || players.length > BRACKET_IMPORT_BATCH || startIndex + players.length > MAX_BRACKET_FIELD) throw new Error("Invalid roster batch");
   const addresses = players.map(player => BigInt(player));
   if (addresses.some(player => player <= 0n || player >= 1n << 251n)) throw new Error("Invalid player address");
   if (new Set(addresses.map(String)).size !== addresses.length) throw new Error("Duplicate roster player");
   return { contractAddress: bracketAddress, entrypoint: "import_free_roster", calldata: CallData.compile([id, startIndex, addresses]) };
+}
+
+/** Start an invitation upload atomically with creation; registration stays locked
+ * until all chunks are confirmed and finalize_registration_allowlist succeeds. */
+export function buildCreateBracketWithAllowlistCall(
+  bracketAddress: string, config: CreateBracketConfig, allowlistCount: number, prizeTiers: number[] = [],
+): Call {
+  const policy = config.requireFull ?? config.size > 0;
+  buildCreateBracketCall(bracketAddress, { ...config, requireFull: policy }, prizeTiers);
+  validateAllowlistCount(allowlistCount);
+  if (policy && allowlistCount < config.size) throw new Error("Allowlist cannot fill the required field");
+  return { contractAddress: bracketAddress, entrypoint: "create_bracket_with_allowlist", calldata: CallData.compile({
+    config: serializeBracketConfig(config), prize_tiers: prizeTiers,
+    attempts_per_player: config.attemptsPerPlayer ?? 1, setup_window: config.setupWindow ?? 3600,
+    require_full: policy, allowlist_count: allowlistCount,
+  }) };
+}
+
+function validateAllowlistCount(count: number): void {
+  if (!Number.isInteger(count) || count < 2 || count > MAX_BRACKET_FIELD)
+    throw new Error("allowlistCount must be an integer from 2 to 8192");
+}
+function bracketIdU64(bracketId: number | bigint): bigint {
+  const id = BigInt(bracketId);
+  if (id <= 0n || id >= 1n << 64n) throw new Error("bracketId must be a positive u64");
+  return id;
+}
+
+/** Lock an existing, empty registration list before uploading invitations. */
+export function buildBeginRegistrationAllowlistCall(bracketAddress: string, bracketId: number | bigint, count: number): Call {
+  validateAllowlistCount(count);
+  return { contractAddress: bracketAddress, entrypoint: "begin_registration_allowlist", calldata: CallData.compile([bracketIdU64(bracketId), count]) };
+}
+
+/** Import at the confirmed onchain cursor. Duplicates across chunks are rejected
+ * atomically by the contract; never advance a local cursor before confirmation. */
+export function buildImportRegistrationAllowlistCall(
+  bracketAddress: string, bracketId: number | bigint, startIndex: number, players: readonly string[],
+): Call {
+  const call = buildImportFreeRosterCall(bracketAddress, bracketId, startIndex, players);
+  return { ...call, entrypoint: "import_registration_allowlist" };
+}
+
+export function buildFinalizeRegistrationAllowlistCall(bracketAddress: string, bracketId: number | bigint): Call {
+  return { contractAddress: bracketAddress, entrypoint: "finalize_registration_allowlist", calldata: CallData.compile([bracketIdU64(bracketId)]) };
+}
+
+export interface RegistrationAllowlistProgress { imported: number; expected: number; ready: boolean }
+export function decodeRegistrationAllowlistProgress(values: readonly (string | bigint)[]): RegistrationAllowlistProgress {
+  if (values.length !== 3) throw new Error("Missing registration allowlist progress");
+  const [imported, expected, ready] = values.map(BigInt);
+  if (imported! < 0n || imported! > expected! || expected! > BigInt(MAX_BRACKET_FIELD) ||
+      (expected! !== 0n && expected! < 2n) || (ready !== 0n && ready !== 1n) ||
+      (ready === 1n && imported !== expected)) throw new Error("Invalid registration allowlist progress");
+  return { imported: Number(imported), expected: Number(expected), ready: ready === 1n };
+}
+
+export interface BracketAssignmentProgress { completed: number; total: number }
+export function decodeBracketAssignmentProgress(values: readonly (string | bigint)[]): BracketAssignmentProgress {
+  if (values.length !== 2) throw new Error("Missing bracket assignment progress");
+  const [completed, total] = values.map(BigInt);
+  if (completed! < 0n || completed! > total! || total! > BigInt(MAX_BRACKET_FIELD)) throw new Error("Invalid bracket assignment progress");
+  return { completed: Number(completed), total: Number(total) };
 }
 
 /** Start the existing recovery deadline without calling a failing game dependency. */
@@ -283,7 +351,9 @@ export function buildBracketCommitCall(bracketAddress: string, bracketId: number
 }
 
 /** Draw from the committed block after assignment_ready returns true.
- * This must be a later transaction than close_registration. Any account works. */
+ * This must be a later transaction than close_registration. Any account works.
+ * Fields above 1,024 need repeated calls, each advancing 256 positions from the
+ * same committed seed. Read assignment_progress after each confirmed call. */
 export function buildBracketAssignmentCall(bracketAddress: string, bracketId: number | bigint): Call {
   return { contractAddress: bracketAddress, entrypoint: "fulfill_assignment", calldata: CallData.compile([bracketId]) };
 }
@@ -304,7 +374,7 @@ export function buildBracketRefundEntryPoolCall(
   bracketAddress: string, bracketId: number | bigint, registrationIndex: number, seatIndex: number,
 ): Call {
   for (const value of [registrationIndex, seatIndex]) {
-    if (!Number.isInteger(value) || value < 0 || value >= 1024) throw new Error("refund indices must be integers from 0 to 1023");
+    if (!Number.isInteger(value) || value < 0 || value >= MAX_BRACKET_FIELD) throw new Error("refund indices must be integers from 0 to 8191");
   }
   return { contractAddress: bracketAddress, entrypoint: "refund_entry_pool", calldata: CallData.compile([bracketId, registrationIndex, seatIndex]) };
 }

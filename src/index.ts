@@ -347,6 +347,15 @@ export type {
 // open/uncapped brackets; see src/onchain-brackets/index.ts.
 export {
   BRACKET_STATUS,
+  MAX_BRACKET_FIELD,
+  MAX_OPEN_BRACKET_FIELD,
+  BRACKET_IMPORT_BATCH,
+  buildCreateBracketWithAllowlistCall,
+  buildBeginRegistrationAllowlistCall,
+  buildImportRegistrationAllowlistCall,
+  buildFinalizeRegistrationAllowlistCall,
+  decodeRegistrationAllowlistProgress,
+  decodeBracketAssignmentProgress,
   buildCreateBracketCall,
   buildCreateFreeRosterCall,
   buildImportFreeRosterCall,
@@ -364,6 +373,8 @@ export {
 } from "./onchain-brackets/index.js";
 export type {
   BracketStatus,
+  RegistrationAllowlistProgress,
+  BracketAssignmentProgress,
   CreateBracketConfig,
 } from "./onchain-brackets/index.js";
 

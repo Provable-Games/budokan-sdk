@@ -427,3 +427,34 @@ After expiry, an incomplete setup can be cancelled and all outstanding entry fee
 refunded to their original payers. Existing zero-window terms are unchanged.
 `deployment()` reports Budokan, the legacy VRF target, winner validator and Merkle
 validator; verify the selected stack before writing.
+
+### Large fixed fields and batched invitations
+
+Fixed onchain fields support powers of two up to `MAX_BRACKET_FIELD` (8,192).
+`size: 0` remains deadline-sized, capped at `MAX_OPEN_BRACKET_FIELD` (1,024).
+Use `buildCreateBracketWithAllowlistCall(address, config, expectedCount)` to lock
+registrations atomically with creation. Then import at most
+`BRACKET_IMPORT_BATCH` (256) unique addresses per call using
+`buildImportRegistrationAllowlistCall`. Read `registration_allowlist_progress`
+after each confirmed transaction and resume from its `imported` cursor; do not
+advance based on a broadcast alone. Finish with
+`buildFinalizeRegistrationAllowlistCall` once every invitation is confirmed.
+An existing empty bracket can start this process with
+`buildBeginRegistrationAllowlistCall`. The creator performs these uploads;
+invited players still register themselves and pay their own fee.
+
+`decodeRegistrationAllowlistProgress` validates the three-felt response; `ready`
+must be true before players register or a bot closes registration. Older atomic
+allowlists remain compatible. Creator-supplied **free rosters** use
+`buildCreateFreeRosterCall` and `buildImportFreeRosterCall` instead, bypassing
+registration without charging anyone.
+
+Fields above 1,024 also draw in bounded chunks. Read `assignment_progress`, decode
+with `decodeBracketAssignmentProgress`, then repeat `buildBracketAssignmentCall`
+after confirmation until the contract leaves ASSIGNING. All chunks use the same
+committed blockhash seed. Give transaction journals a distinct action key per
+confirmed `completed` cursor. Match creation still uses bounded
+`buildBracketMatchesCall` calls. No helper auto-mints tournament attempts.
+
+These methods require the scaled bracket class from
+[Budokan PR #348](https://github.com/Provable-Games/budokan/pull/348).

@@ -1,3 +1,4 @@
+import { buildCreateBracketWithAllowlistCall, buildBeginRegistrationAllowlistCall, buildImportRegistrationAllowlistCall, buildFinalizeRegistrationAllowlistCall, decodeRegistrationAllowlistProgress, decodeBracketAssignmentProgress } from "../src/onchain-brackets/index.js";
 import { buildCreateFreeRosterCall, buildImportFreeRosterCall, buildBracketStartRecoveryCall, buildBracketRecoverEntryPoolCall, buildBracketRefundEntryPoolCall } from "../src/onchain-brackets/index.js";
 import { describe, expect, test } from "bun:test";
 import { CallData } from "starknet";
@@ -56,7 +57,7 @@ test("1024-player setup window preserves the attempts and configuration ABI", ()
   expect(stored.size).toBe(1024n); expect(tiers).toEqual([]);
   expect(attempts).toBe(2n); expect(setup).toBe(3600n);
 });
-test.each([1, 3, 2048, -1, 2.5])("rejects unsupported field %s", size => {
+test.each([1, 3, 16384, -1, 2.5])("rejects unsupported field %s", size => {
   expect(() => buildCreateBracketCall("0xabc", { ...config, size })).toThrow("size");
 });
 test.each([0, 59, 86401, NaN, 60.5])("rejects invalid setup window %s", setupWindow => {
@@ -101,7 +102,7 @@ describe("entry-funded final prize recovery", () => {
   test("binds both refund indices and rejects out-of-range proofs", () => {
     expect(buildBracketRefundEntryPoolCall("0xabc", 2n, 3, 1)).toEqual({contractAddress:"0xabc", entrypoint:"refund_entry_pool", calldata:["2", "3", "1"]});
     expect(decode(buildBracketRefundEntryPoolCall("0xabc", 2n, 3, 1))).toEqual([2n, 3n, 1n]);
-    for (const index of [-1, 1024, 0.5, NaN]) {
+    for (const index of [-1, 8192, 0.5, NaN]) {
       expect(() => buildBracketRefundEntryPoolCall("0xabc", 2n, index, 0)).toThrow();
       expect(() => buildBracketRefundEntryPoolCall("0xabc", 2n, 0, index)).toThrow();
     }
@@ -136,5 +137,40 @@ test("roster import rejects empty/oversized/duplicate/zero batches and invalid c
   expect(() => buildImportFreeRosterCall("0xabc", 1n, 0, ["0x1", "0x01"])).toThrow("Duplicate");
   expect(() => buildImportFreeRosterCall("0xabc", 1n, 0, ["0x0"])).toThrow("address");
   expect(() => buildImportFreeRosterCall("0xabc", 1n, -1, ["0x1"])).toThrow("cursor");
-  expect(() => buildImportFreeRosterCall("0xabc", 1n, 1024, ["0x1"])).toThrow("batch");
+  expect(() => buildImportFreeRosterCall("0xabc", 1n, 8192, ["0x1"])).toThrow("batch");
+});
+
+
+describe("large fields and invitation uploads", () => {
+  test.each([2048, 4096, 8192])("compiled ABI preserves fixed field %s", size => {
+    expect(decode(buildCreateBracketCall("0xabc", {...config, size}))[0].size).toBe(BigInt(size));
+    expect(decode(buildCreateFreeRosterCall("0xabc", {...config, size}))[0].size).toBe(BigInt(size));
+  });
+  test("creation locks the invitation list with full-field and attempt policy in one call", () => {
+    const call = buildCreateBracketWithAllowlistCall("0xabc", {...config, size: 8192, attemptsPerPlayer: 5}, 8192);
+    const [stored, tiers, attempts, setup, full, expected] = decode(call);
+    expect(call.entrypoint).toBe("create_bracket_with_allowlist");
+    expect(stored.size).toBe(8192n); expect(tiers).toEqual([]);
+    expect([attempts, setup, full, expected]).toEqual([5n, 3600n, true, 8192n]);
+  });
+  test("ordered allowlist imports preserve the final batch and use the compiled ABI", () => {
+    const call = buildImportRegistrationAllowlistCall("0xabc", 2n, 7936, Array.from({length: 256}, (_, i) => `0x${(i+1).toString(16)}`));
+    expect(decode(call).slice(0, 2)).toEqual([2n, 7936n]);
+    expect(decode(call)[2]).toHaveLength(256);
+    expect(decode(buildBeginRegistrationAllowlistCall("0xabc", 2n, 8192))).toEqual([2n, 8192n]);
+    expect(buildFinalizeRegistrationAllowlistCall("0xabc", 2n).calldata).toEqual(["2"]);
+  });
+  test("rejects incomplete full-field invitations, invalid counts and oversized imports", () => {
+    expect(() => buildCreateBracketWithAllowlistCall("0xabc", config, 2)).toThrow("fill");
+    for(const count of [0, 1, 8193, 1.5]) expect(() => buildBeginRegistrationAllowlistCall("0xabc", 1n, count)).toThrow("allowlistCount");
+    expect(() => buildImportRegistrationAllowlistCall("0xabc", 1n, 8192, ["0x1"])).toThrow("batch");
+  });
+  test("decodes loading, finalized and legacy progress without relaxing malformed responses", () => {
+    expect(decodeRegistrationAllowlistProgress(["256", "8192", "0"])).toEqual({imported:256,expected:8192,ready:false});
+    expect(decodeRegistrationAllowlistProgress(["0", "0", "1"])).toEqual({imported:0,expected:0,ready:true});
+    expect(() => decodeRegistrationAllowlistProgress(["256", "8192", "1"])).toThrow("Invalid");
+    expect(decodeBracketAssignmentProgress(["256", "8192"])).toEqual({completed:256,total:8192});
+    expect(decodeBracketAssignmentProgress(["0", "3"])).toEqual({completed:0,total:3});
+    expect(() => decodeBracketAssignmentProgress(["8193", "8192"])).toThrow("Invalid");
+  });
 });
