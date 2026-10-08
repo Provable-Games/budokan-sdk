@@ -195,6 +195,13 @@ The SDK supports two data sources: **API** (REST indexer) and **RPC** (direct St
 | `getTournamentRegistrations(id)` | ✅ | ✅ | RPC: `playerAddress` and `gameAddress` fields will be empty |
 | `getTournamentPrizes(id)` | ✅ | ✅ | |
 | `getGameTournaments(addr)` | ✅ | ✅ | |
+| **Brackets** | | | |
+| `getBrackets(params?)` | ✅ | ✅ | RPC scans `BracketCreated` from `bracketStartBlock` and reads each bracket at one block |
+| `getBracket(id)` | ✅ | ✅ | Also asks the chain when the API has not indexed the bracket yet (404) |
+| `getBracketRegistrations(id)` | ✅ | ✅ | RPC reads the bracket's `Registered` / `Refunded` events |
+| `getPlayerBracketRegistrations(addr)` | ✅ | ✅ | RPC scans the contract's `Registered` events (players are not event keys) |
+
+Bracket reads are shared: identical calls in flight share one request, and an answer is reused for `bracketCacheMs` (default 5000; `0` reuses nothing once settled). Failures are never reused.
 | **Prize Aggregation** | | | |
 | `getTournamentPrizeAggregation(id)` | ✅ | ❌ | API only |
 | `includePrizeSummary` param | ✅ | ✅ | RPC fetches prizes per tournament and builds aggregation client-side |
