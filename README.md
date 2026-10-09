@@ -195,6 +195,13 @@ The SDK supports two data sources: **API** (REST indexer) and **RPC** (direct St
 | `getTournamentRegistrations(id)` | ✅ | ✅ | RPC: `playerAddress` and `gameAddress` fields will be empty |
 | `getTournamentPrizes(id)` | ✅ | ✅ | |
 | `getGameTournaments(addr)` | ✅ | ✅ | |
+| **Brackets** | | | |
+| `getBrackets(params?)` | ✅ | ✅ | RPC scans `BracketCreated` from `bracketStartBlock` and reads each bracket at one block |
+| `getBracket(id)` | ✅ | ✅ | Also asks the chain when the API has not indexed the bracket yet (404) |
+| `getBracketRegistrations(id)` | ✅ | ✅ | RPC reads the bracket's `Registered` / `Refunded` events |
+| `getPlayerBracketRegistrations(addr)` | ✅ | ✅ | RPC scans the contract's `Registered` events (players are not event keys) |
+
+Bracket reads are shared: identical calls in flight share one request, and an answer is reused for `bracketCacheMs` (default 5000; `0` reuses nothing once settled). Failures are never reused.
 | **Prize Aggregation** | | | |
 | `getTournamentPrizeAggregation(id)` | ✅ | ❌ | API only |
 | `includePrizeSummary` param | ✅ | ✅ | RPC fetches prizes per tournament and builds aggregation client-side |
@@ -340,3 +347,121 @@ completion signal. Refetch after indexing to observe a changed phase. Older
 API/viewer responses retain the schedule-based fallback. The pure
 `tournamentPhase` helper computes scheduled time only. No contract deployment
 or SDK publication is included.
+
+
+## Multiple attempts in SDK brackets
+
+Set `attemptsPerPlayer` on `createBracket` or `createRegisteringBracket` to give
+both competitors the same allowance in every round. It defaults to `1`, including
+when restoring an older saved bracket without the field. This is a best-score
+format: the entry at leaderboard position **1** qualifies its owner, irrespective
+of how many other entries that player has. Scores are not added together.
+
+```ts
+import {
+  createBracket, bracketRoundOneAllowlistCall, attachRoundOneTree,
+  bracketEntryCalls,
+} from "@provable-games/budokan-sdk";
+
+const state = createBracket({ ...bracketOptions, attemptsPerPlayer: 2 });
+const match = state.matches.find((m) => m.round === 1)!;
+const tree = bracketRoundOneAllowlistCall(state, match.id);
+// Sign tree.call, parse its treeId, and store tree.entries via storeAllowlistTree.
+// Each player's immutable leaf count is 2, matching the tournament entry limit.
+attachRoundOneTree(state, match.id, treeId);
+// Repeat for each first-round match, then create/attach tournaments as usual.
+
+// After the match tournament exists, fetch this player's allowlist proof.
+const calls = bracketEntryCalls(state, match.id, playerAddress, proof, 2);
+// One enter_tournament_for_recipients call mints both attempts safely.
+// Omit the last argument to mint one attempt at a time.
+```
+
+Values must be integers from 1 through `MAX_ALLOWLIST_ENTRY_COUNT` (2,147,483,647).
+A single mint batch is limited to 2,048 entries. The pure entry builder does not
+read remaining allowance; check `entries_left` before signing. Every attempt is
+a separate game entry and incurs any applicable game-entry costs.
+
+For multiple attempts, the builder requires `gated: true` and attached first-round
+allowlist trees. Use the helper above: attaching an existing tree with smaller
+leaf counts cannot increase those immutable allowances. Both upfront and
+incremental match creation retain the quota and top-one qualifier in later rounds.
+One qualifying winning token grants the configured number of next-round attempts.
+
+Both SDK creation paths support attempt quotas; the on-chain path requires the
+updated bracket deployment described below. Bots and clients must opt in and
+handle remaining attempts; an SDK update does not change existing tournaments. Late submissions
+can still change first place after finalization; this option does not lock a winner.
+
+
+### On-chain random-draw brackets
+
+`buildCreateBracketCall(address, config)` retains opt-in paid or free registration.
+Use `buildBracketRegisterCalls` to approve an entry fee and register, optionally
+restricting eligibility with the contract's registration allowlist. `requireFull`
+requires a fixed field to fill; otherwise underfilled registration draws the
+largest filled power of two and refunds excluded paid entrants. Fields support
+up to 1,024 players. Set `attemptsPerPlayer` for the immutable per-round quota and
+`setupWindow` for a buffered match build. Omitting these options preserves the
+legacy creation ABI.
+
+For a free roster supplied by the creator, use `buildCreateFreeRosterCall(address,
+config)` followed by `buildImportFreeRosterCall(address, id, confirmedCount,
+players)`. Each batch contains 1..256 unique, nonzero addresses. Read the confirmed
+`registrant_count` before the next batch; never resend an uncertain transaction.
+Paid entries and ordinary registration are rejected in this mode, and the full
+fixed roster is required before drawing. `is_free_roster(id)` identifies the mode.
+
+Call `buildBracketCloseCall` when registration can close. Closing freezes the
+roster and commits the next block's hash; wait until the onchain
+`assignment_ready` view is true before `buildBracketAssignmentCall`. A migrated
+ASSIGNING bracket without a commitment uses `buildBracketCommitCall` once.
+The current stack needs no Cartridge VRF service or VRF session. The deprecated
+`buildBracketSeedCalls` helper is only for historical VRF deployments.
+
+Use `buildBracketMatchesCall(address, id, max)` in bounded resumable batches until
+RUNNING. Players mint their own game attempts; setup never premints their games.
+The first-round Merkle leaves and later-round winner gates share the configured
+quota. Only the feeder's first-place qualifying token grants the next round's
+allowance, which is bound on first advancement. Multiple attempts require
+winner-take-all escrow prizes because placements rank game tokens.
+
+Creation checks the current game-token interface and settings before fees can be
+accepted. New paid brackets always have a setup recovery window. If dependencies
+change and the first match cannot be built, `buildBracketStartRecoveryCall` calls
+`build_matches(id, 0)` to anchor that window without invoking match creation.
+After expiry, an incomplete setup can be cancelled and all outstanding entry fees
+refunded to their original payers. Existing zero-window terms are unchanged.
+`deployment()` reports Budokan, the legacy VRF target, winner validator and Merkle
+validator; verify the selected stack before writing.
+
+### Large fixed fields and batched invitations
+
+Fixed onchain fields support powers of two up to `MAX_BRACKET_FIELD` (8,192).
+`size: 0` remains deadline-sized, capped at `MAX_OPEN_BRACKET_FIELD` (1,024).
+Use `buildCreateBracketWithAllowlistCall(address, config, expectedCount)` to lock
+registrations atomically with creation. Then import at most
+`BRACKET_IMPORT_BATCH` (256) unique addresses per call using
+`buildImportRegistrationAllowlistCall`. Read `registration_allowlist_progress`
+after each confirmed transaction and resume from its `imported` cursor; do not
+advance based on a broadcast alone. Finish with
+`buildFinalizeRegistrationAllowlistCall` once every invitation is confirmed.
+An existing empty bracket can start this process with
+`buildBeginRegistrationAllowlistCall`. The creator performs these uploads;
+invited players still register themselves and pay their own fee.
+
+`decodeRegistrationAllowlistProgress` validates the three-felt response; `ready`
+must be true before players register or a bot closes registration. Older atomic
+allowlists remain compatible. Creator-supplied **free rosters** use
+`buildCreateFreeRosterCall` and `buildImportFreeRosterCall` instead, bypassing
+registration without charging anyone.
+
+Fields above 1,024 also draw in bounded chunks. Read `assignment_progress`, decode
+with `decodeBracketAssignmentProgress`, then repeat `buildBracketAssignmentCall`
+after confirmation until the contract leaves ASSIGNING. All chunks use the same
+committed blockhash seed. Give transaction journals a distinct action key per
+confirmed `completed` cursor. Match creation still uses bounded
+`buildBracketMatchesCall` calls. No helper auto-mints tournament attempts.
+
+These methods require the scaled bracket class from
+[Budokan PR #348](https://github.com/Provable-Games/budokan/pull/348).

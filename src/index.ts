@@ -310,6 +310,7 @@ export {
   advanceBracket,
   attachMatchTournament,
   attachRoundOneTree,
+  bracketRoundOneAllowlistCall,
   pendingMatchCreateCalls,
   roundMatchCreateCalls,
   bracketFeeders,
@@ -342,17 +343,38 @@ export type {
   EntryRequirementLike,
 } from "./brackets/index.js";
 
-// On-chain bracket contract client (escrow + VRF + gated tree). Use for
+// On-chain bracket contract client (escrow + block-hash draw + gated tree). Use for
 // open/uncapped brackets; see src/onchain-brackets/index.ts.
 export {
   BRACKET_STATUS,
+  MAX_BRACKET_FIELD,
+  MAX_OPEN_BRACKET_FIELD,
+  BRACKET_IMPORT_BATCH,
+  buildCreateBracketWithAllowlistCall,
+  buildBeginRegistrationAllowlistCall,
+  buildImportRegistrationAllowlistCall,
+  buildFinalizeRegistrationAllowlistCall,
+  decodeRegistrationAllowlistProgress,
+  decodeBracketAssignmentProgress,
   buildCreateBracketCall,
+  buildCreateFreeRosterCall,
+  buildImportFreeRosterCall,
+  buildBracketStartRecoveryCall,
+  buildBracketSeedCalls,
+  buildBracketCloseCall,
+  buildBracketCommitCall,
+  buildBracketAssignmentCall,
+  buildBracketMatchesCall,
   buildBracketRegisterCall,
   buildBracketRegisterCalls,
+  buildBracketRecoverEntryPoolCall,
+  buildBracketRefundEntryPoolCall,
   parseBracketIdFromReceipt,
 } from "./onchain-brackets/index.js";
 export type {
   BracketStatus,
+  RegistrationAllowlistProgress,
+  BracketAssignmentProgress,
   CreateBracketConfig,
 } from "./onchain-brackets/index.js";
 

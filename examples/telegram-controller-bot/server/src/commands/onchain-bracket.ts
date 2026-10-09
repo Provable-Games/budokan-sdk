@@ -2,7 +2,7 @@
 // contract instead of the off-chain tree (see commands/bracket.ts for the closed
 // path). Two user-facing writes: the organizer `create_bracket`s, then players
 // `register` (escrowing their fee). Everything after registration closes —
-// VRF seeding, building the gated tree, auto-entering round-1 players, and
+// Seeding, building the gated tree, auto-entering round-1 players, and
 // advancement — is driven by the budokan-bots init + advance engines, so this
 // bot's job ends at "created + collecting registrations".
 
@@ -68,12 +68,16 @@ export interface CreateOnchainParams {
   leaderboardAscending: boolean;
   gameMustBeOver: boolean;
   settingsId: number;
+  attemptsPerPlayer?: number;
+  /** Optional explicit setup buffer (60..86400 seconds). The current contract
+   * automatically buffers large fields when this is omitted. */
+  setupWindow?: number;
   /** 0 = uncapped, else a power of two >= 2. */
   size: number;
   /** Per-match game duration + submission window, seconds. */
   gameDuration: number;
   submissionDuration: number;
-  /** Seconds from now until registration closes (= round-1 start anchor). */
+  /** Seconds from now until registration closes; buffered play starts later. */
   startDelaySec: number;
   namePrefix?: string;
   description?: string;
@@ -120,6 +124,8 @@ export async function createOnchainBracket(
     game: p.gameAddress,
     size: p.size,
     settingsId: p.settingsId,
+    attemptsPerPlayer: p.attemptsPerPlayer,
+    setupWindow: p.setupWindow,
     entryFee,
     feeToken,
     registrationDeadline,
@@ -507,7 +513,7 @@ async function announceOneBracket(
     rpc.callContract({ contractAddress: oc.contractAddress, entrypoint, calldata });
 
   const status = Number(BigInt((await read("get_config", [oc.bracketId]))[13] ?? "0"));
-  if (status < BRACKET_STATUS.RUNNING) return; // tree not built yet
+  if (status !== BRACKET_STATUS.RUNNING && status !== BRACKET_STATUS.COMPLETE) return;
   const field = Number(BigInt((await read("field", [oc.bracketId]))[0] ?? "0"));
   if (field < 2) return;
   const rounds = bracketRounds(field);
