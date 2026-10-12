@@ -4,7 +4,7 @@ export interface ChainConfig {
   wsUrl: string;
   budokanAddress: string;
   viewerAddress: string;
-  /** On-chain bracket contract (packages/bracket) — escrow + VRF + gated tree. */
+  /** On-chain bracket contract (packages/bracket): escrow, block-hash draw and gated tree. */
   bracketAddress: string;
   /** The bracket contract's deploy block: where the chain fallback scans `BracketCreated`. */
   bracketStartBlock: number;
@@ -13,15 +13,15 @@ export interface ChainConfig {
 export const CHAINS: Record<string, ChainConfig> = {
   mainnet: {
     rpcUrl: "https://rpc.provable.games/rpc",
-    apiBaseUrl: "https://budokan-api-production.up.railway.app",
-    wsUrl: "wss://budokan-api-production.up.railway.app/ws",
-    // Budokan v2 (lite-only tokens, budokan #313); deployed at block 14065996.
-    // budokan-api-production indexes this contract after the v2 cutover
-    // (budokan contracts/DEPLOY_MAINNET_RUNBOOK.md).
-    budokanAddress: "0x019f145601d5dbc087e2eacd9e6b36b6ff7b1a206362ecf4b59e1de7a5aad5c7",
-    viewerAddress: "0x019efd3c3b6fc02da64027a2c423837ff4518d92dd873f1ed7ae1112e9632a64",
-    bracketAddress: "0x07c0c83498814f69b8f99ce959a389407b1a7f10630c627c365dc556c9c53ce7",
-    bracketStartBlock: 15845175,
+    apiBaseUrl: "https://api-packed-production.up.railway.app",
+    wsUrl: "wss://api-packed-production.up.railway.app/ws",
+    // Fresh packed-state release (budokan #354/#355/#357), deploy block 16278878.
+    // IDs restart at 1: use this address, viewer and fresh API together.
+    // The previous deployment remains available through explicit client overrides.
+    budokanAddress: "0x341263a7a0fda541d57b4de1365017066badee008d5536a8adbb14c9292be57",
+    viewerAddress: "0x49f78887ca959bf1738ee5a875c5ad948b4e79bdcb39315f4f9ac93d7c78c8",
+    bracketAddress: "0x525e28ecaf636e9dfb7b03221965614bc43afd173048f1dc9b96705fff846d",
+    bracketStartBlock: 16278886,
   },
   sepolia: {
     rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia/rpc/v0_10",
