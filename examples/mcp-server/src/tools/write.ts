@@ -231,12 +231,18 @@ function buildDistribution(
 }
 
 /**
- * The `maxEntries` that seals a tournament gated by this allowlist alone (gatingEntryLimit 0):
- * every leaf's allowance, summed. Null when it is above Budokan's 20-bit cap (an
- * "unlimited" allowance), in which case leave the field open.
+ * The `maxEntries` that seals a tournament gated by this allowlist: each leaf's allowance,
+ * clipped by the tournament's `gatingEntryLimit` when it is non-zero, summed. Null when that
+ * is above Budokan's 20-bit cap, in which case leave the field open.
  */
-function allowlistMaxEntries(entries: ReadonlyArray<{ address: string; count: number }>) {
-  const sum = entries.reduce((total, e) => total + e.count, 0);
+function allowlistMaxEntries(
+  entries: ReadonlyArray<{ address: string; count: number }>,
+  gatingEntryLimit: number,
+) {
+  const sum = entries.reduce(
+    (total, e) => total + (gatingEntryLimit > 0 ? Math.min(e.count, gatingEntryLimit) : e.count),
+    0,
+  );
   if (sum > MAX_TOURNAMENT_ENTRIES) {
     return {
       suggestedMaxEntries: null,
@@ -246,10 +252,10 @@ function allowlistMaxEntries(entries: ReadonlyArray<{ address: string; count: nu
     };
   }
   return {
-    suggestedMaxEntries: maxEntriesForAllowlist(entries),
+    suggestedMaxEntries: maxEntriesForAllowlist(entries, gatingEntryLimit),
     maxEntriesNote:
-      "Pass as create_tournament's maxEntries with gatingEntryLimit 0. With a non-zero " +
-      "gatingEntryLimit, use maxEntriesForAllowlist(entries, gatingEntryLimit) instead.",
+      `Pass as create_tournament's maxEntries together with gatingEntryLimit ` +
+      `${gatingEntryLimit}; a different gatingEntryLimit needs a different cap.`,
   };
 }
 
@@ -372,8 +378,7 @@ export function registerWriteTools(server: McpServer) {
               "the field is exact: a fixed roster x games each, or for an allowlist the sum over " +
               "its addresses of min(allowance, gatingEntryLimit), where gatingEntryLimit 0 means " +
               "the allowance alone. Don't compute that by hand: use create_allowlist's " +
-              "suggestedMaxEntries (valid when gatingEntryLimit is 0) or the SDK's " +
-              "maxEntriesForAllowlist(entries, gatingEntryLimit). A sealed tournament finalizes and pays out as soon as every entry is " +
+              "suggestedMaxEntries, passing it the same gatingEntryLimit. A sealed tournament finalizes and pays out as soon as every entry is " +
               "played and ranked, without waiting for its end time; entries past the cap are " +
               "rejected. Pair with gameMustBeOver=true so finished games can be submitted during play",
           ),
@@ -590,6 +595,15 @@ export function registerWriteTools(server: McpServer) {
               "everyone else 1). Alternative to addresses/entriesPerAddress. Leave the " +
               "tournament's gatingEntryLimit at 0 or the per-address counts get capped by it",
           ),
+        gatingEntryLimit: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            "The gatingEntryLimit you will pass to create_tournament with this tree (default 0). " +
+              "Only used to compute suggestedMaxEntries, which is correct for that limit",
+          ),
         dryRun: z.boolean().optional().describe("Preview without broadcasting (still needs a configured signer)"),
       },
     },
@@ -605,7 +619,7 @@ export function registerWriteTools(server: McpServer) {
             ? { chain, entries: input.entries }
             : { chain, addresses: input.addresses!, entriesPerAddress: input.entriesPerAddress },
         );
-        const suggestedMaxEntries = allowlistMaxEntries(entries);
+        const suggestedMaxEntries = allowlistMaxEntries(entries, input.gatingEntryLimit ?? 0);
         if (input.dryRun) {
           return jsonResult({
             dryRun: true,
