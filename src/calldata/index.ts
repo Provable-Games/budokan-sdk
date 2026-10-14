@@ -200,7 +200,8 @@ export interface CreateTournamentArgs {
    * or `maxEntriesForAllowlist` — and pair it with `leaderboard.gameMustBeOver` so
    * finished games can be submitted during play. Omit (or 0) for an open field:
    * the tournament then runs to its schedule, exactly as before.
-   * Requires a Budokan class with `create_tournament_with_max_entries`.
+   * Sent as `create_tournament`'s trailing `max_entries` (0 when omitted), which the
+   * current Budokan class requires.
    */
   maxEntries?: number;
 }
@@ -559,20 +560,12 @@ export function buildCreateTournamentCall(
       game_must_be_over: args.leaderboard.gameMustBeOver,
     },
   });
-  // A sealed field is the same call plus a trailing u32; an open field keeps the
-  // original entrypoint, so it works against every Budokan class.
+  // `max_entries: u32` is create_tournament's last argument; 0 is an open field.
   const maxEntries = validMaxEntries(args.maxEntries ?? 0);
-  if (maxEntries > 0) {
-    return {
-      contractAddress: budokanAddress,
-      entrypoint: "create_tournament_with_max_entries",
-      calldata: [...calldata, num.toHex(maxEntries)],
-    };
-  }
   return {
     contractAddress: budokanAddress,
     entrypoint: "create_tournament",
-    calldata,
+    calldata: [...calldata, num.toHex(maxEntries)],
   };
 }
 

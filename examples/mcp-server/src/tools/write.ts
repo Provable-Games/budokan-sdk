@@ -336,6 +336,19 @@ export function registerWriteTools(server: McpServer) {
               "an entry cannot be sold or moved to another wallet after minting — useful for " +
               "identity/allowlist-gated tournaments where entries shouldn't be tradeable",
           ),
+        maxEntries: z
+          .number()
+          .int()
+          .min(0)
+          .max(0xfffff)
+          .optional()
+          .describe(
+            "Seal the field at this many entries in total (default 0 = open). Set it only when " +
+              "the field is exact: allowlist size x per-player entry limit, or a fixed roster x " +
+              "games each. A sealed tournament finalizes and pays out as soon as every entry is " +
+              "played and ranked, without waiting for its end time; entries past the cap are " +
+              "rejected. Pair with gameMustBeOver=true so finished games can be submitted during play",
+          ),
         paymaster: z
           .boolean()
           .optional()
@@ -470,6 +483,7 @@ export function registerWriteTools(server: McpServer) {
           entryRequirement,
           soulbound: input.soulbound,
           paymaster: input.paymaster,
+          maxEntries: input.maxEntries,
         };
 
         const call = buildCreateTournamentCall(budokanAddress, args);

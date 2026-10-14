@@ -486,8 +486,8 @@ describe("buildCreateTournamentCall felt layout", () => {
 
   test("the whole payload is the length v2 expects", () => {
     // 10 (above) + game_config 4 + entry_fee None 1 + entry_requirement None 1
-    // + leaderboard 2
-    expect((call().calldata as string[]).length).toBe(18);
+    // + leaderboard 2 + max_entries 1
+    expect((call().calldata as string[]).length).toBe(19);
   });
 });
 
@@ -508,18 +508,19 @@ describe("sealed fields (maxEntries)", () => {
     leaderboard: { ascending: false, gameMustBeOver: true },
   };
 
-  test("an open field keeps create_tournament and its calldata exactly", () => {
+  test("an open field sends max_entries = 0", () => {
     const open = buildCreateTournamentCall(BUDOKAN, base);
     expect(open.entrypoint).toBe("create_tournament");
+    expect(BigInt((open.calldata as string[]).at(-1)!)).toBe(0n);
     expect(buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: 0 })).toEqual(open);
   });
 
-  test("a sealed field is the same call plus a trailing cap", () => {
+  test("a sealed field differs only in the trailing cap", () => {
     const open = buildCreateTournamentCall(BUDOKAN, base).calldata as string[];
     const sealed = buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: 10 });
-    expect(sealed.entrypoint).toBe("create_tournament_with_max_entries");
+    expect(sealed.entrypoint).toBe("create_tournament");
     const data = sealed.calldata as string[];
-    expect(data.slice(0, -1)).toEqual(open);
+    expect(data.slice(0, -1)).toEqual(open.slice(0, -1));
     expect(BigInt(data.at(-1)!)).toBe(10n);
   });
 
