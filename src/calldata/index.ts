@@ -42,6 +42,7 @@ import {
 } from "starknet";
 
 import type { TournamentSchedule } from "../schedule/index.js";
+import { normalizeAddress } from "../utils/address.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -192,6 +193,76 @@ export interface CreateTournamentArgs {
    * up. Present so a tournament can opt in without a contract change.
    */
   paymaster?: boolean;
+  /**
+   * Seal the field at this many entries (whole tournament, all players). When set,
+   * the tournament finalizes as soon as the cap is filled and every entry is ranked,
+   * even during play, and its prizes are claimable at once. Entries past it are
+   * rejected. Set it only when the field is exact — use `maxEntriesForFixedField`
+   * or `maxEntriesForAllowlist` — and pair it with `leaderboard.gameMustBeOver` so
+   * finished games can be submitted during play. Omit (or 0) for an open field:
+   * the tournament then runs to its schedule, exactly as before.
+   * Sent as `create_tournament`'s trailing `max_entries` (0 when omitted), which the
+   * current Budokan class requires.
+   */
+  maxEntries?: number;
+}
+
+/** Budokan stores the cap in 20 bits. */
+export const MAX_TOURNAMENT_ENTRIES = 0xfffff;
+
+function validMaxEntries(value: number, label = "maxEntries"): number {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_TOURNAMENT_ENTRIES) {
+    throw new Error(`${label} must be an integer from 0 to ${MAX_TOURNAMENT_ENTRIES}`);
+  }
+  return value;
+}
+
+/**
+ * The cap for a fixed roster: `players` entrants with `entriesPerPlayer` games each.
+ * This is the default a creation flow should apply whenever both are known.
+ */
+export function maxEntriesForFixedField(players: number, entriesPerPlayer = 1): number {
+  if (!Number.isInteger(players) || players < 1) throw new Error("players must be a positive integer");
+  if (!Number.isInteger(entriesPerPlayer) || entriesPerPlayer < 1) {
+    throw new Error("entriesPerPlayer must be a positive integer");
+  }
+  return validMaxEntries(players * entriesPerPlayer, "players x entriesPerPlayer");
+}
+
+/**
+ * The cap for an invite list: each address may enter up to its leaf allowance,
+ * clipped by the tournament's per-qualification `entryLimit` when one is set
+ * (Budokan admits min(allowance, entryLimit)). Every address counts once.
+ */
+export function maxEntriesForAllowlist(
+  entries: ReadonlyArray<{ address: string; count: number }>,
+  entryLimit = 0,
+): number {
+  // Each input is checked on its own: a bad count must not cancel out against another
+  // before the total is checked, and a cap sealed too low turns invitees away for good.
+  if (!Number.isInteger(entryLimit) || entryLimit < 0) {
+    throw new Error("entryLimit must be a non-negative integer (0 = no limit)");
+  }
+  // Deduped exactly like the allowlist tree builder: one leaf per normalized address
+  // ("10" and "0x10" are the same), a repeat with the same count is that one leaf, and
+  // conflicting counts are an error.
+  const seen = new Map<string, number>();
+  let total = 0;
+  for (const e of entries) {
+    if (!Number.isInteger(e.count) || e.count < 0) {
+      throw new Error(`allowlist count for ${e.address} must be a non-negative integer`);
+    }
+    const key = normalizeAddress(e.address);
+    const prior = seen.get(key);
+    if (prior !== undefined) {
+      if (prior !== e.count) throw new Error(`allowlist has ${e.address} twice with different counts`);
+      continue;
+    }
+    seen.set(key, e.count);
+    total += entryLimit > 0 ? Math.min(e.count, entryLimit) : e.count;
+  }
+  if (total < 1) throw new Error("allowlist admits no entries");
+  return validMaxEntries(total, "allowlist entries");
 }
 
 /**
@@ -452,7 +523,7 @@ export function buildClaimRewardCall(
 /**
  * `create_tournament(creator_rewards_address, metadata, schedule,
  *                    game_config, entry_fee, entry_requirement,
- *                    leaderboard_config)`
+ *                    leaderboard_config, max_entries)`
  *
  * Schedule fields are durations (`registration_end_delay`,
  * `game_end_delay` measured from their respective starts) — *not*
@@ -467,6 +538,7 @@ export function buildCreateTournamentCall(
   budokanAddress: string,
   args: CreateTournamentArgs,
 ): Call {
+  const maxEntries = validMaxEntries(args.maxEntries ?? 0);
   const calldata = CallData.compile({
     creator_rewards_address: args.creatorRewardsAddress,
     metadata: {
@@ -504,6 +576,8 @@ export function buildCreateTournamentCall(
       ascending: args.leaderboard.ascending,
       game_must_be_over: args.leaderboard.gameMustBeOver,
     },
+    // u32, 0 = an open field.
+    max_entries: maxEntries,
   });
   return {
     contractAddress: budokanAddress,

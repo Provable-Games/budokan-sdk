@@ -139,6 +139,9 @@ export type {
 // keep encoding gotchas in one place. See src/calldata/index.ts.
 export {
   buildCreateTournamentCall,
+  maxEntriesForFixedField,
+  maxEntriesForAllowlist,
+  MAX_TOURNAMENT_ENTRIES,
   buildEnterTournamentCall,
   buildEnterTournamentForRecipientsCall,
   buildSubmitScoreCall,

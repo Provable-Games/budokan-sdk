@@ -1197,6 +1197,22 @@
       },
       {
         "type": "function",
+        "name": "max_entries",
+        "inputs": [
+          {
+            "name": "tournament_id",
+            "type": "core::integer::u64"
+          }
+        ],
+        "outputs": [
+          {
+            "type": "core::integer::u32"
+          }
+        ],
+        "state_mutability": "view"
+      },
+      {
+        "type": "function",
         "name": "tournament_distribution_shares",
         "inputs": [
           {
@@ -1258,6 +1274,10 @@
           {
             "name": "leaderboard_config",
             "type": "budokan_interfaces::budokan::LeaderboardConfig"
+          },
+          {
+            "name": "max_entries",
+            "type": "core::integer::u32"
           }
         ],
         "outputs": [

@@ -7,6 +7,9 @@ import {
   buildErc20ApproveCall,
   buildSubmitScoreCall,
   buildCreateTournamentCall,
+  maxEntriesForFixedField,
+  maxEntriesForAllowlist,
+  MAX_TOURNAMENT_ENTRIES,
   parseTournamentIdFromReceipt,
   type CreateTournamentArgs,
 } from "../src/calldata/index.ts";
@@ -483,7 +486,88 @@ describe("buildCreateTournamentCall felt layout", () => {
 
   test("the whole payload is the length v2 expects", () => {
     // 10 (above) + game_config 4 + entry_fee None 1 + entry_requirement None 1
-    // + leaderboard 2
-    expect((call().calldata as string[]).length).toBe(18);
+    // + leaderboard 2 + max_entries 1
+    expect((call().calldata as string[]).length).toBe(19);
+  });
+});
+
+describe("sealed fields (maxEntries)", () => {
+  const base: CreateTournamentArgs = {
+    creatorRewardsAddress: "0xcreator",
+    name: "Sealed Cup",
+    description: "",
+    gameAddress: "0xgame",
+    settingsId: 0,
+    schedule: {
+      registrationStartDelay: 0,
+      registrationEndDelay: 0,
+      gameStartDelay: 0,
+      gameEndDelay: 86400,
+      submissionDuration: 3600,
+    },
+    leaderboard: { ascending: false, gameMustBeOver: true },
+  };
+
+  test("an open field sends max_entries = 0", () => {
+    const open = buildCreateTournamentCall(BUDOKAN, base);
+    expect(open.entrypoint).toBe("create_tournament");
+    expect(BigInt((open.calldata as string[]).at(-1)!)).toBe(0n);
+    expect(buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: 0 })).toEqual(open);
+  });
+
+  test("a sealed field differs only in the trailing cap", () => {
+    const open = buildCreateTournamentCall(BUDOKAN, base).calldata as string[];
+    const sealed = buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: 10 });
+    expect(sealed.entrypoint).toBe("create_tournament");
+    const data = sealed.calldata as string[];
+    expect(data.slice(0, -1)).toEqual(open.slice(0, -1));
+    expect(BigInt(data.at(-1)!)).toBe(10n);
+  });
+
+  test("rejects caps Budokan cannot store", () => {
+    for (const bad of [-1, 1.5, MAX_TOURNAMENT_ENTRIES + 1]) {
+      expect(() => buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: bad })).toThrow("maxEntries");
+    }
+    expect(() => buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: MAX_TOURNAMENT_ENTRIES })).not.toThrow();
+  });
+
+  test("derives the cap for a fixed roster", () => {
+    expect(maxEntriesForFixedField(2, 5)).toBe(10);
+    expect(maxEntriesForFixedField(16)).toBe(16);
+    expect(() => maxEntriesForFixedField(0)).toThrow("players");
+    expect(() => maxEntriesForFixedField(2, 0)).toThrow("entriesPerPlayer");
+  });
+
+  test("derives the cap for an invite list, clipped by the entry limit", () => {
+    const list = [
+      { address: "0x1", count: 3 },
+      { address: "0x2", count: 1 },
+      { address: "0x3", count: 5 },
+    ];
+    expect(maxEntriesForAllowlist(list)).toBe(9);
+    expect(maxEntriesForAllowlist(list, 2)).toBe(5);
+    expect(() => maxEntriesForAllowlist([...list, { address: "0x01", count: 1 }])).toThrow("twice");
+    expect(() => maxEntriesForAllowlist([])).toThrow("no entries");
+  });
+
+  test("rejects bad counts and limits instead of letting them cancel out", () => {
+    const one = { address: "0x1", count: 5 };
+    expect(() => maxEntriesForAllowlist([one, { address: "0x2", count: -2 }])).toThrow(
+      "non-negative integer",
+    );
+    expect(() =>
+      maxEntriesForAllowlist([{ address: "0x1", count: 1.5 }, { address: "0x2", count: 1.5 }]),
+    ).toThrow("non-negative integer");
+    expect(() => maxEntriesForAllowlist([one], -1)).toThrow("entryLimit");
+    expect(() => maxEntriesForAllowlist([one], Number.NaN)).toThrow("entryLimit");
+    expect(() => maxEntriesForAllowlist([one], 1.5)).toThrow("entryLimit");
+  });
+
+  test("keys addresses like the allowlist tree builder (unprefixed is hex)", () => {
+    expect(maxEntriesForAllowlist([{ address: "10", count: 1 }, { address: "0x10", count: 1 }])).toBe(1);
+    expect(() =>
+      maxEntriesForAllowlist([{ address: "10", count: 1 }, { address: "0x0010", count: 2 }]),
+    ).toThrow("different counts");
+    expect(maxEntriesForAllowlist([{ address: "abc", count: 2 }, { address: "0xabd", count: 1 }])).toBe(3);
   });
 });

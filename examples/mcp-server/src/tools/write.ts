@@ -21,6 +21,8 @@ import {
   gameFeeContract,
   getGameFeeFloor,
   isGameFeeShareValid,
+  MAX_TOURNAMENT_ENTRIES,
+  maxEntriesForAllowlist,
   parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
   scheduleFromDurations,
@@ -228,6 +230,30 @@ function buildDistribution(
   return { kind: "exponential", weight: weight ?? 1 };
 }
 
+/**
+ * The `maxEntries` that seals a tournament gated by this allowlist with this
+ * `gatingEntryLimit`, from the SDK's own rule. Null when the field can't be sealed (above
+ * Budokan's 20-bit cap, e.g. an "unlimited" allowance), in which case leave it open.
+ */
+function allowlistMaxEntries(
+  entries: ReadonlyArray<{ address: string; count: number }>,
+  gatingEntryLimit: number,
+) {
+  try {
+    return {
+      suggestedMaxEntries: maxEntriesForAllowlist(entries, gatingEntryLimit),
+      maxEntriesNote:
+        `Pass as create_tournament's maxEntries together with gatingEntryLimit ` +
+        `${gatingEntryLimit}; a different gatingEntryLimit needs a different cap.`,
+    };
+  } catch (error) {
+    return {
+      suggestedMaxEntries: null,
+      maxEntriesNote: `${error instanceof Error ? error.message : String(error)}; leave maxEntries at 0.`,
+    };
+  }
+}
+
 export function registerWriteTools(server: McpServer) {
   server.registerTool(
     "create_tournament",
@@ -335,6 +361,21 @@ export function registerWriteTools(server: McpServer) {
             "Mint entries as soulbound (non-transferable) game tokens (default false). When true, " +
               "an entry cannot be sold or moved to another wallet after minting — useful for " +
               "identity/allowlist-gated tournaments where entries shouldn't be tradeable",
+          ),
+        maxEntries: z
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_TOURNAMENT_ENTRIES)
+          .optional()
+          .describe(
+            "Seal the field at this many entries in total (default 0 = open). Set it only when " +
+              "the field is exact: a fixed roster x games each, or for an allowlist the sum over " +
+              "its addresses of min(allowance, gatingEntryLimit), where gatingEntryLimit 0 means " +
+              "the allowance alone. Don't compute that by hand: use create_allowlist's " +
+              "suggestedMaxEntries, passing it the same gatingEntryLimit. A sealed tournament finalizes and pays out as soon as every entry is " +
+              "played and ranked, without waiting for its end time; entries past the cap are " +
+              "rejected. Pair with gameMustBeOver=true so finished games can be submitted during play",
           ),
         paymaster: z
           .boolean()
@@ -470,6 +511,7 @@ export function registerWriteTools(server: McpServer) {
           entryRequirement,
           soulbound: input.soulbound,
           paymaster: input.paymaster,
+          maxEntries: input.maxEntries,
         };
 
         const call = buildCreateTournamentCall(budokanAddress, args);
@@ -548,6 +590,15 @@ export function registerWriteTools(server: McpServer) {
               "everyone else 1). Alternative to addresses/entriesPerAddress. Leave the " +
               "tournament's gatingEntryLimit at 0 or the per-address counts get capped by it",
           ),
+        gatingEntryLimit: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            "The gatingEntryLimit you will pass to create_tournament with this tree (default 0). " +
+              "Only used to compute suggestedMaxEntries, which is correct for that limit",
+          ),
         dryRun: z.boolean().optional().describe("Preview without broadcasting (still needs a configured signer)"),
       },
     },
@@ -563,11 +614,13 @@ export function registerWriteTools(server: McpServer) {
             ? { chain, entries: input.entries }
             : { chain, addresses: input.addresses!, entriesPerAddress: input.entriesPerAddress },
         );
+        const suggestedMaxEntries = allowlistMaxEntries(entries, input.gatingEntryLimit ?? 0);
         if (input.dryRun) {
           return jsonResult({
             dryRun: true,
             signerAddress: signer.address,
             uniqueAddresses: entries.length,
+            ...suggestedMaxEntries,
             call,
           });
         }
@@ -578,6 +631,7 @@ export function registerWriteTools(server: McpServer) {
           return jsonResult({
             txHash,
             explorerUrl: explorerTxUrl(chain, txHash),
+            ...suggestedMaxEntries,
             warning:
               "Tree registered but the tree id could not be parsed from the receipt — " +
               "check the transaction events on the explorer.",
@@ -602,6 +656,7 @@ export function registerWriteTools(server: McpServer) {
         return jsonResult({
           treeId,
           uniqueAddresses: entries.length,
+          ...suggestedMaxEntries,
           txHash,
           explorerUrl: explorerTxUrl(chain, txHash),
           proofsStored: stored,
