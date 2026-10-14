@@ -7,6 +7,9 @@ import {
   buildErc20ApproveCall,
   buildSubmitScoreCall,
   buildCreateTournamentCall,
+  maxEntriesForFixedField,
+  maxEntriesForAllowlist,
+  MAX_TOURNAMENT_ENTRIES,
   parseTournamentIdFromReceipt,
   type CreateTournamentArgs,
 } from "../src/calldata/index.ts";
@@ -485,5 +488,64 @@ describe("buildCreateTournamentCall felt layout", () => {
     // 10 (above) + game_config 4 + entry_fee None 1 + entry_requirement None 1
     // + leaderboard 2
     expect((call().calldata as string[]).length).toBe(18);
+  });
+});
+
+describe("sealed fields (maxEntries)", () => {
+  const base: CreateTournamentArgs = {
+    creatorRewardsAddress: "0xcreator",
+    name: "Sealed Cup",
+    description: "",
+    gameAddress: "0xgame",
+    settingsId: 0,
+    schedule: {
+      registrationStartDelay: 0,
+      registrationEndDelay: 0,
+      gameStartDelay: 0,
+      gameEndDelay: 86400,
+      submissionDuration: 3600,
+    },
+    leaderboard: { ascending: false, gameMustBeOver: true },
+  };
+
+  test("an open field keeps create_tournament and its calldata exactly", () => {
+    const open = buildCreateTournamentCall(BUDOKAN, base);
+    expect(open.entrypoint).toBe("create_tournament");
+    expect(buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: 0 })).toEqual(open);
+  });
+
+  test("a sealed field is the same call plus a trailing cap", () => {
+    const open = buildCreateTournamentCall(BUDOKAN, base).calldata as string[];
+    const sealed = buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: 10 });
+    expect(sealed.entrypoint).toBe("create_tournament_with_max_entries");
+    const data = sealed.calldata as string[];
+    expect(data.slice(0, -1)).toEqual(open);
+    expect(BigInt(data.at(-1)!)).toBe(10n);
+  });
+
+  test("rejects caps Budokan cannot store", () => {
+    for (const bad of [-1, 1.5, MAX_TOURNAMENT_ENTRIES + 1]) {
+      expect(() => buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: bad })).toThrow("maxEntries");
+    }
+    expect(() => buildCreateTournamentCall(BUDOKAN, { ...base, maxEntries: MAX_TOURNAMENT_ENTRIES })).not.toThrow();
+  });
+
+  test("derives the cap for a fixed roster", () => {
+    expect(maxEntriesForFixedField(2, 5)).toBe(10);
+    expect(maxEntriesForFixedField(16)).toBe(16);
+    expect(() => maxEntriesForFixedField(0)).toThrow("players");
+    expect(() => maxEntriesForFixedField(2, 0)).toThrow("entriesPerPlayer");
+  });
+
+  test("derives the cap for an invite list, clipped by the entry limit", () => {
+    const list = [
+      { address: "0x1", count: 3 },
+      { address: "0x2", count: 1 },
+      { address: "0x3", count: 5 },
+    ];
+    expect(maxEntriesForAllowlist(list)).toBe(9);
+    expect(maxEntriesForAllowlist(list, 2)).toBe(5);
+    expect(() => maxEntriesForAllowlist([...list, { address: "0x01", count: 1 }])).toThrow("twice");
+    expect(() => maxEntriesForAllowlist([])).toThrow("no entries");
   });
 });

@@ -192,6 +192,60 @@ export interface CreateTournamentArgs {
    * up. Present so a tournament can opt in without a contract change.
    */
   paymaster?: boolean;
+  /**
+   * Seal the field at this many entries (whole tournament, all players). When set,
+   * the tournament finalizes as soon as the cap is filled and every entry is ranked,
+   * even during play, and its prizes are claimable at once. Entries past it are
+   * rejected. Set it only when the field is exact — use `maxEntriesForFixedField`
+   * or `maxEntriesForAllowlist` — and pair it with `leaderboard.gameMustBeOver` so
+   * finished games can be submitted during play. Omit (or 0) for an open field:
+   * the tournament then runs to its schedule, exactly as before.
+   * Requires a Budokan class with `create_tournament_with_max_entries`.
+   */
+  maxEntries?: number;
+}
+
+/** Budokan stores the cap in 20 bits. */
+export const MAX_TOURNAMENT_ENTRIES = 0xfffff;
+
+function validMaxEntries(value: number, label = "maxEntries"): number {
+  if (!Number.isInteger(value) || value < 0 || value > MAX_TOURNAMENT_ENTRIES) {
+    throw new Error(`${label} must be an integer from 0 to ${MAX_TOURNAMENT_ENTRIES}`);
+  }
+  return value;
+}
+
+/**
+ * The cap for a fixed roster: `players` entrants with `entriesPerPlayer` games each.
+ * This is the default a creation flow should apply whenever both are known.
+ */
+export function maxEntriesForFixedField(players: number, entriesPerPlayer = 1): number {
+  if (!Number.isInteger(players) || players < 1) throw new Error("players must be a positive integer");
+  if (!Number.isInteger(entriesPerPlayer) || entriesPerPlayer < 1) {
+    throw new Error("entriesPerPlayer must be a positive integer");
+  }
+  return validMaxEntries(players * entriesPerPlayer, "players x entriesPerPlayer");
+}
+
+/**
+ * The cap for an invite list: each address may enter up to its leaf allowance,
+ * clipped by the tournament's per-qualification `entryLimit` when one is set
+ * (Budokan admits min(allowance, entryLimit)). Every address counts once.
+ */
+export function maxEntriesForAllowlist(
+  entries: ReadonlyArray<{ address: string; count: number }>,
+  entryLimit = 0,
+): number {
+  const seen = new Set<string>();
+  let total = 0;
+  for (const e of entries) {
+    const key = BigInt(e.address).toString();
+    if (seen.has(key)) throw new Error(`allowlist has ${e.address} twice`);
+    seen.add(key);
+    total += entryLimit > 0 ? Math.min(e.count, entryLimit) : e.count;
+  }
+  if (total < 1) throw new Error("allowlist admits no entries");
+  return validMaxEntries(total, "allowlist entries");
 }
 
 /**
@@ -505,6 +559,16 @@ export function buildCreateTournamentCall(
       game_must_be_over: args.leaderboard.gameMustBeOver,
     },
   });
+  // A sealed field is the same call plus a trailing u32; an open field keeps the
+  // original entrypoint, so it works against every Budokan class.
+  const maxEntries = validMaxEntries(args.maxEntries ?? 0);
+  if (maxEntries > 0) {
+    return {
+      contractAddress: budokanAddress,
+      entrypoint: "create_tournament_with_max_entries",
+      calldata: [...calldata, num.toHex(maxEntries)],
+    };
+  }
   return {
     contractAddress: budokanAddress,
     entrypoint: "create_tournament",
