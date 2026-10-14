@@ -549,4 +549,25 @@ describe("sealed fields (maxEntries)", () => {
     expect(() => maxEntriesForAllowlist([...list, { address: "0x01", count: 1 }])).toThrow("twice");
     expect(() => maxEntriesForAllowlist([])).toThrow("no entries");
   });
+
+  test("rejects bad counts and limits instead of letting them cancel out", () => {
+    const one = { address: "0x1", count: 5 };
+    expect(() => maxEntriesForAllowlist([one, { address: "0x2", count: -2 }])).toThrow(
+      "non-negative integer",
+    );
+    expect(() =>
+      maxEntriesForAllowlist([{ address: "0x1", count: 1.5 }, { address: "0x2", count: 1.5 }]),
+    ).toThrow("non-negative integer");
+    expect(() => maxEntriesForAllowlist([one], -1)).toThrow("entryLimit");
+    expect(() => maxEntriesForAllowlist([one], Number.NaN)).toThrow("entryLimit");
+    expect(() => maxEntriesForAllowlist([one], 1.5)).toThrow("entryLimit");
+  });
+
+  test("keys addresses like the allowlist tree builder (unprefixed is hex)", () => {
+    expect(maxEntriesForAllowlist([{ address: "10", count: 1 }, { address: "0x10", count: 1 }])).toBe(1);
+    expect(() =>
+      maxEntriesForAllowlist([{ address: "10", count: 1 }, { address: "0x0010", count: 2 }]),
+    ).toThrow("different counts");
+    expect(maxEntriesForAllowlist([{ address: "abc", count: 2 }, { address: "0xabd", count: 1 }])).toBe(3);
+  });
 });

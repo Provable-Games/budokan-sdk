@@ -21,6 +21,8 @@ import {
   gameFeeContract,
   getGameFeeFloor,
   isGameFeeShareValid,
+  MAX_TOURNAMENT_ENTRIES,
+  maxEntriesForAllowlist,
   parseAllowlistTreeId,
   parseTournamentIdFromReceipt,
   scheduleFromDurations,
@@ -228,6 +230,29 @@ function buildDistribution(
   return { kind: "exponential", weight: weight ?? 1 };
 }
 
+/**
+ * The `maxEntries` that seals a tournament gated by this allowlist alone (gatingEntryLimit 0):
+ * every leaf's allowance, summed. Null when it is above Budokan's 20-bit cap (an
+ * "unlimited" allowance), in which case leave the field open.
+ */
+function allowlistMaxEntries(entries: ReadonlyArray<{ address: string; count: number }>) {
+  const sum = entries.reduce((total, e) => total + e.count, 0);
+  if (sum > MAX_TOURNAMENT_ENTRIES) {
+    return {
+      suggestedMaxEntries: null,
+      maxEntriesNote:
+        `This allowlist admits ${sum} entries, above the ${MAX_TOURNAMENT_ENTRIES} a field can ` +
+        `be sealed at; leave maxEntries at 0.`,
+    };
+  }
+  return {
+    suggestedMaxEntries: maxEntriesForAllowlist(entries),
+    maxEntriesNote:
+      "Pass as create_tournament's maxEntries with gatingEntryLimit 0. With a non-zero " +
+      "gatingEntryLimit, use maxEntriesForAllowlist(entries, gatingEntryLimit) instead.",
+  };
+}
+
 export function registerWriteTools(server: McpServer) {
   server.registerTool(
     "create_tournament",
@@ -340,12 +365,15 @@ export function registerWriteTools(server: McpServer) {
           .number()
           .int()
           .min(0)
-          .max(0xfffff)
+          .max(MAX_TOURNAMENT_ENTRIES)
           .optional()
           .describe(
             "Seal the field at this many entries in total (default 0 = open). Set it only when " +
-              "the field is exact: allowlist size x per-player entry limit, or a fixed roster x " +
-              "games each. A sealed tournament finalizes and pays out as soon as every entry is " +
+              "the field is exact: a fixed roster x games each, or for an allowlist the sum over " +
+              "its addresses of min(allowance, gatingEntryLimit), where gatingEntryLimit 0 means " +
+              "the allowance alone. Don't compute that by hand: use create_allowlist's " +
+              "suggestedMaxEntries (valid when gatingEntryLimit is 0) or the SDK's " +
+              "maxEntriesForAllowlist(entries, gatingEntryLimit). A sealed tournament finalizes and pays out as soon as every entry is " +
               "played and ranked, without waiting for its end time; entries past the cap are " +
               "rejected. Pair with gameMustBeOver=true so finished games can be submitted during play",
           ),
@@ -577,11 +605,13 @@ export function registerWriteTools(server: McpServer) {
             ? { chain, entries: input.entries }
             : { chain, addresses: input.addresses!, entriesPerAddress: input.entriesPerAddress },
         );
+        const suggestedMaxEntries = allowlistMaxEntries(entries);
         if (input.dryRun) {
           return jsonResult({
             dryRun: true,
             signerAddress: signer.address,
             uniqueAddresses: entries.length,
+            ...suggestedMaxEntries,
             call,
           });
         }
@@ -616,6 +646,7 @@ export function registerWriteTools(server: McpServer) {
         return jsonResult({
           treeId,
           uniqueAddresses: entries.length,
+          ...suggestedMaxEntries,
           txHash,
           explorerUrl: explorerTxUrl(chain, txHash),
           proofsStored: stored,

@@ -42,6 +42,7 @@ import {
 } from "starknet";
 
 import type { TournamentSchedule } from "../schedule/index.js";
+import { normalizeAddress } from "../utils/address.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -237,12 +238,27 @@ export function maxEntriesForAllowlist(
   entries: ReadonlyArray<{ address: string; count: number }>,
   entryLimit = 0,
 ): number {
-  const seen = new Set<string>();
+  // Each input is checked on its own: a bad count must not cancel out against another
+  // before the total is checked, and a cap sealed too low turns invitees away for good.
+  if (!Number.isInteger(entryLimit) || entryLimit < 0) {
+    throw new Error("entryLimit must be a non-negative integer (0 = no limit)");
+  }
+  // Deduped exactly like the allowlist tree builder: one leaf per normalized address
+  // ("10" and "0x10" are the same), a repeat with the same count is that one leaf, and
+  // conflicting counts are an error.
+  const seen = new Map<string, number>();
   let total = 0;
   for (const e of entries) {
-    const key = BigInt(e.address).toString();
-    if (seen.has(key)) throw new Error(`allowlist has ${e.address} twice`);
-    seen.add(key);
+    if (!Number.isInteger(e.count) || e.count < 0) {
+      throw new Error(`allowlist count for ${e.address} must be a non-negative integer`);
+    }
+    const key = normalizeAddress(e.address);
+    const prior = seen.get(key);
+    if (prior !== undefined) {
+      if (prior !== e.count) throw new Error(`allowlist has ${e.address} twice with different counts`);
+      continue;
+    }
+    seen.set(key, e.count);
     total += entryLimit > 0 ? Math.min(e.count, entryLimit) : e.count;
   }
   if (total < 1) throw new Error("allowlist admits no entries");
@@ -507,7 +523,7 @@ export function buildClaimRewardCall(
 /**
  * `create_tournament(creator_rewards_address, metadata, schedule,
  *                    game_config, entry_fee, entry_requirement,
- *                    leaderboard_config)`
+ *                    leaderboard_config, max_entries)`
  *
  * Schedule fields are durations (`registration_end_delay`,
  * `game_end_delay` measured from their respective starts) — *not*
@@ -522,6 +538,7 @@ export function buildCreateTournamentCall(
   budokanAddress: string,
   args: CreateTournamentArgs,
 ): Call {
+  const maxEntries = validMaxEntries(args.maxEntries ?? 0);
   const calldata = CallData.compile({
     creator_rewards_address: args.creatorRewardsAddress,
     metadata: {
@@ -559,13 +576,13 @@ export function buildCreateTournamentCall(
       ascending: args.leaderboard.ascending,
       game_must_be_over: args.leaderboard.gameMustBeOver,
     },
+    // u32, 0 = an open field.
+    max_entries: maxEntries,
   });
-  // `max_entries: u32` is create_tournament's last argument; 0 is an open field.
-  const maxEntries = validMaxEntries(args.maxEntries ?? 0);
   return {
     contractAddress: budokanAddress,
     entrypoint: "create_tournament",
-    calldata: [...calldata, num.toHex(maxEntries)],
+    calldata,
   };
 }
 
