@@ -231,32 +231,27 @@ function buildDistribution(
 }
 
 /**
- * The `maxEntries` that seals a tournament gated by this allowlist: each leaf's allowance,
- * clipped by the tournament's `gatingEntryLimit` when it is non-zero, summed. Null when that
- * is above Budokan's 20-bit cap, in which case leave the field open.
+ * The `maxEntries` that seals a tournament gated by this allowlist with this
+ * `gatingEntryLimit`, from the SDK's own rule. Null when the field can't be sealed (above
+ * Budokan's 20-bit cap, e.g. an "unlimited" allowance), in which case leave it open.
  */
 function allowlistMaxEntries(
   entries: ReadonlyArray<{ address: string; count: number }>,
   gatingEntryLimit: number,
 ) {
-  const sum = entries.reduce(
-    (total, e) => total + (gatingEntryLimit > 0 ? Math.min(e.count, gatingEntryLimit) : e.count),
-    0,
-  );
-  if (sum > MAX_TOURNAMENT_ENTRIES) {
+  try {
+    return {
+      suggestedMaxEntries: maxEntriesForAllowlist(entries, gatingEntryLimit),
+      maxEntriesNote:
+        `Pass as create_tournament's maxEntries together with gatingEntryLimit ` +
+        `${gatingEntryLimit}; a different gatingEntryLimit needs a different cap.`,
+    };
+  } catch (error) {
     return {
       suggestedMaxEntries: null,
-      maxEntriesNote:
-        `This allowlist admits ${sum} entries, above the ${MAX_TOURNAMENT_ENTRIES} a field can ` +
-        `be sealed at; leave maxEntries at 0.`,
+      maxEntriesNote: `${error instanceof Error ? error.message : String(error)}; leave maxEntries at 0.`,
     };
   }
-  return {
-    suggestedMaxEntries: maxEntriesForAllowlist(entries, gatingEntryLimit),
-    maxEntriesNote:
-      `Pass as create_tournament's maxEntries together with gatingEntryLimit ` +
-      `${gatingEntryLimit}; a different gatingEntryLimit needs a different cap.`,
-  };
 }
 
 export function registerWriteTools(server: McpServer) {
@@ -636,6 +631,7 @@ export function registerWriteTools(server: McpServer) {
           return jsonResult({
             txHash,
             explorerUrl: explorerTxUrl(chain, txHash),
+            ...suggestedMaxEntries,
             warning:
               "Tree registered but the tree id could not be parsed from the receipt — " +
               "check the transaction events on the explorer.",
